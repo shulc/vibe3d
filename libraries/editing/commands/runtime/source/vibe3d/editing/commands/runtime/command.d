@@ -1,0 +1,927 @@
+module vibe3d.editing.commands.runtime.command;
+import vibe3d.mesh.edit_replay.mesh_edit_replay : apply, revert;
+
+import vibe3d.mesh.core.mesh;
+import vibe3d.viewport.camera.view;
+import vibe3d.editing.contracts.editmode;
+import vibe3d.editing.contracts.seltype : SelType, geometrySelType;
+import vibe3d.util.spatial.spatial : Viewport;
+import vibe3d.editing.params.params : Param, ParamHints;
+import vibe3d.mesh.edit_log.mesh_edit_delta : MeshEditScope;
+import std.json : JSONValue;
+
+// Test-automation gate (re-eval plan D5). Set true ONLY when the editor is
+// launched with --test (app.d), mirroring the HttpServer.setTestMode flag the
+// /api/play-events machinery uses. testMode-gated commands (tool.beginSession,
+// tool.panelEdit) reject themselves unless this is set, so they are inert and
+// unreachable in a normal build/run.
+__gshared bool g_testMode = false;
+
+// Task 0654 — "does the document have a mesh edit target right now?", as a
+// resolver rather than a `Document` import.
+//
+// `command.d` deliberately does not know about `document.d` (this module is
+// imported by every command, including ones a headless test constructs over a
+// bare `Mesh` with no Document in sight). app.d installs this at init, exactly
+// as it installs `display_sync.activeMeshResolver` and
+// `document.primaryModelSpaceResolver`.
+//
+// NULL means "assume there is a target" — the pre-0654 behaviour, which is the
+// right default for the direct-construction test path (the caller passed the
+// mesh it wants written, and there is no selection to consult).
+__gshared bool delegate() g_editTargetResolver;
+
+public import vibe3d.documents.model.edit_target_contract : kNoEditTargetReason;
+
+// ---------------------------------------------------------------------------
+// Command — base class for every user-visible action.
+//
+// Undo/redo model (see doc/undo_redo_plan.md):
+// - apply()    — runs the operation. `final`: it opens the change-bus
+//                delivery batch and calls applyImpl(), so every command is
+//                inside one (task 1906 stage 0b). Callers call THIS.
+// - applyImpl()— the override point, and the only one. Mutating commands MUST
+//                snapshot pre-state into instance fields here.
+// - revert()   — restore the pre-apply state (using the snapshot).
+//                Default: no-op (returns false). Mutating commands MUST
+//                override and return true on successful revert.
+// - cmdFlags() — bitfield classifying the command (see CmdFlags).
+//                Undoability is DERIVED from it: a command is undoable
+//                iff its flags carry CmdFlags.Model. Read-only /
+//                non-mutating commands override cmdFlags() to drop Model;
+//                the dispatcher then skips pushing to the undo stack.
+// - label()    — short human-readable text for the Edit menu / history
+//                viewer ("Bevel edges", "Move 3 verts"). Defaults to
+//                name().
+// ---------------------------------------------------------------------------
+
+// WHO asked for this command line to run (task 1520).
+//
+// The refusal POLICY is a property of the CALLER, not of the command and not
+// of the dispatcher: a script that asked for something impossible must be
+// told (an exception it can see), while the same refusal raised from inside an
+// ImGui draw has nowhere to go but `_Dmain` — which killed the editor every
+// time a file dialog was cancelled from a panel button.
+//
+// One application binding serves both. It reads the origin to select UI policy;
+// the HTTP adapter reads it separately to turn script refusal into a protocol
+// exception (task 4711).
+enum CommandOrigin {
+    ui,      /// a panel button, a menu item, a keyboard shortcut — REFUSAL IS A NOTICE
+    script,  /// `/api/command`, `/api/script`, a macro — REFUSAL IS AN EXCEPTION
+}
+
+// Bitfield classifying a command's effect on the application. The
+// undo dispatcher and history panel read these bits; behaviour for any
+// single command is determined entirely by which bits are set.
+enum CmdFlags : uint {
+    None       = 0,
+    Model      = 1 << 0, // Alters scene/document (mesh) state → undoable (Model-undo class).
+    UI         = 1 << 1, // Alters UI/view state only (camera, panels) — no undo entry.
+    Quiet      = 1 << 2, // Suppress logging / notification for this command.
+    SideEffect = 1 << 3, // Transient session/tool-pipe change — no undo entry.
+    UiState    = 1 << 4, // Alters undoable UI state (selection / edit mode) →
+                         // undoable, but in the UI-undo class (distinct from
+                         // Model-undo). Lands on the same stack and Ctrl+Z
+                         // undoes it; the class bit lets history/panel/tests
+                         // tell selection-undo apart from geometry-undo. This
+                         // is the vibe3d-native analog of a UI-undo command.
+    UndoForce    = 1 << 5, // Explicit opt-IN to undoability, OVERRIDING the
+                           // derived (Model | UiState) rule. Lets a command that
+                           // carries neither Model nor UiState (e.g. a transient
+                           // SideEffect-flavored op the author still wants on the
+                           // stack) land an undo entry. Loses to UndoSuppress.
+    UndoSuppress = 1 << 6, // Explicit opt-OUT of undoability, OVERRIDING both the
+                           // derived rule AND UndoForce. A Model-mutating command
+                           // that sets this records NO undo entry — the author
+                           // takes responsibility for the state change being
+                           // unrecoverable / handled elsewhere. Highest priority.
+    UndoBoundary = 1 << 7, // Hard stop for undo traversal within a session.
+                           // The entry IS on the stack and IS undoable (carries
+                           // Model), but the cursor scan stops here — it will not
+                           // step to this entry during a normal undo. When the
+                           // boundary entry is the ONLY entry left (tail-at-
+                           // boundary), the boundary entry itself IS reverted by
+                           // the boundary-tail fallback. Applied
+                           // to scene.reset and file.new: a reset delimits "current
+                           // editing session" from "prior session"; a plain
+                           // undo should not reach across it, but if it is the only
+                           // thing on the stack the user CAN undo the reset.
+    ToolLifecycle = 1 << 8, // Alters tool-lifecycle state (tool exit/entry). Undoable
+                            // (lands on the stack); cursor treats it as transparent when
+                            // its own-gesture Model entry sits below it.
+    MouseDownOk = 1 << 9,   // Its key runs while a mouse button is held (else dropped;
+                            // `InputRouter.handleKeyDown`, findings_K-G2).
+    Momentary   = 1 << 10,  // Its key-up runs the hold law (`InputRouter.handleKeyUp`).
+}
+
+/// Whether the application command funnel must commit the active tool's
+/// pending edit before `cmd`, instead of dropping it. Task 6250
+/// ports the 2026-09-16 capture in `toolcards/subpatch_toggle_during_tool_edit/`;
+/// only the captured command is licensed, while every other model command
+/// retains the prior drop policy until separately measured.
+bool commitsActiveToolEditBeforeApply(const Command cmd) {
+    return cmd.name() == "mesh.subpatch_toggle";
+}
+
+/// Whether the application command funnel must drop an active tool before
+/// applying `cmd`. The active-tool presence check stays at the call site;
+/// registry startup evaluates this policy on cold command instances.
+bool dropsActiveToolBeforeApply(const Command cmd) {
+    if (commitsActiveToolEditBeforeApply(cmd)) return false;
+    if (!(cmd.cmdFlags() & CmdFlags.Model)) return false;
+    return !sparesToolSession(cmd.name());
+}
+
+/// The command families the funnel never ends a tool session for — the ONE
+/// exclusion both pre-apply rules read (the drop above, the UI close below):
+/// the tool's own commands (`tool.*` continue the session), the document
+/// lifecycle (`scene.*` / `file.*` own their disarm policy) and `layer.attr`
+/// (the Layers panel's transform rows continue a transform run).
+bool sparesToolSession(string cn) {
+    import std.string : startsWith;
+    return cn.startsWith("tool.")
+        || cn.startsWith("scene.")
+        || cn.startsWith("file.")
+        || cn == "layer.attr";
+}
+
+/// Whether `cmd`, reaching the funnel through the UI door, closes a live tool
+/// operation first (slice M2 of the tool session model; the captured
+/// C1-h-sel family law, doc/editor_bugfix_wave_plan_2026-09-23.md §S2b R20):
+/// any command that records an undo entry, whatever its class — a selection
+/// command and a model command close the same way (P-uniform) — except
+/// history navigation and the families `sparesToolSession` names.
+bool endsLiveEditBeforeUiCommand(const Command cmd) {
+    import std.string : startsWith;
+    if (!cmd.isUndoable()) return false;
+    const cn = cmd.name();
+    return !cn.startsWith("history.") && !sparesToolSession(cn);
+}
+
+// Result of comparing a freshly-applied command against the command that
+// currently sits on top of the undo stack. `Compatible` means the new command
+// is a CONTINUATION of the previous one (same logical edit, same targets) and
+// should be MERGED into the existing top entry rather than appended as a new
+// step — so a run of repeated identical-target edits collapses to one undo.
+// `Different` (the default for every command) means "append normally". Only
+// commands that explicitly opt in by overriding compareOp() ever coalesce; the
+// merge mechanism is driven by CommandHistory.recordCoalescing().
+enum CompareResult { Different, Compatible }
+
+class Command {
+    // Internal command id (e.g. "mesh.bevel"). Used by the dispatcher.
+    string name() const { return "Command"; }
+
+    /// Who ran this command; written only by `ApplicationCommandBinding.invokeLine`
+    /// (the key path builds no context and keeps `ui`).
+    CommandOrigin origin = CommandOrigin.ui;
+
+    // The tool session that wrote this record (slice M4 of the tool session
+    // model; doc/tool_session_model_plan_2026-09-24.md R2.5 M4, R4.2): 0 for a
+    // record no session closed. Set once, by the session, on the row its close
+    // wrote (`CommandHistory.markTopSession`) or on an activation row at its arm.
+    // It is the session's IDENTITY, issued at every arm and carried by a restored
+    // predecessor, so "whose record is this" never falls back to the tool CLASS.
+    private ulong sessionToken_;
+    final ulong sessionToken() const nothrow @nogc { return sessionToken_; }
+    final void markSession(ulong token) nothrow @nogc {
+        if (sessionToken_ == 0) sessionToken_ = token;
+    }
+
+    // Every command crosses one synchronous delivery boundary (task 1906).
+    // `apply` is final and only `applyImpl` is overridable, so even a command
+    // with no bound mesh enters the global batch — no `mesh is null` guard on
+    // the pair, the shipped case being `tools/create/box.d ::
+    // BoxLiveEditCommand` and its red the null-`mesh` block of
+    // `packages/command-runtime/tests/source/tests/unit/command_apply_anchor_test.d`. Publishers register their
+    // actual subjects and the close coalesces them. Keep per-writer delivery
+    // calls: callers outside a command batch depend on them. Evidence and the
+    // superseded designs: doc/source_prose_policy.md#общая-граница-доставки.
+    final bool apply() {
+        // TASK 2500 — the forward bit is written HERE, by the base, and that
+        // is the whole reason it cannot drift. `apply()` is the one place in
+        // the build that observes "the kernel said yes"; every hand-written
+        // `applied_` / `captured` copy of that observation was a second
+        // derivation of a fact this line already holds.
+        forwardApplied_ = false;
+        beginDeliveryBatchGlobal();
+        scope(exit) {
+            if (mesh !is null) mesh.deliverAccumulated();
+            endDeliveryBatchGlobal();
+        }
+        immutable bool ok = applyImpl();
+        forwardApplied_ = ok;
+        return ok;
+    }
+
+    // Run the operation. Two paths post-Phase-6:
+    //
+    //   * Operator commands (mesh-mutating ones from Phases 2/5) put
+    //     their kernel in `evaluate(ref VectorStack vts)`. The default
+    //     applyImpl() here builds a minimal vts from the command's mesh +
+    //     editMode + selection state and dispatches via the Operator
+    //     interface, preserving the bool-return contract for callers
+    //     (history.fire, CommandExecutor.applyOrRefire).
+    //
+    //   * Non-Operator commands (file load/save, history meta-commands,
+    //     selection ops) override applyImpl() with their kernel as before.
+    //
+    // Mutating commands snapshot pre-state into instance fields so
+    // revert() can restore.
+    //
+    // THE OVERRIDE POINT, and the only one: `apply()` above is `final`. A
+    // command overrides THIS.
+    //
+    // EVERY OVERRIDE SPELLS `protected` TOO, and that is not decoration (task
+    // 1906 review NIT1). D lets an override WIDEN protection, and an
+    // unqualified `override bool applyImpl()` inside a class whose default is
+    // public IS a widening: on that concrete type the kernel becomes callable
+    // from anywhere, and a caller who reached for it would skip the delivery
+    // batch that `apply()` is `final` in order to guarantee. Keeping every
+    // override at `protected` is what makes "there is no way for a command to
+    // be outside the batch" true of the CONCRETE types and not only of the
+    // base. `grep -rn 'applyImpl(' source tests --include=*.d` outside this
+    // file is comments only.
+    protected bool applyImpl() {
+        import vibe3d.editing.pipeline.contracts.operator        : Operator, VectorStack;
+        import vibe3d.editing.pipeline.contracts.toolpipe.packets : SubjectPacket;
+        if (auto op = cast(Operator)this) {
+            // TASK 0654 — THE mesh-write refusal, for every Operator command at
+            // once. An empty item selection means there is no mesh edit target,
+            // and an operator kernel has nothing to write to. Refusing HERE
+            // rather than in ~200 kernels is what makes the rule impossible to
+            // forget in the next one: every mesh-mutating command in the build
+            // reaches its kernel through this branch.
+            //
+            // Gated on the RESOLVER, not on `mesh is null`: the command
+            // factories bind `&app.mesh()`, which is a pointer to the empty
+            // read-only stand-in (`document.noEditTargetMesh`) rather than null,
+            // so the pointer alone cannot tell "no target" from "empty mesh" —
+            // and an empty mesh is a perfectly legal edit target that must keep
+            // working (`layer.add` then `mesh.*` on the fresh layer).
+            //
+            // Uninstalled resolver (headless unit tests that construct a
+            // command directly over a local `Mesh`) means "there is a target":
+            // those callers own the mesh they passed and never went through a
+            // Document at all.
+            //
+            // TASK 0669 — the condition itself now lives in
+            // `refusedForNoEditTarget()` / `needsEditTarget()` so the BUTTON can
+            // ask it before the press. Same test, same reason, one copy.
+            if (refusedForNoEditTarget()) return false;
+            // One Operator evaluation owns one hide-derive batch (task 1330).
+            // It nests inside Command.apply's delivery batch, closes the derive
+            // before delivery, and remains required for batchless operators such
+            // as mesh.paste; the captured pointer must be the one closed.
+            // Evidence and measured regimes:
+            // doc/source_prose_policy.md#вложенный-hide-derive-batch-у-operator.
+            Mesh* hideBatchMesh = mesh;
+            if (hideBatchMesh !is null) {
+                hideBatchMesh.beginHideDeriveBatch();
+            }
+            scope(exit) if (hideBatchMesh !is null) hideBatchMesh.endHideDeriveBatch();
+            VectorStack vts;
+            SubjectPacket subj;
+            // The CURRENT selection type, from the app's live authority when
+            // one is wired (see `currentType()` and THE RULE above it). This
+            // is the command layer's half of the same answer app.d publishes
+            // into its own SubjectPacket via `buildToolVts`; the two layers
+            // now read one authority instead of two.
+            //
+            // The camera the operator evaluates against (task 0619). An
+            // `Operator`'s `evaluate` can only see the viewport this packet
+            // carries, and the pixel-space falloff types read it through
+            // `aimSpace` — so leaving it default-constructed here made the
+            // SAME operator answer differently depending on which entry point
+            // fired it: a real camera down the toolpipe (app.d's
+            // `buildToolVts`), an UNINITIALISED one down `/api/command`
+            // (`Viewport`'s matrices carry no initialiser, so the default is
+            // NaN, not zero — every product through it is NaN). No
+            // live divergence resulted (the JSON parser rejects the pixel
+            // falloff types, and the tool path records a positional edit
+            // rather than the command, so redo cannot diverge either), but
+            // the invariant "a packet handed to `aimSpace` carries a real
+            // viewport" should hold on EVERY path, not on the one that
+            // happened to be exercised.
+            //
+            // `effectiveViewport()` is the command layer's sole camera
+            // accessor — the same call `MeshSelect`/`MeshTransform` already
+            // make two files away when they build a SubjectPacket by hand —
+            // so this adds no authority and widens no contract. Its
+            // no-provider fallback dereferences `view`, which a directly
+            // constructed headless command may leave null; that one case
+            // keeps the field's default (width 0 / NaN matrices, which
+            // every viewport-dependent stage already treats as "invalid,
+            // early out") instead of crashing. Guard and fallback preserved
+            // verbatim (task 1904 Stage 3): `SubjectSource.viewport` simply
+            // stays `Viewport.init` when `view is null`, matching the old
+            // "leave the field's default" branch exactly.
+            import vibe3d.editing.pipeline.runtime.toolpipe.subject : SubjectSource, fillSubject;
+            Viewport vp = (view !is null) ? effectiveViewport() : Viewport.init;
+            fillSubject(subj, SubjectSource(mesh, editMode, currentType(), vp));
+            vts.put(&subj);
+            return op.evaluate(vts);
+        }
+        return true;
+    }
+
+    // ------------------------------------------------------------------
+    // TASK 2500 — THE RECORDED FLAG, AND WHY `revert()` IS NOT THE OVERRIDE
+    // POINT ANY MORE.
+    //
+    // Before this, 110 files under `source/commands/` wrote their own
+    // `override bool revert()`, 973 lines of them, and every one of those
+    // bodies opened by RE-DERIVING one fact: "did my forward leave anything to
+    // restore?". It was spelled eight different ways — `!recorded_`,
+    // `!snap.filled`, `!undo_.armed()`, `!applied_`, `!captured`,
+    // `touchedIdx.length == 0`, `idxs.length == 0`, `touched_.length == 0` —
+    // and it was WRONG in three of them (task 2110: `mesh.smooth`,
+    // `mesh.jitter`, `mesh.quantize` answered `false` on an empty edit, which
+    // makes `CommandHistory.undo` drop the entry AND the whole tail above it,
+    // regression 0099). Three of four commands sharing one line were broken
+    // while the fourth had been fixed a year earlier with a comment that never
+    // reached them. That is what a hidden duplicate costs: the code looked
+    // unalike while standing on one invariant, so a fix could not travel.
+    //
+    // THE STATE MACHINE, and it has THREE states, not two. The third is not
+    // taste — it is shipped behaviour that three suite cells assert
+    // (`test_uv_transform.d`'s "revert without apply must return false",
+    // `test_uv_pack.d`, `test_uv_project.d`), and it is exactly the parameter
+    // `map_edit_undo.revertMapEditEmptyOk` used to take by hand:
+    //
+    //   * NO UNDO IMAGE AND NO FORWARD — nobody applied this command and
+    //     nobody handed it a recorded image. `revert()` answers FALSE. This is
+    //     the mis-ordered-caller belt `RecordedUndo.revert` exists to make
+    //     loud, and it stays loud.
+    //   * A FORWARD THAT SUCCEEDED AND RECORDED NOTHING — a legitimate no-op
+    //     edit (`{iter:0}` on `mesh.smooth`, `uv.rotate` by zero degrees, an
+    //     empty operand). There is nothing to restore, so `revert()` answers
+    //     TRUE. This is 2110's fix, generalised from three files to all of
+    //     them and made structural: the answer is given HERE, once, before any
+    //     command body runs.
+    //   * A RECORDED IMAGE — `revertImpl()` runs.
+    //
+    // WHY THE EMPTY-SET `false` IS NOW INEXPRESSIBLE RATHER THAN MERELY
+    // FIXED. `revertImpl()` returns `void`. A body physically cannot answer
+    // `false`, so it cannot answer `false` FOR EMPTINESS; and it is not
+    // entered at all unless an image exists, so the question it used to ask is
+    // not in front of it. A genuine restore failure — the layer we created is
+    // no longer in the document, an inner command declined — is still
+    // expressible, but only by NAMING it: `failRevert(reason)`. You cannot
+    // fail by falling through a `bool`; you have to say so, with a sentence.
+    //
+    // `false` FROM `revert()` REMAINS THE GENUINE-FAILURE CHANNEL, and that
+    // is deliberate: `CompositeCommand.revert` stops its child chain on it and
+    // `CommandHistory.undo` treats it as unrecoverable. The rule is not
+    // "always true" — it is "`false` is reserved for a real restore failure
+    // and never for emptiness".
+    //
+    // THE SHAPE IS BORROWED, and the upper half of it was already here. A
+    // published-header capture (task 1903) found the reference's undo step to
+    // be an OBJECT with a forward and a reverse, both `void`: failure is
+    // inexpressible there, and the flag is the step's own EXISTENCE, so it
+    // cannot disagree with itself. We had taken that model's recording state
+    // machine (`ACTIVE`/`SUSPEND`) and left this half behind.
+    // ------------------------------------------------------------------
+
+    // The ONE hand-raised bit: "I hold an undo image." Raised at the site that
+    // captures the image and nowhere else — `snap.capture`, `undo_.arm`,
+    // `MeshSessionEdit.setSnapshots` / `setDelta`, `MeshVertexEdit.setEdit`
+    // and its `Param`-filled wire twin. Not raised by `apply()`, because a command can be
+    // handed its image WITHOUT ever being applied: every session tool builds
+    // one, calls `setSnapshots(before, post, label)` and pushes it straight to
+    // `history.record(cmd)` (30 call sites), so a forward-only flag would
+    // answer "nothing to restore" for every tool commit in the build.
+    private bool undoRecorded_;
+
+    // The base-owned bit: "my `applyImpl()` said yes." Written only by
+    // `apply()` above.
+    private bool forwardApplied_;
+
+    // Set by `failRevert`, cleared at the top of every `revert()`.
+    private bool   revertFailed_;
+    private string revertFailure_;
+
+    /// Declare that this command now holds an undo image. Call it at the line
+    /// that captures the image — the point of the flag is that its writer and
+    /// the image's writer are the SAME statement.
+    ///
+    /// PUBLIC, not `protected`, and that is forced rather than chosen: the
+    /// recorder is very often NOT the command's own body. `runMapEdit`
+    /// (`commands/mesh/map_edit_undo.d`) is a shared free function that arms
+    /// 34 commands' images, `MeshSessionEdit.setSnapshots` is called by 30
+    /// session tools from outside the hierarchy, and `setEdit` by three more.
+    /// A `protected` setter would force each of those through a per-class
+    /// forwarder — which is exactly the duplication this task removes.
+    final void noteUndoRecorded() { undoRecorded_ = true; }
+
+    /// Drop the declaration. For a command that abandons a half-captured image
+    /// on a failed forward (`RecordedUndo.disarm`'s partner), or that has
+    /// already put its image back and must not do so twice.
+    final void forgetUndoRecord() { undoRecorded_ = false; }
+
+    /// True once an undo image has been declared. Public because several
+    /// commands ALSO use it as their redo discriminator (`isOperationInverse`,
+    /// "a second `evaluate` must not record a second delta over the first") —
+    /// that reader used to be a private `recorded_` beside this one.
+    final bool undoRecorded() const { return undoRecorded_; }
+
+    /// True once `apply()` has run and its kernel answered yes.
+    final bool forwardApplied() const { return forwardApplied_; }
+
+    /// Report a GENUINE restore failure from inside `revertImpl()`. THE ONLY
+    /// way `revert()` answers `false` for a command that recorded something.
+    /// `why` is one clause, in the same voice as `refusalReason()`.
+    ///
+    /// NEVER for emptiness. "I recorded nothing" is not a failure and is not
+    /// reachable here anyway — `revert()` answered for it before `revertImpl()`
+    /// was entered.
+    protected final void failRevert(string why) {
+        revertFailed_  = true;
+        revertFailure_ = why.length ? why : "restore failed";
+    }
+
+    /// WHY the last `revert()` answered false, in one clause, or "" when it
+    /// did not fail.
+    final string revertFailureReason() const { return revertFailure_; }
+
+    /// Restore the pre-apply mesh/selection/state.
+    ///
+    /// `final`: the three-state answer above is not a convention a command can
+    /// opt out of. A command overrides `revertImpl()`.
+    final bool revert() {
+        if (!undoRecorded_) return forwardApplied_;
+        revertFailed_  = false;
+        revertFailure_ = null;
+        revertImpl();
+        return !revertFailed_;
+    }
+
+    /// THE OVERRIDE POINT. Entered only when an undo image exists, so a body
+    /// never has to ask whether there is one.
+    ///
+    /// AN OVERRIDE MEANS "THIS COMMAND IS UNDOABLE". Task 0705 deleted 41
+    /// overrides that were a bare `return false;` — the default, retyped. They
+    /// cost nothing at runtime and a real amount at reading time: with them
+    /// present, "does this class override revert?" answered nothing, so the
+    /// question a reader actually has (is this command on the undo stack?) had
+    /// to be re-answered by reading each body. Do not restate the default
+    /// here; silence is the statement.
+    ///
+    /// The base body is reached only by a command that declared an undo image
+    /// and then did not say how to put it back — a contradiction, so it fails
+    /// loudly rather than answering a silent `true`.
+    protected void revertImpl() {
+        failRevert("this command declared an undo image but overrides no revertImpl()");
+    }
+
+    // WHY the last apply() returned false, in one clause — or "" when the
+    // command has nothing to add beyond "it declined". The dispatch funnel
+    // (CommandExecutor.applyOrRefire) appends it to the generic
+    // "command 'x' did not apply" it throws, so a script / HTTP / panel caller
+    // is told WHICH argument it got wrong instead of only that something was.
+    //
+    // Empty by default, and the appended message is byte-identical to the old
+    // one for every command that does not override this — opting in is per
+    // command, and worth it exactly where a command refuses for several
+    // different reasons (a bad index vs. an unreadable path vs. a row of the
+    // wrong kind all read the same otherwise). A command that overrides it
+    // owes the reason a reset at the top of apply(): the value must describe
+    // the LATEST call, since a command object can be applied more than once
+    // (redo, re-dispatch).
+    // Task 0654: the BASE applyImpl() has a refusal of its own now (no edit
+    // target), so the default is no longer the empty string but whatever the
+    // base recorded on the latest call. Commands that override applyImpl()
+    // never reach the base branch, so this stays "" for them unless they also
+    // override this method; commands that override BOTH keep their own reason,
+    // which is correct — they did not go through the base refusal either.
+    protected string baseRefusal_;
+
+    string refusalReason() const { return baseRefusal_; }
+
+    // TASK 0669 — does running this command require a mesh edit target?
+    //
+    // THE POINT: this is the SAME question `apply()` asks, asked WITHOUT
+    // running the command, so a button can be drawn unavailable BEFORE the
+    // press instead of the press being the only way to find out. 0654 made the
+    // refusal correct and left it invisible: the button looked exactly like a
+    // working one.
+    //
+    // The default answer is derived from the command's own TYPE — an
+    // `Operator` command reaches its kernel through the base `applyImpl()`
+    // above and is refused there, so `needsEditTarget` is exactly "am I an
+    // Operator". Nothing enumerates command NAMES anywhere: a new mesh
+    // operator is covered the day it is written, and a list that could drift
+    // from behaviour is never created (which is the whole reason this is a
+    // method on `Command` and not a `requires:` key in `config/buttons.yaml`).
+    //
+    // Override it when a command writes the mesh through an `applyImpl()` of
+    // its own and therefore never reaches the base branch — `ToolHeadlessCommand`
+    // is the one such case in the build (it runs a Tool's `applyHeadless()`
+    // against `*mesh`), and it pairs the override with the
+    // `refusedForNoEditTarget()` guard below. An override that ADDS the
+    // requirement without the guard would make the button lie in the other
+    // direction: grey, but working.
+    //
+    // MUST BE A TYPE PROPERTY, NOT LIVE STATE. `Registry.cacheSupportedModes`
+    // snapshots this off one COLD instance per registered id at startup (the
+    // same walk that caches `supportedModes()` / `params()`, and for the same
+    // reason: a factory call is GL work that may not happen on the HTTP
+    // thread). A state-dependent answer would stale that cache.
+    bool needsEditTarget() const {
+        import vibe3d.editing.pipeline.contracts.operator : Operator;
+        return (cast(const(Operator)) this) !is null;
+    }
+
+    // TASK 1521 — does running this command THROW AWAY unsaved work?
+    //
+    // THE POINT: the guard is a property of the ACTION, not a list of command
+    // names kept somewhere else. Before this, exactly one path asked
+    // `docDirty()` — the quit confirm (0434) — so File → New and File → Open
+    // replaced the document in silence. A fourth such path already existed
+    // when this was written (`file.import.*`, which is the same `FileLoad`),
+    // which is the whole argument for putting the question on the command
+    // rather than on each call site.
+    //
+    // NOT NAMED "replaces the document": quitting replaces nothing, and the
+    // question is the same one — "is unsaved work about to become
+    // unreachable". Declared `true` by `SceneReset` (file.new / scene.reset),
+    // `FileLoad` (file.open / file.import.*), `MeshLoadRaw` and `FileQuit`.
+    //
+    // MUST BE A TYPE PROPERTY, NOT LIVE STATE, for the same reason
+    // `needsEditTarget` must: `Registry.cacheSupportedModes` snapshots it off
+    // one COLD instance per registered id at startup, and a state-dependent
+    // answer would stale that cache.
+    //
+    // The declaration is checked against BEHAVIOUR, in both directions, by
+    // `tests/test_discard_census.d`: a command whose result does not depend on
+    // what the document held before it threw the work away, and the census
+    // fails an undeclared one AND a declared one it could not make discard.
+    bool discardsUnsavedWork() const { return false; }
+
+    // The refusal a mesh-writing command owes when there is no edit target,
+    // as a guard any `apply()` can open with. Returns true when the command
+    // must decline — and records the reason, so the dispatch funnel's message
+    // and the disabled button's tooltip read the same sentence.
+    //
+    // Uninstalled resolver means "there is a target" (see `g_editTargetResolver`).
+    protected final bool refusedForNoEditTarget() {
+        if (needsEditTarget()
+            && g_editTargetResolver !is null && !g_editTargetResolver()) {
+            baseRefusal_ = kNoEditTargetReason;
+            return true;
+        }
+        baseRefusal_ = "";
+        return false;
+    }
+
+    // Classify the command. BASE default is CmdFlags.Model — most
+    // commands alter scene state and are therefore undoable. Read-only /
+    // view-only / transient commands override this to drop Model (and
+    // pick UI or SideEffect as appropriate).
+    CmdFlags cmdFlags() const { return CmdFlags.Model; }
+
+    // Whether this command should land on the undo stack after a
+    // successful apply(). Layered, in priority order:
+    //
+    //   1. UndoSuppress  → false (explicit opt-OUT always wins, even over a
+    //                      Model bit — author takes responsibility).
+    //   2. UndoForce     → true  (explicit opt-IN; lands a command that carries
+    //                      neither Model nor UiState).
+    //   3. derived       → (Model | UiState) != 0 — the default from P5: a
+    //                      command is undoable iff it alters scene/document
+    //                      state (Model-undo class) OR undoable UI state
+    //                      (UiState, the UI-undo class).
+    //
+    // UndoForce/UndoSuppress are GENUINE special cases the derived rule cannot
+    // express — NOT patches over a mis-derived rule (audit 0062 B5 re-verified,
+    // task 0070): a transient tool-preview edit (e.g. BoxLiveEditCommand,
+    // box.d) is correctly SideEffect (mutates no committed mesh) yet must be
+    // Ctrl+Z-steppable → UndoForce. UndoSuppress is its dual (a Model mutation
+    // the author marks unrecoverable). `box.d`'s BoxLiveEditCommand is the one
+    // production UndoForce user; UndoSuppress has only test users today but is
+    // kept as the legitimate opt-out. Do NOT remove these by "fixing" the rule —
+    // reclassifying box to Model would be factually wrong (and wouldn't even
+    // change its history class, which is already Model via Undoable&&!UiUndo).
+    final bool isUndoable() const {
+        CmdFlags cf = cmdFlags();
+        if (cf & CmdFlags.UndoSuppress) return false;
+        if (cf & CmdFlags.UndoForce)    return true;
+        return (cf & (CmdFlags.Model | CmdFlags.UiState | CmdFlags.ToolLifecycle)) != 0;
+    }
+
+    // Which undo CLASS this command belongs to once it lands on the stack.
+    // UI-undo (selection / edit-mode state) is undoable but distinct from
+    // Model-undo (geometry). A command is UI-undo iff it carries UiState and
+    // NOT Model (a command touching real geometry stays Model-class even if it
+    // also nudges selection — Model dominates). History/panel/tests read this
+    // to tell the two classes apart; Ctrl+Z behavior is identical for both.
+    final bool isUiUndo() const {
+        CmdFlags cf = cmdFlags();
+        return (cf & CmdFlags.UiState) != 0 && (cf & CmdFlags.Model) == 0;
+    }
+
+    // Short human-readable label. Defaults to name() — override for a
+    // friendlier menu / history-viewer string.
+    string label() const { return name(); }
+
+    // Coalescing predicate (op-merge analog). Called by
+    // CommandHistory.recordCoalescing() with `prev` = the command on top of
+    // the undo stack. Return Compatible iff `this` is a continuation of `prev`
+    // that should merge into the existing top entry (so consecutive compatible
+    // edits become ONE undo step). Default: Different — no command coalesces
+    // unless it overrides this. A Compatible verdict obliges the command to
+    // also implement an in-place merge (e.g. mergeFrom()) that the history
+    // invokes on `prev`.
+    CompareResult compareOp(const Command prev) const {
+        return CompareResult.Different;
+    }
+
+    // In-place merge of a newer, COMPATIBLE command into THIS (the existing
+    // top undo entry), invoked by CommandHistory.recordCoalescing() right after
+    // compareOp() returned Compatible. The contract: keep THIS entry's pre-state
+    // (the state before the FIRST command of the run) and adopt `newer`'s
+    // post-state, so the coalesced entry's revert() unwinds the whole run and
+    // its apply()/redo lands the latest result. The dispatcher has ALREADY
+    // applied `newer`, so the mesh holds the merged post-state — do not mutate
+    // here. Return true on a successful merge. Default false: a command that
+    // never returns Compatible from compareOp() never needs to override this.
+    // (Type-erased base hook so the history module stays command-type-agnostic;
+    // each coalescing command downcasts `newer` to its own type.)
+    bool mergeFrom(Command newer) { return false; }
+
+    // Change-scope metadata (doc/undo_change_tracker_plan.md, Phase 4 §b).
+    // Declares which classes of mesh state an op touches via a scope bitfield.
+    // Default None — most commands do
+    // not carry topology-scope provenance. The delta-backed migrated commands
+    // (edge extrude / delete / remove / dissolve) override it to Geometry|Marks.
+    // Lightweight metadata only: no speculative consumer machinery is built — the
+    // history panel may surface it, but nothing depends on it yet.
+    MeshEditScope editScope() const { return MeshEditScope.None; }
+
+    // Whether this command's undo is stored as an OPERATION INVERSE (a per-mutation
+    // MeshEditDelta / op-log replayed LIFO) rather than a whole-mesh MeshSnapshot
+    // pair (parent plan P3 formalization). Default false — snapshot-backed. The
+    // delta-backed commands override → true. Marker/metadata only.
+    bool isOperationInverse() const { return false; }
+
+    // Schema: list of parameters. Default: none. Commands that surface
+    // an args dialog or accept JSON params via /api/command override this.
+    //
+    // TASK 4062 — this list is also the POSITIONAL ORDER. `command_args.bindArgs`
+    // fills slot i from the i-th positional argument, for every funnel, so a
+    // command's declaration is the single statement of what its arguments are
+    // and in which order they arrive. Before 4062 the HTTP dispatcher carried
+    // four hand-written injectors that cast to 37 concrete classes and filled
+    // their fields through setters, while the keyboard funnel used declaration
+    // order over `params()` — so the same line bound differently depending on
+    // which door it came in by.
+    Param[] params() { return []; }
+
+    // ---- The `?` read-back protocol (task 4062) ---------------------------
+    //
+    // `cmd <target> <attr> ?` READS the named attribute instead of writing it:
+    // the command resolves the attribute, boxes the live value as JSON and
+    // mutates nothing. It was three private, non-virtual `isQuery()` /
+    // `queryResultJsonOrEmpty()` pairs on three unrelated command classes
+    // (`tool.attr`, `tool.pipe.attr`, `layer.attr`), reachable only through
+    // three copy-pasted `cast` blocks in the HTTP dispatcher — which is why a
+    // `?` line entered from the keyboard funnel silently WROTE the literal
+    // string "?" instead of reading anything.
+    //
+    // It is on the base because the DISPATCHER needs to ask the question, and
+    // a dispatcher that has to know the concrete class in order to ask it can
+    // only ever serve the classes someone remembered to add.
+    //
+    // A command opts in by overriding `acceptsQuery()`; only then does
+    // `bindArgs` honour a `?` in a value slot. That gate is load-bearing
+    // rather than ceremonial: without it, `select.element vertex ?` would set
+    // the flag on a command with no read-back behaviour, and the dispatcher's
+    // short-circuit would apply it, answer an empty result and record no
+    // history — a silent wrong answer in place of an ordinary refusal.
+    bool acceptsQuery() const { return false; }
+
+    /// True when the payload carried the `?` idiom AND this command accepts it.
+    /// `final`: the flag has one writer (`markQuery`, from `bindArgs`), so a
+    /// second, class-local notion of "am I a query" cannot drift away from the
+    /// one the dispatcher reads.
+    final bool isQuery() const { return query_; }
+
+    /// Called by `bindArgs` when the value slot held the literal `?`. No-op
+    /// unless the command opted in via `acceptsQuery()`.
+    final void markQuery() { if (acceptsQuery()) query_ = true; }
+
+    /// The boxed read-back, serialised, for the HTTP marshal. Empty when this
+    /// command is not a query or resolved nothing. Overridden by the three
+    /// commands that answer a `?`.
+    string queryResultJson() const { return ""; }
+
+    private bool query_;
+
+    /// Named payload keys the SCHEMA did not claim, handed over whole (task
+    /// 4062). Default: ignored — an argument a command did not declare is not
+    /// an argument, and dropping it is what every funnel already did.
+    ///
+    /// One override, `tool.set`, which forwards `name:value` pairs to the
+    /// params() of the TOOL it activates — a schema this command cannot know
+    /// at declaration time, and the one shape the positional law genuinely
+    /// cannot express. It is a base hook rather than a cast in the funnel so
+    /// that the funnel stays free of concrete command classes; that freedom is
+    /// the whole point of the task.
+    void setUnboundArgs(JSONValue named) {}
+
+    // Called immediately before opening an args dialog. Override to set
+    // defaults that depend on the current selection / scene state.
+    void dialogInit() {}
+
+    // Called by the renderer after a parameter value changes. Override
+    // to recompute dependent parameters (cross-field rules).
+    void onParamChanged(string name) {}
+
+    // Whether the named parameter widget should be enabled. Override for
+    // cross-field graying (arg-enable callback).
+    bool paramEnabled(string name) const { return true; }
+
+    // Per-parameter hint overrides at runtime (e.g. cap a range to mesh
+    // size).
+    void paramHints(string name, ref ParamHints hints) {}
+
+    // Edit modes in which this command makes sense. The status-bar /
+    // side-panel button auto-disables when the current `editMode` is
+    // not in this list — visual cue that the row is "available but
+    // not in this mode". `apply()` may also throw defensively (e.g.
+    // mesh.subdivide enforces Polygons inside apply too). Default:
+    // every mode — most commands are mode-agnostic.
+    EditMode[] supportedModes() const {
+        return [EditMode.Vertices, EditMode.Edges, EditMode.Polygons];
+    }
+
+    this(Mesh* mesh, ref View view, EditMode editMode) {
+        this.mesh = mesh;
+        this.view = view;
+        this.editMode = editMode;
+    }
+
+    // Read-only accessors to the construction context. Needed so a wrapper
+    // command in another module (e.g. CompositeCommand in command_history.d)
+    // can forward another command's mesh/view/editMode into the base ctor —
+    // `protected` fields are only reachable on `this`, not on a sibling
+    // instance across module boundaries.
+    final Mesh*    meshPtr() { return mesh; }
+    final ref View viewRef() { return view; }
+    final EditMode editModeVal() const { return editMode; }
+
+    // -----------------------------------------------------------------------
+    // THE RULE (task 0621) — which question a command asks about selection
+    // -----------------------------------------------------------------------
+    // A command that branches on "which kind of thing is the user selecting
+    // right now" asks `currentType()`. It NEVER reads `editMode` for that
+    // question.
+    //
+    // WHY the two are not interchangeable: `editMode` is a MATERIALIZED VIEW
+    // of the geometry part of the selection type (source/seltype.d). Under
+    // `SelType.Item` it deliberately RETAINS the most-recent geometry type
+    // rather than clearing, so geometry picking and drawing always have a
+    // defined mode. That is correct for picking and wrong for a command: with
+    // an item selected the user sees NO geometry selection on screen, while
+    // `editMode` still reads `Polygons` and the stale face selection from
+    // before the switch is still in the mesh. A command that branches on
+    // `editMode` therefore acts on geometry the user cannot see and did not
+    // choose. app.d's Tab handler already asks `currentSelType(selTypeOrder)`;
+    // before this rule the command layer asked the derivative, so the two
+    // layers answered the same question differently and every new command was
+    // a coin flip about which one it copied.
+    //
+    // The consequence that falls out, and the reason no command needs its own
+    // Item branch: under `SelType.Item` no geometry type is current, so THERE
+    // IS NO CURRENT GEOMETRY SELECTION — a geometry-scoped command sees the
+    // selection as EMPTY and takes whatever it already does for "nothing
+    // selected" (usually: operate on the whole mesh).
+    //
+    // THE ONE EXCEPTION, named so the next reader does not "fix" it: a
+    // command that is asking "which geometry PLANE do I read/write", not
+    // "what is the user selecting", legitimately keeps `editMode` — that is
+    // exactly what the view is for, and it must stay defined under Item. The
+    // commands that WRITE the mode through `editModePtr` (select.typeFrom,
+    // select.convert, select.fill, mesh.select, scene.reset, scene.loadMesh,
+    // mesh.selectionEdit) are all of this kind: they are establishing the
+    // geometry type, not reacting to it, and they route their write through
+    // app.d's geometry-type funnel which updates the order. Reading the
+    // REMEMBERED type on purpose is legitimate there and nowhere else so far;
+    // if you add such a command, say in a comment that you meant it.
+    //
+    // Mechanism: `Registry.makeCommand` attaches one live provider to every
+    // constructed registered command, so this is the same authority the
+    // toolpipe's SubjectPacket carries. Operator commands can equivalently
+    // read `subj.selType` off the packet they already hold — `applyImpl()` above
+    // stamps it from here.
+    //
+    // HAZARD, for whoever makes a composed command type-aware: the provider is
+    // setter-injected onto the instance construction returned, so a command
+    // that builds another command inside itself (CompositeCommand, the
+    // copilot cycle/select pair, the vertex-edit and layer-xform run merges,
+    // the layer-delete an image command delegates to) hands the inner
+    // instance mesh/view/editMode and NOT the provider — the inner one
+    // silently takes `currentType()`'s fallback. That is inert today because
+    // no wrapped command branches on the current type; the moment one does,
+    // forward the provider explicitly (`inner.setSelTypeProvider(...)`)
+    // rather than assuming construction carried it.
+
+    // Install the live selection-type authority. Called by Registry's command
+    // construction door, never by a command itself —
+    // same injection shape as `setResolvedVpProvider`. `final` so no override
+    // can bypass `currentType()`.
+    final void setSelTypeProvider(SelType delegate() provider) {
+        selTypeSrc_ = provider;
+    }
+
+    // The CURRENT selection type — the sole accessor a command body should
+    // use to ask "what is the user selecting right now".
+    //
+    // Falls back to `geometrySelType(editMode)` when no provider is wired.
+    // That fallback is EXACTLY the pre-0621 behaviour (it re-derives the type
+    // from the captured mode), so an unwired command — a unittest that
+    // constructs the class directly, a standalone/headless caller — behaves
+    // bit-identically to before and the change's blast radius is confined to
+    // the wired path. It is a compatibility shim, not a second authority: the
+    // production path always has the provider, because registration.d wraps
+    // every factory rather than opting commands in one at a time (opting in
+    // per command is what let the two layers drift apart in the first place).
+    protected final SelType currentType() {
+        if (selTypeSrc_ !is null) return selTypeSrc_();
+        return geometrySelType(editMode);
+    }
+
+    // Injection point for the follow-resolved viewport snapshot (viewport
+    // camera single-source, doc/tasks/work/0181). Nullable delegate set by a
+    // command factory right after construction (app.d), never by the command
+    // itself. `final` so no override can bypass `effectiveViewport()`.
+    final void setResolvedVpProvider(Viewport delegate() provider) {
+        resolvedVpProvider = provider;
+    }
+
+    // The SOLE accessor a command body should use to obtain a camera
+    // snapshot for screen-space math (camera-plane cuts, symmetry-packet
+    // capture, workplane picks). Prefers the injected resolved-snapshot
+    // provider; falls back to the cell's RAW OWN transform inputs
+    // (`view.viewportWith(view.focus, ...)` — exactly what `view.viewport()`
+    // computes, minus the write-back) when no provider was set.
+    //
+    // HAZARD: the null-provider fallback is the cell's raw own snapshot —
+    // on a linked-follower cell that is precisely the wrong answer (it
+    // ignores `resolveFollow`'s focus/distance/az/el substitution), which is
+    // the mechanism behind the follower-cell mispick this task removes. The
+    // fallback is safe here ONLY because every command that calls this
+    // (`MeshScreenSlice` / `MeshSelect` / `MeshTransform`) is `new`'d in
+    // exactly ONE place — its factory delegate in app.d's `run()` — and that
+    // factory sets `resolvedVpProvider` immediately after construction, so
+    // production code never takes the null branch (it fires only in a
+    // headless/standalone unit where "own" already equals "resolved", e.g.
+    // no active viewport manager). Do not add a second construction site for
+    // these commands without also wiring the provider, and do not read
+    // `resolvedVpProvider` directly anywhere but here.
+    protected final Viewport effectiveViewport() {
+        if (resolvedVpProvider !is null) return resolvedVpProvider();
+        return view.viewportWith(view.focus, view.distance, view.orientation);
+    }
+
+protected:
+    Mesh* mesh;
+    View view;
+    EditMode editMode;
+
+private:
+    // Live "current selection type" authority (task 0621). Null until the
+    // app's command registration injects it; read ONLY through
+    // `currentType()`, which owns the null fallback.
+    SelType delegate() selTypeSrc_;
+    Viewport delegate() resolvedVpProvider;
+}
+
+
+
+
+
+
+
+// ---------------------------------------------------------------------------
+// RunMergeable — task 0614 Phase 4 (doc/item_mode_transform_plan.md, §Undo).
+//
+// A command that can absorb the LATER commands of the same in-session run
+// into itself, so `CommandHistory.consolidate` can collapse the run into ONE
+// surviving entry. `this` is the run's EARLIEST entry (it owns the run-start
+// `before`); `later` are the rest of the run, oldest -> newest. Return the
+// merged command to splice in at the run's position, or `null` to decline —
+// a decline leaves the stack untouched, exactly like an unrecognized command
+// type falling through `consolidate`'s existing `MeshVertexEdit` arm.
+//
+// `consolidate()` tries this arm only after the `MeshVertexEdit` arm has
+// declined (the gathered run is not all `MeshVertexEdit`), so an ordinary
+// vertex-edit run is byte-identical to before this interface existed.
+// `LayerXformEdit` (commands/layer/xform_edit.d) is the one production
+// implementer today.
+// ---------------------------------------------------------------------------
+interface RunMergeable {
+    Command mergeRunTail(Command[] later);
+}

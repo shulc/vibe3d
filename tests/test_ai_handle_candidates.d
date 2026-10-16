@@ -10,12 +10,12 @@ import vibe3d.editing.interaction.data.ai.interaction : AiAdvisorDecision, AiCan
     AiInteractionContext, AiInteractionPhase, AiIntent;
 import bindbc.sdl : SDL_BUTTON_LEFT, SDL_MouseButtonEvent;
 import vibe3d.editing.contracts.editmode : EditMode;
-import handler : Handler, HandleState, ToolHandles, setHandleAiAdvisor;
+import vibe3d.editing.tools.interactive.handler : Handler, HandleState, ToolHandles, setHandleAiAdvisor;
 import vibe3d.util.spatial.spatial : Viewport;
 import vibe3d.mesh.core.mesh : Mesh, makeCube;
-import mesh_gpu : GpuMesh;
+import vibe3d.viewport.gpu.mesh_gpu : GpuMesh;
 import vibe3d.editing.pipeline.contracts.operator : VectorStack;
-import tools.transform.xfrm_transform : XfrmTransformTool,
+import vibe3d.editing.tools.interactive.tools.transform.xfrm_transform : XfrmTransformTool,
     xfrmCompactScaleHeadFallbackForTest, xfrmLatchedHandlePartForTest;
 
 void main() {}

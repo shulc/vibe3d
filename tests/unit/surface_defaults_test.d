@@ -13,11 +13,11 @@ import std.math      : abs, isNaN;
 import std.path      : buildPath, dirName;
 import std.string    : indexOf;
 
-import math   : Vec3;
+import vibe3d.util.math.math   : Vec3;
 import vibe3d.mesh.core.mesh   : Mesh, Surface, kSurfaceSlots, effectiveSurfaceSlot, kDefaultSmoothingAngleDeg;
-import shader : packSurfaceSlots, LIT_MAX_MATS, shaderSourceForValidation;
-import io.scene_ir : ImportedSurface, roughnessFromShininess, applyAssimpMaterialKeys;
-import light_rig : specPowerForRoughness;
+import vibe3d.viewport.gpu.shader : packSurfaceSlots, LIT_MAX_MATS, shaderSourceForValidation;
+import vibe3d.documents.interchange.io.scene_ir : ImportedSurface, roughnessFromShininess, applyAssimpMaterialKeys;
+import vibe3d.viewport.display_policy.light_rig : specPowerForRoughness;
 
 private enum root = dirName(dirName(dirName(__FILE_FULL_PATH__)));
 

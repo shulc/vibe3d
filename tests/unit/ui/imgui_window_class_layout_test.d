@@ -1,6 +1,6 @@
 module tests.unit.ui.imgui_window_class_layout_test;
 
-import ui.imgui_window_class : ImGuiWindowClassMirror;
+import vibe3d.ui.editor.ui.imgui_window_class : ImGuiWindowClassMirror;
 
 private extern(C) nothrow @nogc {
     ImGuiWindowClassMirror* ImGuiWindowClass_ImGuiWindowClass();

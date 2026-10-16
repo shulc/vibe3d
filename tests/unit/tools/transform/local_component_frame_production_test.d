@@ -5,7 +5,7 @@ import tests.unit.census_symbols : readText = wave15ReadText;
 import std.json : JSONValue, JSONType, parseJSON;
 import std.math : abs;
 import std.format : format;
-import math : Vec3, frameMatrix, frameMatrixInverse;
+import vibe3d.util.math.math : Vec3, frameMatrix, frameMatrixInverse;
 import vibe3d.util.spatial.spatial : ModelSpace;
 import vibe3d.mesh.core.mesh : Mesh;
 import vibe3d.documents.model.document : primaryModelSpaceResolver, ItemXform;
@@ -13,10 +13,10 @@ import vibe3d.editing.contracts.editmode : EditMode;
 import vibe3d.editing.contracts.seltype : SelType;
 import vibe3d.editing.pipeline.contracts.operator : VectorStack;
 import vibe3d.editing.pipeline.contracts.toolpipe.packets : SubjectPacket, ActionCenterPacket, AxisPacket;
-import toolpipe.stages.actcenter : ActionCenterStage;
-import toolpipe.stages.axis : AxisStage;
-import toolpipe.pipeline : ToolPipeContext, g_pipeCtx;
-import tools.transform.xfrm_transform : XfrmTransformTool;
+import vibe3d.editing.pipeline.evaluation.toolpipe.stages.actcenter : ActionCenterStage;
+import vibe3d.editing.pipeline.evaluation.toolpipe.stages.axis : AxisStage;
+import vibe3d.editing.pipeline.runtime.toolpipe.pipeline : ToolPipeContext, g_pipeCtx;
+import vibe3d.editing.tools.interactive.tools.transform.xfrm_transform : XfrmTransformTool;
 import vibe3d.editing.params.params : injectParamsInto;
 
 private double number(JSONValue j) { return j.type == JSONType.integer ? cast(double)j.integer : j.floating; }
@@ -43,13 +43,13 @@ private void load(ref Mesh mesh, JSONValue input) {
 }
 
 unittest {
-    import session_owner : Session;
-    import registry : Registry;
-    import live_registration_roles : LiveSessionRole, LiveViewModeRole, LiveView;
-    import transform_tool_registration : TransformToolDeps, registerTransformToolCommands;
-    import mesh_gpu : GpuMesh;
-    import command_history : CommandHistory;
-    import pipe_gizmo_host : PipeGizmoHost;
+    import vibe3d.runtime.application_core.session_owner : Session;
+    import vibe3d.editing.tools.interactive.registry : Registry;
+    import vibe3d.runtime.application_core.live_registration_roles : LiveSessionRole, LiveViewModeRole, LiveView;
+    import vibe3d.apps.desktop.transform_tool_registration : TransformToolDeps, registerTransformToolCommands;
+    import vibe3d.viewport.gpu.mesh_gpu : GpuMesh;
+    import vibe3d.editing.commands.runtime.command_history : CommandHistory;
+    import vibe3d.editing.tools.interactive.pipe_gizmo_host : PipeGizmoHost;
     import vibe3d.viewport.camera.view : View;
     auto captured=parseJSON(readText("tests/fixtures/local_component_frame/captured.json"));
     auto savedSpace=primaryModelSpaceResolver;scope(exit) primaryModelSpaceResolver=savedSpace;
@@ -97,15 +97,15 @@ unittest {
 }
 
 unittest { // Real registration products and independent Rotate operation contract.
-    import session_owner : Session;
-    import registry : Registry;
-    import live_registration_roles : LiveSessionRole, LiveViewModeRole, LiveView;
-    import transform_tool_registration : TransformToolDeps, registerTransformToolCommands;
-    import mesh_gpu : GpuMesh;
-    import command_history : CommandHistory;
-    import pipe_gizmo_host : PipeGizmoHost;
+    import vibe3d.runtime.application_core.session_owner : Session;
+    import vibe3d.editing.tools.interactive.registry : Registry;
+    import vibe3d.runtime.application_core.live_registration_roles : LiveSessionRole, LiveViewModeRole, LiveView;
+    import vibe3d.apps.desktop.transform_tool_registration : TransformToolDeps, registerTransformToolCommands;
+    import vibe3d.viewport.gpu.mesh_gpu : GpuMesh;
+    import vibe3d.editing.commands.runtime.command_history : CommandHistory;
+    import vibe3d.editing.tools.interactive.pipe_gizmo_host : PipeGizmoHost;
     import vibe3d.viewport.camera.view : View;
-    import math : pivotRotationMatrix, applyAffine;
+    import vibe3d.util.math.math : pivotRotationMatrix, applyAffine;
     import std.math : PI;
     import std.string : count;
     auto captured=parseJSON(readText("tests/fixtures/local_component_frame/captured.json"));
@@ -154,9 +154,9 @@ unittest { // Real registration products and independent Rotate operation contra
 }
 
 unittest { // Construction controls for transported normals and alignment branches.
-    import toolpipe.stages.axis : localVirtualVertexNormals;
-    import toolpipe.obbox : alignLocalComponentFrames;
-    import math : cross, normalize, pivotRotationMatrix;
+    import vibe3d.editing.pipeline.evaluation.toolpipe.stages.axis : localVirtualVertexNormals;
+    import vibe3d.editing.pipeline.evaluation.toolpipe.obbox : alignLocalComponentFrames;
+    import vibe3d.util.math.math : cross, normalize, pivotRotationMatrix;
     import std.math : PI;
     auto savedSpace=primaryModelSpaceResolver;scope(exit) primaryModelSpaceResolver=savedSpace;
     auto savedPipe=g_pipeCtx;scope(exit) g_pipeCtx=savedPipe;

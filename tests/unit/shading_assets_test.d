@@ -16,7 +16,7 @@ import std.path : buildPath, dirName, baseName;
 import std.string : strip, splitLines, toLower;
 
 import vibe3d.documents.image_codec.io.image_decode : decodePng16;
-import viewport_env : kEnvAssets, kMatcapAssets, kEnvTargetMeanLuma, decodeShadingImage;
+import vibe3d.viewport.gpu.viewport_env : kEnvAssets, kMatcapAssets, kEnvTargetMeanLuma, decodeShadingImage;
 
 private enum repoRoot = dirName(dirName(dirName(__FILE_FULL_PATH__)));
 private enum assetDir = buildPath(repoRoot, "packages", "viewport-gpu", "assets", "shading");

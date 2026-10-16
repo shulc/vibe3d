@@ -20,13 +20,13 @@ import std.math : abs, round;
 import tests.unit.census_symbols : blankNonCode, blankUnittestBodies, containsWord,
     isIdentChar, symbolTokenHits;
 
-import math : Vec3, lookAt, orthographicMatrix, perspectiveMatrix;
+import vibe3d.util.math.math : Vec3, lookAt, orthographicMatrix, perspectiveMatrix;
 import vibe3d.util.spatial.spatial : Viewport, projectToWindow;
-import drag : ComponentGuide, HandleDrag, DragFrame, DragKind, screenAxisDelta, planeDragDelta, planeJacobian;
-import viewgrid : vectorSnap;
-import tools.transform.move : MoveTool;
-import tools.create.box : BoxTool;
-import tools.create.primitive_create_tool : PrimitiveCreateTool;
+import vibe3d.editing.tools.interactive.drag : ComponentGuide, HandleDrag, DragFrame, DragKind, screenAxisDelta, planeDragDelta, planeJacobian;
+import vibe3d.editing.selection.query.viewgrid : vectorSnap;
+import vibe3d.editing.tools.interactive.tools.transform.move : MoveTool;
+import vibe3d.editing.tools.interactive.tools.create.box : BoxTool;
+import vibe3d.editing.tools.interactive.tools.create.primitive_create_tool : PrimitiveCreateTool;
 
 // 1. The fence, compiled (allMembers sees private members).
 static assert(![__traits(allMembers, MoveTool)].canFind("snapClient"));
@@ -373,8 +373,8 @@ unittest {
 unittest {
     import vibe3d.viewport.camera.view : View;
     import vibe3d.util.spatial.spatial : Orientation, projectToWindowFull, screenPointToRay;
-    import drag : preparePlaneDrag;
-    import viewgrid : viewWorldPerPixel, viewVectorQuantum;
+    import vibe3d.editing.tools.interactive.drag : preparePlaneDrag;
+    import vibe3d.editing.selection.query.viewgrid : viewWorldPerPixel, viewVectorQuantum;
     import std.math : atan;
     import std.stdio : writefln;
     const r=Vec3(.2004414573445789f,.5011036433614473f,-.8418541208472314f);

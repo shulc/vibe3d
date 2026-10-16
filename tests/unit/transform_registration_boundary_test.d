@@ -8,17 +8,17 @@ import tests.unit.census_symbols : exists = wave15Exists;
 import std.algorithm : sort, canFind;
 
 import core.exception : AssertError;
-import command_history : CommandHistory;
-import commands.layer.xform_edit : LayerXformEdit;
-import commands.mesh.morph_edit : MeshMorphEdit;
-import commands.mesh.vertex_edit : MeshVertexEdit;
-import live_registration_roles : LiveSessionRole, LiveViewModeRole;
-import mesh_gpu : GpuMesh;
-import pipe_gizmo_host : PipeGizmoHost;
-import registry : Registry;
-import transform_tool_registration : TransformToolDeps,
+import vibe3d.editing.commands.runtime.command_history : CommandHistory;
+import vibe3d.editing.commands.editor.commands.layer.xform_edit : LayerXformEdit;
+import vibe3d.editing.commands.editor.commands.mesh.morph_edit : MeshMorphEdit;
+import vibe3d.editing.commands.editor.commands.mesh.vertex_edit : MeshVertexEdit;
+import vibe3d.runtime.application_core.live_registration_roles : LiveSessionRole, LiveViewModeRole;
+import vibe3d.viewport.gpu.mesh_gpu : GpuMesh;
+import vibe3d.editing.tools.interactive.pipe_gizmo_host : PipeGizmoHost;
+import vibe3d.editing.tools.interactive.registry : Registry;
+import vibe3d.apps.desktop.transform_tool_registration : TransformToolDeps,
     registerTransformToolCommands;
-static import transform_tool_registration;
+static import transform_tool_registration = vibe3d.apps.desktop.transform_tool_registration;
 
 import std.array : join;
 import std.file : SpanMode;

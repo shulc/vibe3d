@@ -4,12 +4,12 @@
 // Perspective also draws the work-plane lattice (task 9509, capture K-GR
 // GR_P): `workPlaneLatticeModel`. The drawn-pixel witness is
 // tests/test_view_grid_facing.d.
-module ui.grid_plane_test;
+module vibe3d.ui.editor.ui.grid_plane_test;
 
-import math : Vec3, lookAt, normalize, orthographicMatrix, perspectiveMatrix;
+import vibe3d.util.math.math : Vec3, lookAt, normalize, orthographicMatrix, perspectiveMatrix;
 import vibe3d.util.spatial.spatial : Viewport;
-import toolpipe.stages.workplane : WorkplaneStage;
-import ui.viewport_render : gridPlaneModel, workPlaneLatticeModel;
+import vibe3d.editing.pipeline.evaluation.toolpipe.stages.workplane : WorkplaneStage;
+import vibe3d.ui.editor.ui.viewport_render : gridPlaneModel, workPlaneLatticeModel;
 
 private Viewport camera(Vec3 eye, Vec3 up, bool ortho) {
     Viewport vp;
@@ -85,7 +85,7 @@ private Viewport perspAt(Vec3 back, Vec3 focus, Vec3 up) {
 
 unittest { // the perspective work-plane lattice: auto plane, rounded focus channel
     import std.format : format;
-    import viewgrid : viewGridSizeFor, g_viewGrid;
+    import vibe3d.editing.selection.query.viewgrid : viewGridSizeFor, g_viewGrid;
     import std.math : abs;
     struct Cell { string name; Vec3 back; Vec3 up; Vec3 focus; Vec3 normal; float offset; }
     // GR_P_* (fixture K-GR.json, focus ~(0.07, 1.0..1.025, 0)): the measured

@@ -1,0 +1,1026 @@
+module vibe3d.apps.desktop.editor_app;
+
+// Task 0415 (campaign 0407 §B.V1 step 1): the "зачаток EditorApp" context bag
+// threaded through registerTools/registerCommands (source/registration.d),
+// which host the command/tool registration families previously
+// registered inline in app.d's main(). Full design + inventory +
+// verification log: doc/tasks/done/0415-registration-app-decomp.md.
+//
+// Import surface: harvested from app.d's own top-level import block (the
+// same ~234 statements, multi-line ones captured whole) plus three imports
+// that were only function-locally scoped inside main() (Document,
+// CommandHistory, ViewportManager -- EditorApp is a module-scope struct, so
+// these need to be top-level here), plus the version(WithAI) copilot import
+// group mirrored verbatim from app.d's own gating so a modeling-noai build
+// compiles out the same symbols the same way.
+import vibe3d.viewport.subpatch.subpatch_preview : SubpatchPreview;
+import bindbc.sdl;
+import bindbc.opengl;
+import std.string : toStringz;
+import std.stdio : writeln, writefln, File, stderr;
+import std.math : tan, sin, cos, sqrt, PI, abs;
+import std.conv;
+import std.json : JSONValue, JSONType;
+import vibe3d.runtime.http.http_server;
+import vibe3d.editing.commands.runtime.tool_activation_ownership : ToolTransition, DropContext;
+import vibe3d.ui.editor.ui.discard_guard : UiRunOutcome;
+import vibe3d.ui.editor.ui.guard_modal_state : GuardModalState;
+version (web) {
+} else {
+}
+import vibe3d.ui.editor.ui.remesh_modal_state : RemeshModalState;
+import vibe3d.ui.editor.ui.history_panel : HistoryPanelState;
+import vibe3d.util.log.log : logInfo, logWarn, logError;
+import vibe3d.apps.desktop.prefs;
+import ImGui = d_imgui;
+import d_imgui.imgui_h;
+import imgui_impl_sdl2;
+import imgui_impl_opengl3;
+import vibe3d.util.math.math;
+import vibe3d.util.spatial.spatial : ModelSpace;
+import vibe3d.mesh.core.mesh;
+import vibe3d.viewport.gpu.mesh_gpu : GpuMesh;
+import vibe3d.platform.input.eventlog;
+import vibe3d.editing.tools.interactive.handler;
+import vibe3d.editing.tools.interactive.pipe_gizmo_host : PipeGizmoHost;
+import vibe3d.editing.tools.interactive.tools.edit.topology_pen.defs : TopoPenFactories;
+import vibe3d.editing.tools.interactive.tool;
+import vibe3d.editing.contracts.editmode;
+import vibe3d.editing.contracts.seltype;
+import vibe3d.runtime.application_core.session_owner : Session;
+import vibe3d.editing.pipeline.evaluation.toolpipe;
+import vibe3d.editing.pipeline.contracts.operator         : VectorStack;
+import vibe3d.editing.pipeline.contracts.toolpipe.packets : SubjectPacket;
+import vibe3d.editing.pipeline.runtime.toolpipe.pipeline : g_pipeCtx;
+import vibe3d.editing.tools.interactive.gizmo;
+import vibe3d.viewport.camera.view;
+import vibe3d.viewport.gpu.shader;
+import vibe3d.util.profiling.perf_probe : g_perf, Cat, g_frames, Phase, FrameRec, FrameStatsSnapshot;
+import vibe3d.documents.interchange.io.assimp_runtime : initAssimp, shutdownAssimp, isAssimpAvailable;
+import vibe3d.editing.selection.scene_query.bvh_pick : BvhPick;
+import vibe3d.editing.tools.interactive.tools.transform.transform;
+import vibe3d.editing.tools.interactive.tools.transform.move;
+import vibe3d.editing.tools.interactive.tools.deform.push;
+import vibe3d.editing.tools.interactive.tools.deform.bend;
+import vibe3d.editing.tools.interactive.tools.alignment.linear_align_tool;
+import vibe3d.editing.tools.interactive.tools.alignment.radial_align_tool;
+import vibe3d.editing.tools.interactive.tools.transform.scale;
+import vibe3d.editing.tools.interactive.tools.transform.rotate;
+import vibe3d.editing.tools.interactive.tools.create.box;
+import vibe3d.editing.tools.interactive.tools.alignment.mirror;
+import vibe3d.editing.tools.interactive.tools.alignment.radial_sweep_tool;
+import vibe3d.editing.tools.interactive.tools.create.sphere;
+import vibe3d.editing.tools.interactive.tools.create.cylinder;
+import vibe3d.editing.tools.interactive.tools.create.cone;
+import vibe3d.editing.tools.interactive.tools.create.capsule;
+import vibe3d.editing.tools.interactive.tools.create.torus;
+import vibe3d.editing.tools.interactive.tools.create.arc;
+import vibe3d.editing.tools.interactive.tools.create.tube;
+import vibe3d.editing.tools.interactive.tools.create.pen;
+import vibe3d.editing.tools.interactive.tools.create.vertex_place : VertexTool;
+import vibe3d.editing.tools.interactive.tools.edit.edge_extrude : EdgeExtrudeTool;
+import vibe3d.editing.tools.interactive.tools.edit.edge_extend : EdgeExtendTool;
+import vibe3d.editing.tools.interactive.tools.slice.edge_slide : EdgeSlideTool;
+import vibe3d.editing.tools.interactive.tools.edit.poly_extrude : PolyExtrudeTool;
+import vibe3d.editing.tools.interactive.tools.alignment.radial_array_tool : RadialArrayTool;
+import vibe3d.editing.tools.interactive.tools.edit.poly_bevel : PolyBevelTool;
+import vibe3d.editing.tools.interactive.tools.edit.poly_inset_tool : PolyInsetTool;
+import vibe3d.editing.tools.interactive.tools.deform.smooth_shift_tool : SmoothShiftTool;
+import vibe3d.editing.tools.interactive.tools.deform.magnet : MagnetTool;
+import vibe3d.editing.tools.interactive.tools.edit.edge_bevel : EdgeBevelTool;
+import vibe3d.editing.tools.interactive.tools.slice.loop_slice_tool : LoopSliceTool;
+import vibe3d.editing.tools.interactive.tools.slice.slice_tool : SliceTool;
+import vibe3d.editing.tools.interactive.tools.slice.edge_slice_tool : EdgeSliceTool;
+import vibe3d.editing.tools.interactive.tools.edit.reduce : ReductionTool;
+import vibe3d.editing.tools.interactive.tools.alignment.clone_tool : CloneTool;
+import vibe3d.editing.tools.interactive.tools.alignment.array_tool : ArrayTool;
+import vibe3d.editing.tools.interactive.tools.edit.tack : TackTool;
+import vibe3d.editing.tools.interactive.tools.edit.bridge_tool : BridgeTool;
+import vibe3d.editing.tools.interactive.tools.edit.vert_merge_tool : VertexMergeTool;
+import vibe3d.editing.tools.interactive.tools.edit.vertex_bevel_tool : VertexBevelTool;
+import vibe3d.editing.tools.interactive.tools.edit.vertex_extrude_tool : VertexExtrudeTool;
+import vibe3d.editing.tools.interactive.tools.deform.stroke_extrude_tool : StrokeExtrudeTool;
+import vibe3d.editing.tools.interactive.tools.common.command_wrapper : XfrmSmoothTool, XfrmJitterTool, XfrmQuantizeTool;
+import vibe3d.editing.commands.editor.commands.select.connect;
+import vibe3d.editing.commands.editor.commands.select.expand;
+import vibe3d.editing.commands.editor.commands.select.contract;
+import vibe3d.editing.commands.editor.commands.select.loop;
+import vibe3d.editing.commands.editor.commands.select.ring;
+import vibe3d.editing.commands.runtime.commands.select.invert;
+import vibe3d.editing.commands.editor.commands.select.more;
+import vibe3d.editing.commands.editor.commands.select.less;
+import vibe3d.editing.commands.editor.commands.select.between;
+import vibe3d.editing.commands.editor.commands.select.type_from : SelectTypeFromCommand;
+import vibe3d.editing.commands.runtime.commands.select.drop     : SelectDropCommand;
+import vibe3d.editing.commands.runtime.commands.select.element  : SelectElementCommand;
+import vibe3d.editing.commands.editor.commands.select.convert  : SelectConvertCommand;
+import vibe3d.editing.commands.editor.commands.select.fill     : SelectFillHoles, SelectFillInsideLoop;
+import vibe3d.apps.desktop.commands.viewport.fit_selected;
+import vibe3d.apps.desktop.commands.viewport.fit;
+import vibe3d.apps.desktop.commands.file.load;
+import vibe3d.apps.desktop.commands.file.save;
+import vibe3d.editing.commands.editor.commands.mesh.subdivide;
+import vibe3d.editing.commands.editor.commands.mesh.subdivide_faceted;
+import vibe3d.editing.commands.editor.commands.mesh.triple      : MeshTriple;
+import vibe3d.editing.commands.editor.commands.mesh.quadruple   : MeshQuadruple;
+import vibe3d.editing.commands.editor.commands.mesh.detriangulate : MeshDetriangulate;
+import vibe3d.editing.commands.editor.commands.mesh.merge         : MeshMergeFaces;
+import vibe3d.editing.commands.editor.commands.mesh.subpatch_toggle;
+import vibe3d.editing.commands.editor.commands.mesh.set_material;
+import vibe3d.editing.commands.editor.commands.mesh.set_part;
+import vibe3d.editing.tools.interactive.commands.tool.headless : ToolHeadlessCommand;
+import vibe3d.editing.commands.editor.commands.mesh.split_edge;
+import vibe3d.editing.commands.editor.commands.mesh.add_point : MeshAddPoint;
+import vibe3d.editing.commands.editor.commands.mesh.split_face  : MeshSplitFace;
+import vibe3d.editing.commands.editor.commands.mesh.edge_join : MeshEdgeJoin;
+import vibe3d.editing.commands.editor.commands.mesh.spin_edge;
+import vibe3d.editing.commands.editor.commands.mesh.loop_slice : MeshAddLoop, MeshLoopSlice;
+import vibe3d.editing.commands.editor.commands.mesh.session_edit : MeshSessionEdit;
+import vibe3d.editing.commands.editor.commands.mesh.edge_extrude : MeshEdgeExtrude;
+import vibe3d.editing.commands.editor.commands.mesh.vertex_extrude : MeshVertexExtrude;
+import vibe3d.editing.commands.editor.commands.mesh.vertex_bevel   : MeshVertexBevel;
+import vibe3d.editing.commands.editor.commands.mesh.poly_inset : MeshPolygonInset;
+import vibe3d.editing.commands.editor.commands.mesh.spikey : MeshSpikey;
+import vibe3d.editing.commands.editor.commands.mesh.bevel : MeshBevel;
+import vibe3d.editing.commands.editor.commands.mesh.face_extrude : MeshFaceExtrude;
+import vibe3d.editing.commands.editor.commands.mesh.bridge : MeshBridge;
+import vibe3d.editing.commands.editor.commands.mesh.thicken : MeshThicken;
+import vibe3d.editing.commands.editor.commands.mesh.smooth_shift : MeshSmoothShift;
+import vibe3d.editing.commands.editor.commands.mesh.edge_extend : MeshEdgeExtend;
+import vibe3d.editing.commands.editor.commands.mesh.move_vertex;
+import vibe3d.editing.commands.editor.commands.mesh.vertex_new    : MeshVertexNew;
+import vibe3d.editing.commands.editor.commands.mesh.vertex_center : MeshCenterVertices;
+import vibe3d.editing.commands.editor.commands.mesh.vertex_set    : MeshSetPosition;
+import vibe3d.editing.commands.editor.commands.mesh.delete_ : MeshDelete;
+import vibe3d.editing.commands.editor.commands.mesh.remove_ : MeshRemove;
+import vibe3d.editing.commands.editor.commands.mesh.flip    : MeshFlip;
+import vibe3d.editing.commands.editor.commands.mesh.duplicate_ : MeshDuplicate;
+import vibe3d.editing.commands.editor.commands.mesh.copy_      : MeshCopy;
+import vibe3d.editing.commands.editor.commands.mesh.paste_     : MeshPaste;
+import vibe3d.editing.commands.editor.commands.mesh.cut_       : MeshCut;
+import vibe3d.editing.commands.editor.commands.mesh.mirror_      : MeshMirror;
+import vibe3d.editing.commands.editor.commands.mesh.symmetrize   : MeshSymmetrize;
+import vibe3d.editing.commands.editor.commands.mesh.array_       : MeshArray;
+import vibe3d.editing.commands.editor.commands.mesh.clone_       : MeshClone;
+import vibe3d.editing.commands.editor.commands.mesh.radial_array_ : MeshRadialArray;
+import vibe3d.editing.commands.editor.commands.mesh.sweep         : MeshSweep;
+import vibe3d.editing.commands.editor.commands.mesh.stroke_extrude      : MeshStrokeExtrude;
+import vibe3d.editing.commands.editor.commands.mesh.vert_merge        : MeshVertMerge;
+import vibe3d.editing.commands.editor.commands.mesh.weld_vertex_pair  : MeshWeldVertexPair;
+import vibe3d.editing.commands.editor.commands.mesh.vert_join         : MeshVertJoin;
+import vibe3d.editing.commands.editor.commands.mesh.axis_slice    : MeshAxisSlice, MeshJulienne;
+import vibe3d.editing.commands.editor.commands.mesh.screen_slice  : MeshScreenSlice;
+import vibe3d.editing.commands.editor.commands.mesh.edge_slice    : MeshEdgeSlice;
+import vibe3d.editing.commands.editor.commands.mesh.collapse      : MeshCollapse;
+import vibe3d.editing.commands.editor.commands.mesh.vertex_split  : MeshVertexSplit;
+import vibe3d.editing.commands.editor.commands.mesh.reduce        : MeshReduce;
+import vibe3d.editing.commands.editor.commands.mesh.unify         : MeshUnify;
+import vibe3d.editing.commands.editor.commands.mesh.cleanup       : MeshCleanup;
+import vibe3d.editing.commands.editor.commands.mesh.fix_orientation : MeshFixOrientation;
+import vibe3d.editing.commands.editor.commands.mesh.make_polygon  : MeshMakePolygon;
+import vibe3d.editing.commands.editor.commands.mesh.select;
+import vibe3d.editing.commands.editor.commands.mesh.selection_edit : MeshSelectionEdit;
+import vibe3d.editing.commands.editor.commands.mesh.transform;
+import vibe3d.editing.commands.editor.commands.mesh.quantize;
+import vibe3d.editing.commands.editor.commands.mesh.jitter;
+import vibe3d.editing.commands.editor.commands.mesh.magnet : MeshMagnet;
+import vibe3d.editing.commands.editor.commands.mesh.smooth;
+import vibe3d.editing.commands.editor.commands.mesh.weightmap;
+import vibe3d.editing.commands.editor.commands.mesh.morph;
+import vibe3d.editing.commands.editor.commands.mesh.morph_edit : MeshMorphEdit;
+import vibe3d.editing.commands.editor.commands.mesh.edge_crease;
+import vibe3d.editing.commands.editor.commands.mesh.uv_transform;
+import vibe3d.editing.commands.editor.commands.mesh.uv_project  : UvProject;
+import vibe3d.editing.commands.editor.commands.mesh.uv_pack     : UvFit, UvPack;
+import vibe3d.editing.commands.editor.commands.mesh.uv_map_util;
+import vibe3d.editing.commands.editor.commands.mesh.uv_relax  : UvRelax;
+import vibe3d.editing.commands.editor.commands.mesh.uv_unwrap : UvUnwrap;
+import vibe3d.editing.commands.editor.commands.mesh.edge_slide;
+import vibe3d.editing.commands.editor.commands.mesh.linear_align;
+import vibe3d.editing.commands.editor.commands.mesh.polygon_align;
+import vibe3d.editing.commands.editor.commands.mesh.radial_align;
+import vibe3d.editing.commands.editor.commands.mesh.vertex_edit;
+import vibe3d.editing.commands.editor.commands.layer.xform_edit : LayerXformEdit;
+import vibe3d.runtime.document_actions.commands.scene.reset;
+import vibe3d.runtime.document_actions.commands.scene.load_mesh;
+import vibe3d.editing.commands.runtime.commands.history.undo : HistoryUndo;
+import vibe3d.editing.commands.runtime.commands.history.redo : HistoryRedo;
+import vibe3d.editing.commands.editor.commands.history.show : HistoryShow;
+import vibe3d.editing.commands.editor.commands.history.clear : HistoryClear;
+import vibe3d.apps.desktop.commands.test_undo_flags : UndoSuppressNoop, UndoForceNoop;
+import vibe3d.editing.commands.editor.commands.history.save_as_script : HistorySaveAsScript;
+import vibe3d.editing.commands.editor.commands.macros.record : MacroRecord;
+import vibe3d.editing.commands.editor.commands.macros.save_recorded : MacroSaveRecorded;
+import vibe3d.editing.commands.editor.macro_recorder : MacroRecorder;
+import vibe3d.mesh.snapshot.snapshot : SelectionSnapshot;
+import vibe3d.editing.tools.interactive.commands.tool.host     : ToolHostReadView;
+import vibe3d.editing.tools.interactive.commands.tool.set      : ToolSetCommand;
+import vibe3d.editing.tools.interactive.commands.tool.attr     : ToolAttrCommand;
+import vibe3d.runtime.document_actions.commands.layer.commands : LayerAttr;
+import vibe3d.editing.tools.interactive.commands.tool.do_apply : ToolDoApplyCommand;
+import vibe3d.editing.tools.interactive.commands.tool.reset    : ToolResetCommand;
+import vibe3d.editing.tools.interactive.commands.tool.pipe     : ToolPipeAttrCommand;
+import vibe3d.editing.tools.interactive.commands.tool.begin_session : ToolBeginSessionCommand;
+import vibe3d.apps.desktop.commands.ui.tool_properties : UiToolPropertiesCommand, g_toolPropertiesShown;
+import vibe3d.apps.desktop.commands.ui.layer_list      : UiLayerListCommand, g_layerListShown;
+import vibe3d.apps.desktop.commands.ui.viewport_props  : UiViewportPropsCommand, g_viewportPropsShown;
+import vibe3d.editing.tools.interactive.commands.tool.panel_edit    : ToolPanelEditCommand;
+import vibe3d.apps.desktop.commands.snap.toggle_type : SnapToggleTypeCommand;
+import vibe3d.apps.desktop.commands.snap.mode        : SnapModeCommand;
+import vibe3d.apps.desktop.commands.ai.toggle    : AiToggleCommand, AiToggleAction;
+import vibe3d.editing.tools.interactive.commands.falloff        : FalloffAddCommand, FalloffRemoveCommand,
+                                  FalloffAutoSizeCommand;
+import vibe3d.apps.desktop.commands.path.define    : PathDefineCommand;
+import vibe3d.apps.desktop.commands.workplane     : WorkplaneResetCommand, WorkplaneEditCommand,
+                                WorkplaneRotateCommand, WorkplaneOffsetCommand,
+                                WorkplaneAlignToSelectionCommand;
+import vibe3d.editing.commands.runtime.command;
+import vibe3d.editing.tools.interactive.registry;
+import vibe3d.platform.input.shortcuts;
+import vibe3d.ui.editor.buttonset;
+import vibe3d.editing.interaction.data.ai.debug_trace : latestHandleDebugTraceJson;
+import vibe3d.runtime.ai_advisor.ai.element_candidates : publishElementCandidates,
+    collectElementCandidates, resolveElementCandidateDecision;
+import vibe3d.editing.interaction.data.ai.interaction : AiAdvisorDecision, AiCandidate, AiInteractionContext,
+    AiInteractionPhase, AiIntent;
+import vibe3d.runtime.ai_advisor.ai.interaction_log : AiInteractionLogRecord, makeAiInteractionLogRecord;
+import vibe3d.runtime.ai_advisor.ai.interaction_log_writer : AiInteractionLogWriter, defaultLiveSource;
+import vibe3d.runtime.ai_advisor.ai.exploration : AiExplorationController, buildCandidateKey,
+    defaultExploreSource, OptionalGrab, Resolution, ResolutionKind;
+import vibe3d.runtime.ai_advisor.ai.state      : EditorAiState;
+import vibe3d.editing.interaction.data.ai.advisor    : AiAdvisor;
+import vibe3d.runtime.ai_advisor.ai.model_adapter : AiModelAdapter, AiModelAdapterConfig,
+    AiModelAvailability, AiModelStatus, AiModelFallbackMode,
+    aiModelAdapterMinConfidence;
+import vibe3d.ui.editor.args_dialog    : ArgsDialog;
+version (web) {
+} else {
+    import vibe3d.runtime.ai3d.ai3d.job_controller       : Ai3dJobController, Ai3dClientJoinTimeoutMs;
+    import vibe3d.runtime.ai3d.ai3d.job_events           : Ai3dEvent, Ai3dEventKind;
+    import vibe3d.runtime.ai3d.ai3d.stage_artifact       : Ai3dDefaultRequestedFaces, Ai3dMaxGenerationDeadlineMs;
+    import vibe3d.runtime.ai3d.ai3d.scene_validator      : Ai3dMaxTotalFaces;
+    import vibe3d.runtime.ai3d.ai3d.worker_manager       : Ai3dWorkerManager, Ai3dWorkerState,
+        Ai3dInstallState, ai3dDefaultInstallLocation;
+    import core.time : MonoTime;
+    import vibe3d.apps.desktop.commands.ai3d.import_result : Ai3dImportResult;
+}
+import vibe3d.runtime.remesh.remesh.remesh_job : RemeshJob, RemeshParams,
+    MAX_REMESH_TARGET_QUADS, MIN_REMESH_TARGET_QUADS;
+import vibe3d.editing.commands.editor.commands.mesh.remesh : Remesh, RemeshStart, RemeshOpen;
+import vibe3d.ui.editor.forms_render;
+import vibe3d.documents.channels.layer_params   : LayerPropsProvider;
+import vibe3d.documents.model.document       : Layer;
+import vibe3d.editing.selection.query.snap           : ItemSnapFrame;
+import vibe3d.viewport.host.viewport : LayoutPreset;
+
+// Locally-scoped in app.d's main() (not top-level there), but EditorApp is a
+// module-scope struct so these three need to be top-level here (0415).
+import vibe3d.documents.model.document       : Document;
+import vibe3d.editing.commands.runtime.command_history : CommandHistory, RecordMode;
+import vibe3d.viewport.host.viewport        : ViewportManager;
+
+// app.d decomp phase B (source/http_providers.d): types of the new ctx
+// fields below (see the phase-B section at the bottom of EditorApp).
+import vibe3d.editing.commands.editor.step_trace  : StepTrace;
+import vibe3d.editing.tools.interactive.edit_session : EditSession;
+import vibe3d.viewport.gpu.gpu_select   : GpuSelectBuffer;
+
+// AI Modeling Copilot (task 0402): version(WithAI)-only, mirroring app.d's
+// own gating at its import block (see app.d's doc comment there) so a
+// modeling-noai build compiles out the same symbols the same way.
+version (WithAI) import vibe3d.apps.desktop.commands.ui.copilot_panel : UiCopilotPanelCommand, g_copilotPanelShown;
+version (WithAI) {
+    import vibe3d.apps.desktop.commands.copilot.analyze        : CopilotAnalyzeCommand;
+    import vibe3d.apps.desktop.commands.copilot.select_finding : CopilotSelectFindingCommand;
+    import vibe3d.apps.desktop.commands.copilot.cycle_finding  : CopilotCycleFindingCommand;
+    import vibe3d.ui.editor.copilot_panel : CopilotPanel;
+    import vibe3d.ui.editor.copilot_overlay : drawCopilotFindingOverlay;
+}
+
+// ---------------------------------------------------------------------------
+// Ai3dModalState -- relocated from main()'s local `static struct
+// Ai3dModalState { ... }` (was declared just above the `ai3dModal` field,
+// app.d ~line 2561). A `static struct` nested in a function has NO closure
+// over the enclosing scope in D (that is what `static` on a nested aggregate
+// means) -- it behaves exactly like a free-standing type, just name-scoped
+// to the function. Relocating its verbatim field list to module scope here
+// is therefore behavior-preserving: `EditorApp.Ai3dModalRefs.ai3dModal`
+// needs a type nameable from THIS module, and a function-local type can't be
+// named from outside that function. See task 0415 Log for the discovery
+// (the opponent's Span-B sweep didn't need to catch this -- it surfaced
+// during the writer's own type-availability check while building the ctx).
+// ---------------------------------------------------------------------------
+version (web) {
+} else {
+struct Ai3dModalState {
+    bool   healthChecked;
+    bool   healthOk;
+    int    healthProtocol;
+    string healthBackend;
+    bool   healthObjCapable;
+    string healthMessage;
+
+    string jobId;
+    string state;    // ""|"submitted"|"queued"|"running"|"succeeded"|"failed"|"cancelled"
+    string stage;
+    double progress = 0;
+    string errorCode;
+    string errorMessage;
+}
+}
+
+// ---------------------------------------------------------------------------
+// Task 0419 (campaign 0407 §V1.2, UI-panel decomposition) relocations --
+// these surviving items were module-scope (or main()-local) in app.d and were
+// moved here for the same reason Ai3dModalState was in 0415: the
+// UI-panel block moving to source/ui/panels.d references them, and a
+// `private` module-scoped symbol or a main()-local type isn't nameable from
+// another module. app.d imports all of them back (`import editor_app : ...`)
+// since several also have call sites OUTSIDE the panel block. Full
+// inventory/rationale: doc/tasks/work/0419-app-decomp-panels.md ("Б1"/"Б2"/
+// cyclic-import").
+// ---------------------------------------------------------------------------
+
+/// Panel layout geometry (side/tab/status window rects, viewport rect).
+/// Was a plain top-level `struct` in app.d -- relocated verbatim (leaf
+/// int/ImVec2 fields, no app.d dependencies) so it can back a ctx field's
+/// type (`layout`) without a back-edge to app.
+struct Layout {
+    int sideW   = 150;
+    int statusH = 28;
+
+    ImVec2 sidePos;
+    ImVec2 sideSize;
+    ImVec2 tabPos;
+    ImVec2 tabSize;
+    ImVec2 statusPos;
+    ImVec2 statusSize;
+
+    int vpX, vpY, vpGlY, vpW, vpH;
+
+    void resize(int winW, int winH) {
+        sidePos    = ImVec2(0, 0);
+        sideSize   = ImVec2(sideW, winH);
+        tabPos     = ImVec2(sideW, 0);
+        tabSize    = ImVec2(winW - sideW, statusH);
+        statusPos  = ImVec2(sideW, winH - statusH);
+        statusSize = ImVec2(winW - sideW, statusH);
+
+        vpX   = sideW;
+        vpY   = statusH;  // screen-space top edge (Y down), below tab bar
+        vpGlY = statusH;  // OpenGL bottom edge (Y up), above status bar
+        vpW   = winW - sideW;
+        vpH   = winH - 2 * statusH;
+    }
+}
+
+// AI entry-point availability (compile-time gates for two UI affordances) --
+// see app.d's original doc comment (preserved in the task doc's Log) for the
+// full rationale; verbatim version-gating, only the enclosing module moved.
+version (web) {
+    enum bool kGenerateAiAvailable = false;
+} else version (OSX) {
+    enum bool kGenerateAiAvailable = false;
+} else version (WithAI) {
+    enum bool kGenerateAiAvailable = true;
+} else {
+    enum bool kGenerateAiAvailable = false;
+}
+version (WithAI) enum bool kAiToggleAvailable = true;
+else              enum bool kAiToggleAvailable = false;
+
+/// Build the item-snap frame for one visible layer: world-space pivot, plus —
+/// only when `wantBBox` — the world-space AABB derived from ALL mesh vertices
+/// (whole-item bounds, independent of any active vertex sub-selection).
+///
+/// `wantBBox` IS THE COST OF THIS FUNCTION. The pivot half is two vector adds.
+/// The box half walks every vertex of the layer and then transforms eight
+/// corners: 7.9% of a falloff-drag frame, measured on a 316x316 grid (100 489
+/// vertices), and it was being paid on every frame of every drag. Exactly one
+/// reader consumes the box — `snapCursor`'s `SnapType.Box` branch in snap.d,
+/// which is the only code anywhere that reads `hasBBox`/`bboxMin`/`bboxMax` —
+/// so the caller hands in that bit and the walk does not happen while box
+/// snapping is off. Off is the default: `SnapPacket.enabledTypes` starts at
+/// `SnapType.Vertex` alone.
+///
+/// WHAT BREAKS IT. Frames are installed by the DRAW and read by a snap query
+/// in a LATER frame, so passing `false` on a frame whose query then wants a box
+/// costs that query its Box targets SILENTLY — `hasBBox == false` is
+/// indistinguishable at the reader from "this item has no geometry". The bit
+/// must therefore be re-asked on a frame boundary a box-enable cannot slip
+/// through, which is why the only caller is `installSnapState` and why that
+/// runs once per frame from the frame loop rather than from the per-cell scene
+/// pass; see its own comment for what the per-cell site could not guarantee.
+ItemSnapFrame buildItemFrame(Layer lyr, bool wantBBox)
+{
+    ItemSnapFrame fr;
+    fr.pivot = lyr.xform.pos + lyr.xform.pivot;
+    Vec3 mn = Vec3( float.infinity,  float.infinity,  float.infinity);
+    Vec3 mx = Vec3(-float.infinity, -float.infinity, -float.infinity);
+    bool seen = false;
+    // Task 0615 Stage 4: a non-mesh item has no vertices to bound — `meshOrNull`
+    // is null and the loop below simply never runs, so `seen` stays false and
+    // `hasBBox` comes out false while `pivot` (set above) is still meaningful.
+    // Task 1780 gives `!wantBBox` that same exit deliberately: a suppressed box
+    // and an absent one are the same frame, because the reader has no third
+    // state to tell them apart with.
+    if (wantBBox) if (auto mp = lyr.meshOrNull) foreach (v; mp.vertices) {
+        if (v.x < mn.x) mn.x = v.x; if (v.x > mx.x) mx.x = v.x;
+        if (v.y < mn.y) mn.y = v.y; if (v.y > mx.y) mx.y = v.y;
+        if (v.z < mn.z) mn.z = v.z; if (v.z > mx.z) mx.z = v.z;
+        seen = true;
+    }
+    if (seen) {
+        float[16] M = lyr.xform.composedMatrix();
+        Vec3[8] corners = [
+            Vec3(mn.x,mn.y,mn.z), Vec3(mx.x,mn.y,mn.z),
+            Vec3(mn.x,mx.y,mn.z), Vec3(mx.x,mx.y,mn.z),
+            Vec3(mn.x,mn.y,mx.z), Vec3(mx.x,mn.y,mx.z),
+            Vec3(mn.x,mx.y,mx.z), Vec3(mx.x,mx.y,mx.z),
+        ];
+        Vec3 wmn = transformPoint(M, corners[0]);
+        Vec3 wmx = wmn;
+        foreach (c; corners[1..$]) {
+            Vec3 w = transformPoint(M, c);
+            if (w.x < wmn.x) wmn.x = w.x; if (w.x > wmx.x) wmx.x = w.x;
+            if (w.y < wmn.y) wmn.y = w.y; if (w.y > wmx.y) wmx.y = w.y;
+            if (w.z < wmn.z) wmn.z = w.z; if (w.z > wmx.z) wmx.z = w.z;
+        }
+        fr.bboxMin = wmn;
+        fr.bboxMax = wmx;
+        fr.hasBBox = true;
+    }
+    return fr;
+}
+
+/// Install the snap service's per-frame view of the document: the background
+/// snap SOURCES and the item snap FRAMES. Both blocks are verbatim from
+/// `ui/viewport_render.d`'s `renderViewportSceneToFbo`, where they stood until
+/// task 1780 hoisted them out of it.
+///
+/// WHY THEY DO NOT BELONG IN A SCENE PASS. Neither block reads a camera, a
+/// viewport or a GL object — only `document`. Sitting inside the per-cell pass
+/// they therefore ran once per LIVE CELL, four times a frame under a Quad
+/// layout, each time installing byte-identical arrays over the previous one,
+/// and each time re-walking every vertex of every visible layer.
+///
+/// AND WHY THE MOVE IS A CORRECTNESS FIX, NOT ONLY A COST ONE. The per-cell
+/// pass is gated on that cell's DIRTY KEY (`app.d`, Phase 4). The key carries
+/// view/proj, mesh mutation version, selection epoch, edit mode, hover, the
+/// resolved draw plan, image planes and the weight map — it does not carry
+/// snap configuration, and it should not: snap config does not change what a
+/// cell draws. So interactively, a frame in which nothing visible changed
+/// installed NOTHING, and any decision taken here from snap state — which is
+/// exactly what `buildItemFrame`'s `wantBBox` now is — would have stayed
+/// frozen at whatever the last redraw happened to decide, for as long as the
+/// scene sat still. Ticking box snapping on and getting no box targets until
+/// something else moved the camera is the shape that would have taken.
+///
+/// THE `--test` BUILD CANNOT EXHIBIT ANY OF THAT, so do not read a green suite
+/// as evidence about it: under `--test`, `needRender` is `testRendersCell(...)`
+/// — unconditional for the active cell — so the install ran every frame
+/// whatever the dirty key said. The hazard is interactive-only.
+///
+/// Called once per frame from the frame loop, immediately before the cell
+/// loop. That is a superset of the old schedule (0..N calls per frame becomes
+/// exactly 1) and keeps the same position in the frame: after all event and
+/// command processing, before anything draws.
+void installSnapState(EditorApp app)
+{
+    with (app) {
+    // Install background snap sources (layers Stage 5). The parallel
+    // `snapSrcLayerIdx` (topology-pen P0 NIT-3) records each source's
+    // Document-layer index (this loop's `i`) so the CONS stage's
+    // background-surface raycast can publish a real Document-layer index
+    // in `ConstrainHitPacket.layer` instead of the bgSrc-order slot.
+    {
+        import vibe3d.editing.selection.query.snap : setBackgroundSnapSources;
+        const(Mesh)*[] snapSrc;
+        ModelSpace[]   snapSrcSpaces;
+        int[] snapSrcLayerIdx;
+        if (document.layers.length > 1) {
+            foreach (i, lyr; document.layers) {
+                // Task 0615 Stage 4 (§Tier-2 :2162): a non-mesh layer is not a
+                // snap source.
+                if (document.background(lyr) && lyr.hasMesh) {
+                    snapSrc ~= cast(const(Mesh)*)&lyr.meshRef();
+                    // Task 0617 Stage 4: same source as `bgModel` in the draw
+                    // loop (`lyr.xform.composedMatrix()`) — a background layer
+                    // now snaps where it is DRAWN, not at its identity pose.
+                    //
+                    // The three arrays are appended together under ONE guard so
+                    // they stay index-aligned: a layer that is not a snap source
+                    // contributes to none of them. Splitting the guard is how
+                    // they would silently drift apart.
+                    snapSrcSpaces ~= lyr.xform.modelSpace();
+                    snapSrcLayerIdx ~= cast(int)i;
+                }
+            }
+        }
+        setBackgroundSnapSources(snapSrc, snapSrcSpaces, snapSrcLayerIdx);
+    }
+    // Install item snap frames (Stage 3).
+    {
+        import vibe3d.editing.selection.query.snap             : setItemSnapFrames;
+        import vibe3d.editing.pipeline.contracts.toolpipe.packets : SnapType;
+        import vibe3d.editing.pipeline.evaluation.toolpipe.stages.snap : liveSnapStage;
+        import vibe3d.documents.model.document         : kindInfo;
+
+        // Does anything downstream read the BOX half of these frames this
+        // frame? Only `snapCursor`'s `SnapType.Box` branch does, so the bit is
+        // asked of the SNAP stage's own `enabledTypes` — the single authority,
+        // not a mirror of one: the packet that branch reads is `pkt.config =
+        // config`, a verbatim copy of the field read here.
+        //
+        // Asked WITHOUT the `typeEligible(Box, snapScope)` half of the reader's
+        // condition, on purpose. A superset is the safe direction (it can only
+        // build a box nobody reads, never withhold one somebody does), and the
+        // scope law has one home in `snap.typeEligible`; restating it here
+        // would give it two that must be kept in step by hand.
+        //
+        // No pipeline, or no SNAP stage in it, means the bit cannot be READ —
+        // so pay the walk rather than assume it is clear. That is the headless
+        // and unittest shape, where the meshes are small and the walk is free.
+        bool wantBBox = true;
+        if (auto ss = liveSnapStage())
+            wantBBox = (ss.enabledTypes & SnapType.Box) != 0;
+
+        // Reused across frames rather than freshly appended each one:
+        // `setItemSnapFrames` COPIES element-by-element into its own buffer
+        // under the grid mutex, so nothing here outlives the call and no reader
+        // can hold a slice of this block. Bytes are not the point — one small
+        // array per frame is — the per-frame GC MARK SET is.
+        g_itemFrameScratch.length = 0;
+        g_itemFrameScratch.assumeSafeAppend();
+        foreach (lyr; document.layers) {
+            if (!lyr.visible) continue;
+            // Task 0616 Stage 2 (Bend #1): a kind with no transform
+            // capability (e.g. an image — a document RESOURCE, not a thing
+            // positioned in space) has no pivot to snap to. Without this
+            // gate `buildItemFrame` would read `Layer.xform`'s inert default
+            // identity and offer (0,0,0) as a snap target for every such
+            // item — meaningless, since nothing ever authors that field for
+            // a kind `layer_params.d` does not expose it on.
+            if (!kindInfo(lyr.kind).hasXform) continue;
+            g_itemFrameScratch ~= buildItemFrame(lyr, wantBBox);
+        }
+        setItemSnapFrames(g_itemFrameScratch);
+    }
+    }
+}
+
+/// Scratch for `installSnapState`'s item-frame loop. Main-thread only (the
+/// frame loop is its sole caller) and never escapes: see the note at its use.
+private ItemSnapFrame[] g_itemFrameScratch;
+
+// ---------------------------------------------------------------------------
+// Nested-accessor delegate aliases (category "б" in the task plan): lazy,
+// live-binding accessors. Assigned once via `&mesh` etc in main()'s ctx
+// assembly; CALLED (mesh(), &mesh()) inside factory bodies at tool/command
+// construction time, not at registration time -- scratch-proven late
+// binding (withctx.d).
+// ---------------------------------------------------------------------------
+alias MeshDg        = ref Mesh delegate() nothrow @nogc;
+alias ViewDg         = ref View delegate();
+
+// ---------------------------------------------------------------------------
+// AI3D generate-modal field cluster (task 0415 Phase 2). The opponent's review
+// caught this cluster missing from plan v1 exactly because a flat ~43-field
+// mesh makes a missing sibling easy to overlook. Every leaf is individually
+// pointer-backed to its OWN separate main()-local -- these five locals are
+// NOT merged into one aggregate in main() itself, since that would ripple
+// edits across every OTHER app.d site outside the two registration spans
+// (the ai3d health-update callback, the modal-render code, etc, all still
+// reference the flat main()-locals directly).
+// ---------------------------------------------------------------------------
+version (web) {
+} else {
+struct Ai3dModalRefs {
+    Ai3dModalState* ai3dModalPtr;
+    @property ref Ai3dModalState ai3dModal() { return *ai3dModalPtr; }
+    bool* ai3dModalOpenPtr;
+    @property ref bool ai3dModalOpen() { return *ai3dModalOpenPtr; }
+    bool* ai3dModalPendingOpenPtr;
+    @property ref bool ai3dModalPendingOpen() { return *ai3dModalPendingOpenPtr; }
+    string* ai3dPickedImagePathPtr;
+    @property ref string ai3dPickedImagePath() { return *ai3dPickedImagePathPtr; }
+    char[256]* ai3dWorkerUrlBufPtr;
+    @property ref char[256] ai3dWorkerUrlBuf() { return *ai3dWorkerUrlBufPtr; }
+}
+}
+
+// ---------------------------------------------------------------------------
+// EditorApp -- the context bag threaded through registerTools/
+// registerCommands (the "зачаток EditorApp" of 0407 §B.V1 step 1). Assembled
+// ONCE in main() right after `Registry reg;` and passed BY VALUE into both
+// register* functions (the struct-of-pointers/delegates copy is safe --
+// scratch-proven in withctx.d/withctx2.d/withctx3_nested.d: the closures
+// built inside registerTools/registerCommands capture the copy, but every
+// field either reaches process-lifetime storage or is an immutable-at-wiring
+// class/delegate value. Session is the one stable owner pointer; the remaining
+// pointer-backed locals retain main()'s process lifetime.
+//
+// ROOT RULE (see task doc): every field defaults to a pointer-backed
+// `@property ref T` (category "а"). A field is by-value (category "в") ONLY
+// when it is a class-ref or delegate assigned EXACTLY ONCE in main(); the
+// single stable Session pointer is category "в" too -- grep-verified, not assumed from
+// its type. Two fields are by-value STRUCTS: `toolHostView` holds only a private
+// address and hands out a fresh copy on every read (task 6350), and
+// `topoPenFactories` is thirteen delegates assigned once (task 6352). Getting this
+// wrong is SILENT: a by-value copy of a mutated value-type or a reassigned
+// reference compiles cleanly and just stops seeing later writes.
+// ---------------------------------------------------------------------------
+struct EditorApp {
+    // ---- (б) nested-accessor delegates: lazy, live-binding ----
+    // (Task 1930 removed `vertexCache`/`faceCache`/`edgeCache` from here
+    // along with `viewcache.d`; they were write-only fields feeding a
+    // payload nothing read.)
+
+    // `mesh` is DIFFERENT (task 0419 finding -- same class of gotcha 0415
+    // found for `cameraView`, not caught by 0415 itself because Span A/B
+    // never used the bare-dot form): in app.d it is a nested FUNCTION, and
+    // the task-0419 UI-panel block reads it as `mesh.countSelectedVertices()`
+    // / `mesh.selectedFaces` / ... 28 TIMES with no explicit call parens
+    // (vs. exactly ONE explicit `mesh()` call, in the AI-copilot overlay
+    // draw). A plain delegate FIELD does not get D's auto-invoke treatment
+    // on a bare reference the way a nested FUNCTION does -- `field.foo()`
+    // would try to resolve `.foo` on the delegate type itself and fail to
+    // compile. Backing it with a `@property ref Mesh mesh()` method (exactly
+    // the cameraView pattern) restores auto-invoke for the panel block's
+    // bare-dot reads with zero span-text edits, while every EXISTING
+    // explicit `mesh()` / `&mesh()` call site in registration.d keeps
+    // working unchanged (a property method supports explicit-call syntax
+    // too).
+    MeshDg meshDg;
+    @property ref Mesh mesh() nothrow @nogc { return meshDg(); }
+
+    // `cameraView` is the SAME class of gotcha as `mesh` above (task 0419
+    // later found `mesh` needed the identical treatment -- see its comment):
+    // in app.d it was a nested FUNCTION (`ref View cameraView() { ... }`),
+    // and D auto-invokes a bare (parenthesis-less) reference to a no-arg
+    // function in a value context -- so app.d's original code passes it bare
+    // hundreds of times (`new Xxx(&mesh(), cameraView, editMode, ...)`). A
+    // plain delegate FIELD does NOT get that auto-invoke treatment (a bare
+    // field reference yields the delegate value itself, not its result).
+    // Backing it with a `@property ref View cameraView()` method instead
+    // (same pattern as gpu/editMode/document/reg below) restores the
+    // original auto-invoke semantics for every existing bare usage with
+    // ZERO span-text edits (caught by `dub build`, not by the plan's own
+    // scratch probes -- see task doc Log).
+    ViewDg cameraViewDg;
+    @property ref View cameraView() { return cameraViewDg(); }
+
+    // ---- (а) pointer-backed core locals: address-taken in the spans
+    //      (Edit-class 1: &x -> &x() at the call site) ----
+    GpuMesh* gpuPtr;
+    @property ref GpuMesh gpu() { return *gpuPtr; }
+    // ---- (в) by-value stable owner pointer: assigned once in main() ----
+    // Task 5700: EditorApp sees the one heap Session through a pointer; it
+    // neither copies the owner nor keeps three pointers to former stack slots.
+    Session* sessionOwner;
+    @property ref EditMode editMode() { return sessionOwner.editMode; }
+    @property ref Document document() { return sessionOwner.document; }
+    @property ref SelTypeOrder selTypeOrder() { return sessionOwner.selTypeOrder; }
+    // ---- (а) pointer-backed core locals, continued ----
+    Registry* regPtr;
+    @property ref Registry reg() { return *regPtr; }
+
+    // ---- (а) pointer-backed critical locals: value-type mutated OR
+    //      reassigned-reference read by Span B closures (silent-bug class
+    //      #1/#2/#3/#4 the opponent caught -- see task doc) ----
+    SubpatchPreview* subpatchPreviewPtr;
+    @property ref SubpatchPreview subpatchPreview() { return *subpatchPreviewPtr; }
+    // Task 1500 — what the GPU buffers currently hold (cage vs preview).
+    // Pointer-backed for the same reason as the rest of this block: it is a
+    // main() local that a moved span has to READ, and `/api/pick` is the
+    // second of M-INV's two consumers.
+    bool* gpuUploadedPreviewPtr;
+    @property ref bool gpuUploadedPreview() { return *gpuUploadedPreviewPtr; }
+    // Task 5970: activeTool is intentionally by value; only main()'s drop/arm
+    // doors write the pointer-backed pair. Witness: tests/unit/active_tool_accessor_readonly_test.d.
+    Tool* activeToolPtr;
+    @property Tool activeTool() { return *activeToolPtr; }
+    bool* runningPtr;
+    @property ref bool running() { return *runningPtr; }
+    // Close-requested flag (task 0434): the file.quit factory sets this instead
+    // of clearing `running` directly, so the main loop can route the close
+    // through the unsaved-changes guard (window title / quit-confirm modal).
+
+    // One reference-semantics owner for the History panel's persistent form
+    // state. Unlike the neighbouring main()-local bridges, its fields live in
+    // the panel state itself and are not pointers back into main().
+    HistoryPanelState historyPanelState;
+
+    // ---- late-bound read view, wired AFTER the ToolHost block in main() ----
+    ToolHostReadView toolHostView;
+
+    // ---- remaining pointer-backed modal cluster (see above) ----
+    version (web) {
+    } else {
+        Ai3dModalRefs ai3dRefs;
+    }
+
+    // ---- (в) by-value: class-ref/delegate locals assigned EXACTLY ONCE
+    //      in main() (grep-verified `\bX\s*=[^=]` == 1 for every name below;
+    //      a mutating method call on these, e.g. vpm.resetToDefault() or
+    //      history.clear(), is safe by-value since the copy aliases the
+    //      SAME heap object) ----
+    CommandHistory     history;
+    ViewportManager    vpm;
+    LitShader          litShader;
+    PipeGizmoHost      pipeGizmoHost;
+    MacroRecorder      macroRecorder;
+    version (web) {
+    } else {
+        Ai3dJobController  ai3dController;
+    }
+    RemeshJob remeshJob;
+    EditorAiState      aiState;
+    version (WithAI) CopilotPanel copilotPanel;
+    AiExplorationController aiExplore;
+    AiInteractionLogWriter  aiLogWriter;
+
+    // ---- (в) by-value: the 13 typed MeshSessionEdit/MeshVertexEdit
+    //      factories (app.d ~2785-2832), each assigned exactly once ----
+    MeshVertexEdit  delegate() vxEditFactory;
+    // Task 1069 — routed-gesture undo factory, injected into every
+    // XfrmTransformTool via setUndoBindings' third argument.
+    MeshMorphEdit   delegate() morphEditFactory;
+    // Task 0614 Phase 4 — item-transform gizmo-drag undo factory, the
+    // LayerXformEdit analogue of vxEditFactory. Injected into every
+    // XfrmTransformTool instance (registration.d) via setItemUndoFactory().
+    LayerXformEdit  delegate() layerXformEditFactory;
+    MeshSessionEdit delegate() bevelEditFactory;
+    MeshSessionEdit delegate() loopSliceEditFactory;
+    MeshSessionEdit delegate() reduceEditFactory;
+    MeshSessionEdit delegate() cloneEditFactory;
+    MeshSessionEdit delegate() arrayEditFactory;
+    MeshSessionEdit delegate() edgeExtrudeEditFactory;
+    MeshSessionEdit delegate() edgeExtendEditFactory;
+    MeshSessionEdit delegate() polyExtrudeEditFactory;
+    MeshSessionEdit delegate() radialArrayEditFactory;
+    MeshSessionEdit delegate() smoothShiftEditFactory;
+    MeshSessionEdit delegate() strokeExtrudeEditFactory;
+    // The Topology Pen's thirteen per-gesture undo factories, as ONE named
+    // value (task 6352). Assembled field by field in app.d's
+    // `buildTopoPenFactories` and assigned exactly once there; the pen reads
+    // it whole through `setPenFactories`. By value for the reason the
+    // delegate fields above are: thirteen delegates written once at wiring.
+    TopoPenFactories topoPenFactories;
+
+    // ---- (г) hook delegates: nested functions in main(), captured via
+    //      `&funcName`; called bare (verbatim) inside the spans ----
+    // TASK 4053 — the tool-DROP verb. It was `void delegate(Tool)
+    // setActiveTool` until the arm half became unreachable; the transition
+    // argument is what `tool_activation_ownership.activationDoorFor` reads.
+    void delegate(ToolTransition) dropActiveTool;
+    // Wave plan 8640 S6: the same drop carrying a `DropContext` (the Esc
+    // rung's task row).
+    void delegate(ToolTransition, DropContext) dropActiveToolWith;
+    // Task 0642 — the deliberate item-mode door (`select.typeFrom item`, the
+    // Items status-line button, the Items key); it drops the active tool on a
+    // front-flip.
+    void delegate()             switchItemType;
+    void delegate(EditMode)     promoteGeometryType;
+    void delegate(EditMode)     switchGeometryType;
+    void delegate(size_t, size_t) onActiveLayerChanged;
+    void delegate()             authorLayoutReset;
+    bool delegate()             pipeHoldsTask;
+    void delegate()             clearPipeTasks;
+
+    // =========================================================================
+    // Task 0419 (campaign 0407 §V1.2): 30 new members backing the UI-panel
+    // block (source/ui/panels.d) -- drawSidePanel/drawStatusBar/drawTabPanel/
+    // drawLayerListPanel/drawViewportPropsPanel/renderViewportSceneToFbo and
+    // their nested draw-helpers. Same ROOT RULE as above: default
+    // pointer-backed `@property ref T`; by-value only for a class-ref/
+    // delegate assigned exactly once before the LATE-wiring point (app.d,
+    // right after `buildToolVts`'s closing brace, ~line 5405). Wired in that
+    // LATE block, not the 2873 ctx-assembly block -- several of these
+    // (hook delegates) are nested functions not declared until AFTER 2873.
+    // Full inventory + per-field proof: doc/tasks/work/0419-app-decomp-panels.md.
+    // =========================================================================
+
+    // ---- (a) pointer-backed: value-types mutated/reassigned by the panel
+    //      block, or address-taken (activePanelIdx via &panels[activePanelIdx]) ----
+    int* hoveredVertexPtr;
+    @property ref int hoveredVertex() { return *hoveredVertexPtr; }
+    int* hoveredEdgePtr;
+    @property ref int hoveredEdge() { return *hoveredEdgePtr; }
+    int* hoveredFacePtr;
+    @property ref int hoveredFace() { return *hoveredFacePtr; }
+    int* activePanelIdxPtr;
+    @property ref int activePanelIdx() { return *activePanelIdxPtr; }
+    // By value; see the activeTool invariant above.
+    string* activeToolIdPtr;
+    @property string activeToolId() { return *activeToolIdPtr; }
+    Layout* layoutPtr;
+    @property ref Layout layout() { return *layoutPtr; }
+    // `&panels[activePanelIdx]` (address-of-ELEMENT, not address-of-field) --
+    // a `@property ref Panel[] panels()` auto-invokes under `&panels[i]`
+    // (scratch-verified by the plan), so the call site needs zero edits.
+    Panel[]* panelsPtr;
+    @property ref Panel[] panels() { return *panelsPtr; }
+    Group[]* statusLineGroupsPtr;
+    @property ref Group[] statusLineGroups() { return *statusLineGroupsPtr; }
+    ShortcutTable* shortcutsPtr;
+    @property ref ShortcutTable shortcuts() { return *shortcutsPtr; }
+    GLuint* gridVaoPtr;
+    @property ref GLuint gridVao() { return *gridVaoPtr; }
+    int* gridOnlyVertCountPtr;
+    @property ref int gridOnlyVertCount() { return *gridOnlyVertCountPtr; }
+    // ---- testMode: computed, NOT a pointer field or a global wrapper.
+    //      main()'s local `testMode` and `command.g_testMode` are ALWAYS
+    //      assigned together (app.d ~1075/1077, never diverge) -- reading
+    //      through `command.g_testMode` directly removes a LATE-wiring step
+    //      and matches the remaining panel block's qualified reads. ----
+    @property ref bool testMode() { return vibe3d.editing.commands.runtime.command.g_testMode; }
+
+    // ---- (в) by-value: class-ref/pointer/delegate locals assigned EXACTLY
+    //      ONCE in main(), all before the LATE-wiring point (grep-verified) ----
+    Shader        shader;
+    CheckerShader checkerShader;
+    GridShader    gridShader;
+    FormsPanel    formsPanel;
+    ImGuiIO*      io;
+    void delegate(string, string) uiCommandDelegate;
+    void delegate(string, string) formsInteractiveDispatch;
+
+    // ---- (г) hook delegates: nested functions in main(), captured via
+    //      `&funcName`; ALWAYS called with explicit args/parens in the panel
+    //      block (unlike `mesh`/`cameraView` above, none of these six are
+    //      ever read bare) ----
+    void delegate(Command)      runCommand;
+    /// Task 1520/1521 — the guarded UI policy reached through the application
+    /// command binding, including window-close dispatch from InputRouter.
+    UiRunOutcome delegate(Command, RecordMode, string) runUiCommand;
+    bool delegate(string)       tryOpenArgsDialog;
+    void delegate(string)       activateToolById;
+    void delegate(out SubjectPacket, ref VectorStack) buildToolVts;
+    bool delegate()              anyFalloffActive;
+    /// Task 1691 — the RESOLVED `viewportInputAllowed()`, bound to main()'s own
+    /// nested forwarder so `/api/viewport/display` reports the value the mouse
+    /// handlers actually branched on rather than a second copy of its formula.
+    /// A re-derivation here would repeat exactly the defect task 1650 measured:
+    /// a dump that recomputes a call-site decision keeps answering after the
+    /// call site has stopped asking, and the test then asserts about the dump.
+    bool delegate()              viewportInputAllowedDg;
+    // =========================================================================
+    // app.d decomp phase B (source/http_providers.d): members backing
+    // wireHttpProviders's moved /api endpoint-wiring block. Same ROOT RULE
+    // as above: pointer-backed for a mutated value-type; by-value only for
+    // class refs assigned exactly once before the call site (app.d, right
+    // before `wireHttpProviders(httpServer, app);`); hook delegates for
+    // main()'s nested functions; a computed @property for the nested-func
+    // `gpuSelect()` shape (the moved block reads it bare, `gpuSelect.pick`,
+    // so a property preserves every call site verbatim).
+    // =========================================================================
+
+    // ---- (б) by-value class refs, each assigned exactly once in main()
+    //      before the wireHttpProviders call (grep-verified: bvhPick app.d
+    //      ~1618, stepTrace ~2647, session ~3350). The moved block only
+    //      READS stepTrace (null-guarded) and calls methods on session.
+    //      replayUndoEntry is application-bound before HTTP wiring. ----
+    BvhPick     bvhPick;
+    StepTrace   stepTrace;
+    EditSession session;
+    void delegate(size_t) replayUndoEntry;
+
+    // ---- computed: mirrors main()'s nested `auto gpuSelect() { return
+    //      vpm.views[vpm.activeId].gpuSel; }` verbatim ----
+    @property GpuSelectBuffer gpuSelect() { return vpm.views[vpm.activeId].gpuSel; }
+
+    // ---- (г) hook delegates: nested functions in main(), captured via
+    //      cast+&funcName; always called with explicit parens in the moved
+    //      block. ----
+    void delegate()     ensureDisplayCurrent;
+    // =========================================================================
+    // app.d decomp phase B (source/ui/panels.d main-loop panels): members
+    // backing drawAi3dModal / drawRemeshModal / drawQuitGuardModal.
+    // Pointer-backed throughout: every value-type here is either mutated or
+    // address-taken (ImGui SliderInt/SliderFloat/Checkbox/InputText all take
+    // `&field` / `field[]`) by the moved blocks.
+    // ai3dWorkerManager is a class ref assigned exactly once (app.d ~1179);
+    // navHistory is a main() nested function captured as a hook delegate for
+    // InputRouter's shortcut path.
+    // =========================================================================
+
+    // ---- forwards into ai3dRefs (the 0415 cluster above): the moved
+    //      main-loop panel body reads these bare under `with (app)`, so
+    //      EditorApp re-exposes the leaves at its own top level. (No new
+    //      storage -- these forward to the same pointers the ctx block wires.) ----
+    version (web) {
+    } else {
+        @property ref Ai3dModalState ai3dModal() { return ai3dRefs.ai3dModal; }
+        @property ref bool ai3dModalOpen() { return ai3dRefs.ai3dModalOpen; }
+        @property ref bool ai3dModalPendingOpen() { return ai3dRefs.ai3dModalPendingOpen; }
+        @property ref string ai3dPickedImagePath() { return ai3dRefs.ai3dPickedImagePath; }
+        @property ref char[256] ai3dWorkerUrlBuf() { return ai3dRefs.ai3dWorkerUrlBuf; }
+        // ---- AI3D Generate modal ----
+        bool* ai3dWorkerStartingPtr;
+        @property ref bool ai3dWorkerStarting() { return *ai3dWorkerStartingPtr; }
+        MonoTime* ai3dWorkerStartDeadlinePtr;
+        @property ref MonoTime ai3dWorkerStartDeadline() { return *ai3dWorkerStartDeadlinePtr; }
+        MonoTime* ai3dWorkerNextHealthProbePtr;
+        @property ref MonoTime ai3dWorkerNextHealthProbe() { return *ai3dWorkerNextHealthProbePtr; }
+        bool* ai3dInstallConfirmOpenPtr;
+        @property ref bool ai3dInstallConfirmOpen() { return *ai3dInstallConfirmOpenPtr; }
+        bool* ai3dInstallConfirmPendingOpenPtr;
+        @property ref bool ai3dInstallConfirmPendingOpen() { return *ai3dInstallConfirmPendingOpenPtr; }
+        int* ai3dMaxFacesPtr;
+        @property ref int ai3dMaxFaces() { return *ai3dMaxFacesPtr; }
+        Ai3dWorkerManager ai3dWorkerManager;
+    }
+
+    // ---- quit guard + command-failure notice ----
+    // Stable class reference shared with the panel and HTTP diagnostic. The
+    // five mutable handshake fields live in GuardModalState, not EditorApp.
+    GuardModalState guardModalState;
+
+    // Stable class reference shared by the registrar, renderer, async result
+    // continuation and HTTP diagnostic. Its eight mutable fields live in the
+    // state owner rather than in main()-frame pointer slots.
+    RemeshModalState remeshModalState;
+
+    bool delegate(bool) navHistory;
+}
+
+import vibe3d.runtime.ai_advisor.ai.copilot_gate : kCopilotEnabled;
+import vibe3d.apps.desktop.guarded_action_controller : GuardedActionController;
+import vibe3d.ui.editor.ui.panel_host_roles : GuardModalRole;
+
+GuardModalRole makeGuardModalRole(GuardedActionController guardController) {
+    if (guardController is null) return GuardModalRole.init;
+    return GuardModalRole(
+        &guardController.awaitingAnswer,
+        &guardController.promptText,
+        &guardController.answerSave,
+        &guardController.answerDiscard,
+        &guardController.answerCancel);
+}
+
+import vibe3d.ui.editor.ui.panel_host_roles : TabLayoutBorrow, SideLayoutBorrow, StatusLayoutBorrow,
+    TabPanelRole, SidePanelRole, StatusPanelRole;
+version (web) {} else import vibe3d.ui.editor.ui.panel_host_roles : Ai3dModalBorrow, Ai3dPanelRole;
+
+// The presentation roles borrow these same live slots at each original draw
+// point (task 20262940; evidence: approved Wave18 role custody).
+Role bindPanelHostRoles(Role)(EditorApp app) {
+    Role role;
+    static if (is(Role == TabPanelRole)) {
+        role.layout = TabLayoutBorrow(&app.layout.tabPos, &app.layout.tabSize);
+        role.panelsPtr = app.panelsPtr;
+        role.activePanelIdxPtr = app.activePanelIdxPtr;
+    } else static if (is(Role == SidePanelRole)) {
+        role.layout = SideLayoutBorrow(&app.layout.sidePos, &app.layout.sideSize);
+        role.panelsPtr = app.panelsPtr;
+        role.activePanelIdxPtr = app.activePanelIdxPtr;
+        role.activeToolIdPtr = app.activeToolIdPtr;
+        role.shortcutsPtr = app.shortcutsPtr;
+        role.regPtr = app.regPtr;
+        role.sessionOwner = app.sessionOwner;
+        role.meshDg = app.meshDg;
+        role.kGenerateAiAvailable = kGenerateAiAvailable;
+    } else static if (is(Role == StatusPanelRole)) {
+        role.layout = StatusLayoutBorrow(&app.layout.statusPos, &app.layout.statusSize);
+        role.statusLineGroupsPtr = app.statusLineGroupsPtr;
+        role.activeToolIdPtr = app.activeToolIdPtr;
+        role.shortcutsPtr = app.shortcutsPtr;
+        role.regPtr = app.regPtr;
+        role.sessionOwner = app.sessionOwner;
+        role.meshDg = app.meshDg;
+        role.kAiToggleAvailable = kAiToggleAvailable;
+        role.kCopilotEnabled = kCopilotEnabled;
+    } else {
+        version (web) {
+            static assert(0, "no AI3D presentation role in web");
+        } else {
+            static assert(is(Role == Ai3dPanelRole));
+            role.ai3dModal.healthCheckedPtr = &app.ai3dModal.healthChecked;
+            role.ai3dModal.healthOkPtr = &app.ai3dModal.healthOk;
+            role.ai3dModal.healthProtocolPtr = &app.ai3dModal.healthProtocol;
+            role.ai3dModal.healthBackendPtr = &app.ai3dModal.healthBackend;
+            role.ai3dModal.healthObjCapablePtr = &app.ai3dModal.healthObjCapable;
+            role.ai3dModal.healthMessagePtr = &app.ai3dModal.healthMessage;
+            role.ai3dModal.jobIdPtr = &app.ai3dModal.jobId;
+            role.ai3dModal.statePtr = &app.ai3dModal.state;
+            role.ai3dModal.stagePtr = &app.ai3dModal.stage;
+            role.ai3dModal.progressPtr = &app.ai3dModal.progress;
+            role.ai3dModal.errorCodePtr = &app.ai3dModal.errorCode;
+            role.ai3dModal.errorMessagePtr = &app.ai3dModal.errorMessage;
+            role.ai3dModalOpenPtr = &app.ai3dModalOpen();
+            role.ai3dModalPendingOpenPtr = &app.ai3dModalPendingOpen();
+            role.ai3dPickedImagePathPtr = &app.ai3dPickedImagePath();
+            role.ai3dWorkerUrlBufPtr = &app.ai3dWorkerUrlBuf();
+            role.ai3dWorkerStartingPtr = app.ai3dWorkerStartingPtr;
+            role.ai3dWorkerStartDeadlinePtr = app.ai3dWorkerStartDeadlinePtr;
+            role.ai3dWorkerNextHealthProbePtr = app.ai3dWorkerNextHealthProbePtr;
+            role.ai3dInstallConfirmOpenPtr = app.ai3dInstallConfirmOpenPtr;
+            role.ai3dInstallConfirmPendingOpenPtr = app.ai3dInstallConfirmPendingOpenPtr;
+            role.ai3dMaxFacesPtr = app.ai3dMaxFacesPtr;
+            role.ai3dController = app.ai3dController;
+            role.ai3dWorkerManager = app.ai3dWorkerManager;
+        }
+    }
+    return role;
+}

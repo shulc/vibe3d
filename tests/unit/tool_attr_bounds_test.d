@@ -8,9 +8,9 @@ module tests.unit.tool_attr_bounds_test;
 import tests.unit.census_symbols : exists = wave15Exists;
 
 import vibe3d.editing.params.params : Param, ParamFlags;
-import tool_attr_bounds : applyToolAttrBound, clampStoredToBounds, kToolAttrBounds;
-import toolpipe.stages.constrain;
-import toolpipe.stage;
+import vibe3d.editing.tools.interactive.tool_attr_bounds : applyToolAttrBound, clampStoredToBounds, kToolAttrBounds;
+import vibe3d.editing.pipeline.evaluation.toolpipe.stages.constrain;
+import vibe3d.editing.pipeline.runtime.toolpipe.stage;
 
 unittest { // population floor: the table's row count, measured
     assert(kToolAttrBounds.length == 65, "rows: measured 65");
@@ -161,8 +161,8 @@ import tests.unit.census_symbols : exists = wave15Exists;
 
 unittest { // a stage row uses the same table; stored paths keep their values
     import vibe3d.editing.params.params : parseInto;
-    import toolpipe.stages.constrain : ConstrainStage;
-    import toolpipe.attr_cache : recallNodeAttrs;
+    import vibe3d.editing.pipeline.evaluation.toolpipe.stages.constrain : ConstrainStage;
+    import vibe3d.editing.pipeline.evaluation.toolpipe.attr_cache : recallNodeAttrs;
     auto cs = new ConstrainStage;
     cs.enabled = true;
     auto p = cs.fullParams()[2];
@@ -178,7 +178,7 @@ unittest { // a stage row uses the same table; stored paths keep their values
            "notifying stage recall clamped a stored negative offset");
 }
 
-private final class RefusingOffset : toolpipe.stages.constrain.ConstrainStage {
+private final class RefusingOffset : vibe3d.editing.pipeline.evaluation.toolpipe.stages.constrain.ConstrainStage {
     string received;
     override bool setAttrImpl(string name, string value) {
         received = value;
@@ -187,12 +187,12 @@ private final class RefusingOffset : toolpipe.stages.constrain.ConstrainStage {
 }
 
 unittest { // normalization respects a stage override's refusal boundary
-    import commands.tool.pipe : ToolPipeAttrCommand;
-    import commands.tool.host : ToolHost;
+    import vibe3d.editing.tools.interactive.commands.tool.pipe : ToolPipeAttrCommand;
+    import vibe3d.editing.tools.interactive.commands.tool.host : ToolHost;
     import vibe3d.editing.contracts.editmode : EditMode;
     import vibe3d.mesh.core.mesh : makeCube;
     import vibe3d.viewport.camera.view : View;
-    import toolpipe.pipeline : g_pipeCtx, ToolPipeContext;
+    import vibe3d.editing.pipeline.runtime.toolpipe.pipeline : g_pipeCtx, ToolPipeContext;
     import std.exception : assertThrown;
     import std.conv : to;
     auto saved = g_pipeCtx;
@@ -217,12 +217,12 @@ unittest { // normalization respects a stage override's refusal boundary
            "an in-range offset lost precision during normalization");
 }
 
-private final class AxisStageProbe : toolpipe.stage.Stage {
+private final class AxisStageProbe : vibe3d.editing.pipeline.runtime.toolpipe.stage.Stage {
     int axis = 2;
     override string id() const { return "prim.cube"; }
-    override ubyte ordinal() const { return toolpipe.stage.ordCons; }
-    override toolpipe.stage.TaskCode taskCode() const pure nothrow @nogc @safe {
-        return toolpipe.stage.TaskCode.Cons;
+    override ubyte ordinal() const { return vibe3d.editing.pipeline.runtime.toolpipe.stage.ordCons; }
+    override vibe3d.editing.pipeline.runtime.toolpipe.stage.TaskCode taskCode() const pure nothrow @nogc @safe {
+        return vibe3d.editing.pipeline.runtime.toolpipe.stage.TaskCode.Cons;
     }
     override Param[] params() {
         import vibe3d.editing.params.params : IntEnumEntry;
@@ -233,12 +233,12 @@ private final class AxisStageProbe : toolpipe.stage.Stage {
 }
 
 unittest { // numeric enum rows retain the wire tag the stage setter expects
-    import commands.tool.pipe : ToolPipeAttrCommand;
-    import commands.tool.host : ToolHost;
+    import vibe3d.editing.tools.interactive.commands.tool.pipe : ToolPipeAttrCommand;
+    import vibe3d.editing.tools.interactive.commands.tool.host : ToolHost;
     import vibe3d.editing.contracts.editmode : EditMode;
     import vibe3d.mesh.core.mesh : makeCube;
     import vibe3d.viewport.camera.view : View;
-    import toolpipe.pipeline : g_pipeCtx, ToolPipeContext;
+    import vibe3d.editing.pipeline.runtime.toolpipe.pipeline : g_pipeCtx, ToolPipeContext;
     auto saved = g_pipeCtx;
     scope(exit) g_pipeCtx = saved;
     g_pipeCtx = new ToolPipeContext;

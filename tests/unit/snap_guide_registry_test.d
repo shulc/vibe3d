@@ -10,13 +10,13 @@ module tests.unit.snap_guide_registry_test;
 import std.math : PI, round, sqrt;
 import std.format : format;
 
-import math : Vec3, lookAt, perspectiveMatrix;
+import vibe3d.util.math.math : Vec3, lookAt, perspectiveMatrix;
 import vibe3d.util.spatial.spatial : ModelSpace, Viewport, projectToWindowFull;
 import vibe3d.mesh.core.mesh : Mesh;
-import snap : SnapResult, invalidateSnapGrids, snapCursor;
-import toolpipe.guide : GuideDrawState, SnapGuide;
+import vibe3d.editing.selection.query.snap : SnapResult, invalidateSnapGrids, snapCursor;
+import vibe3d.editing.selection.query.toolpipe.guide : GuideDrawState, SnapGuide;
 import vibe3d.editing.pipeline.contracts.toolpipe.packets : SnapPacket, SnapType;
-import tools.create.pen_geometry : LineGuide;
+import vibe3d.editing.tools.creation.tools.create.pen_geometry : LineGuide;
 
 /// Proposes `at` (as `type`) when `on`; re-ranks nothing.
 private final class FixedGuide : SnapGuide {
@@ -225,10 +225,10 @@ import tests.unit.census_symbols : readText = wave15ReadText;
 }
 
 unittest { // 9513: opposite purposes, both, and query-owned registry isolation
-    import toolpipe.guide : SnapPurpose, SnapGuideScope, SnapQueryPolicy;
-    import toolpipe.pipeline : g_pipeCtx, ToolPipeContext;
-    import toolpipe.stages.snap : SnapStage, liveSnapGuides;
-    import tools.edit.topology_pen.snap_guide : PenSnapGuide;
+    import vibe3d.editing.selection.query.toolpipe.guide : SnapPurpose, SnapGuideScope, SnapQueryPolicy;
+    import vibe3d.editing.pipeline.runtime.toolpipe.pipeline : g_pipeCtx, ToolPipeContext;
+    import vibe3d.editing.pipeline.evaluation.toolpipe.stages.snap : SnapStage, liveSnapGuides;
+    import vibe3d.editing.tools.interactive.tools.edit.topology_pen.snap_guide : PenSnapGuide;
 
     static class DeclaredGuide : SnapGuide {
         SnapPurpose declared;
@@ -286,11 +286,11 @@ unittest { // 9513: opposite purposes, both, and query-owned registry isolation
 }
 
 unittest { // 9513: background placement and edited-only weld are distinct elections
-    import toolpipe.guide : SnapPurpose, SnapGuideScope, SnapQueryPolicy;
-    import toolpipe.pipeline : g_pipeCtx, ToolPipeContext;
-    import toolpipe.stages.snap : SnapStage, liveSnapGuides;
-    import tools.edit.topology_pen.snap_guide : PenSnapGuide;
-    import snap : editedVertexAt, setBackgroundSnapSources;
+    import vibe3d.editing.selection.query.toolpipe.guide : SnapPurpose, SnapGuideScope, SnapQueryPolicy;
+    import vibe3d.editing.pipeline.runtime.toolpipe.pipeline : g_pipeCtx, ToolPipeContext;
+    import vibe3d.editing.pipeline.evaluation.toolpipe.stages.snap : SnapStage, liveSnapGuides;
+    import vibe3d.editing.tools.interactive.tools.edit.topology_pen.snap_guide : PenSnapGuide;
+    import vibe3d.editing.selection.query.snap : editedVertexAt, setBackgroundSnapSources;
     import vibe3d.editing.pipeline.contracts.toolpipe.packets : SnapMode;
 
     auto saved = g_pipeCtx;
@@ -326,10 +326,10 @@ unittest { // 9513: background placement and edited-only weld are distinct elect
 
 unittest { // 9513: a non-live stage resolves its own registered placement guides
     import vibe3d.editing.pipeline.contracts.operator : VectorStack;
-    import toolpipe.pipeline : g_pipeCtx;
+    import vibe3d.editing.pipeline.runtime.toolpipe.pipeline : g_pipeCtx;
     import vibe3d.editing.pipeline.contracts.toolpipe.packets : SubjectPacket, SnapHitPacket;
-    import toolpipe.stages.snap : SnapStage;
-    import toolpipe.guide : SnapPurpose;
+    import vibe3d.editing.pipeline.evaluation.toolpipe.stages.snap : SnapStage;
+    import vibe3d.editing.selection.query.toolpipe.guide : SnapPurpose;
 
     static class RefusePurpose : SnapGuide {
         SnapPurpose declared;
@@ -367,10 +367,10 @@ unittest { // 9513: a non-live stage resolves its own registered placement guide
 
 // Task 20262020: nonempty registered weld collection reaches the lower array query.
 unittest {
-    import toolpipe.guide : SnapQueryPolicy, SnapPurpose, SnapGuideScope;
-    import toolpipe.pipeline : g_pipeCtx, ToolPipeContext;
-    import toolpipe.stages.snap : SnapStage, liveSnapGuides;
-    import snap : editedVertexAt;
+    import vibe3d.editing.selection.query.toolpipe.guide : SnapQueryPolicy, SnapPurpose, SnapGuideScope;
+    import vibe3d.editing.pipeline.runtime.toolpipe.pipeline : g_pipeCtx, ToolPipeContext;
+    import vibe3d.editing.pipeline.evaluation.toolpipe.stages.snap : SnapStage, liveSnapGuides;
+    import vibe3d.editing.selection.query.snap : editedVertexAt;
     import std.math : round;
     static class RefuseWeld : SnapGuide {
         size_t asked;

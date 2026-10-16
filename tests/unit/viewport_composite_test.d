@@ -7,8 +7,8 @@ module tests.unit.viewport_composite_test;
 
 import std.format : format;
 import std.traits : EnumMembers;
-import display_state : CavityMode, CavityState, CompositePlan, resolveCavityParams;
-import viewport_composite;
+import vibe3d.viewport.display_policy.display_state : CavityMode, CavityState, CompositePlan, resolveCavityParams;
+import vibe3d.viewport.host.viewport_composite;
 
 private EffectIds ids() {
     // Distinct non-zero names, so "the target is X" cannot hold by 0 == 0.
@@ -70,7 +70,7 @@ unittest { // the table per cavity mode: count floor first, then every pass lega
 }
 
 unittest { // effectIdsOf maps every field of the cell's FBO (distinct ids, so a swap is seen)
-    import viewport : ViewportFbo;
+    import vibe3d.viewport.host.viewport : ViewportFbo;
     ViewportFbo f;
     f.fbo = 1; f.effectsFbo = 2; f.colorTex = 3; f.depthTex = 4; f.gbufTex = 5;
     f.compositeSrcTex = 6; f.aoTex = [7, 8];
@@ -229,7 +229,7 @@ import tests.unit.census_symbols : readText = wave15ReadText;
 }
 
 unittest { // S3b: worldCavityOn per mode, and invert4 over the two projection shapes
-    import math : perspectiveMatrix, orthographicMatrix;
+    import vibe3d.util.math.math : perspectiveMatrix, orthographicMatrix;
     size_t modes;
     foreach (m; [EnumMembers!CavityMode]) {
         immutable bool want = m == CavityMode.World || m == CavityMode.Both;

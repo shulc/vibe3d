@@ -12,31 +12,31 @@ import std.path : buildNormalizedPath, buildPath, dirName;
 import std.string : indexOf;
 
 import bindbc.sdl : KMOD_NONE, SDL_SetModState, loadSDL, sdlSupport;
-import application_command_binding : ApplicationCommandBinding;
-import command : Command, g_testMode;
-import command_executor : CommandExecutor;
-import command_history : CommandHistory, RecordMode;
-import commands.image.commands : ImageRemove;
-import commands.image_plane.commands : ImagePlaneAdd, ImagePlaneSetImage;
-import commands.layer.commands : LayerDelete, LayerRename, LayerSelect;
+import vibe3d.apps.desktop.application_command_binding : ApplicationCommandBinding;
+import vibe3d.editing.commands.runtime.command : Command, g_testMode;
+import vibe3d.editing.commands.runtime.command_executor : CommandExecutor;
+import vibe3d.editing.commands.runtime.command_history : CommandHistory, RecordMode;
+import vibe3d.runtime.document_actions.commands.image.commands : ImageRemove;
+import vibe3d.runtime.document_actions.commands.image_plane.commands : ImagePlaneAdd, ImagePlaneSetImage;
+import vibe3d.runtime.document_actions.commands.layer.commands : LayerDelete, LayerRename, LayerSelect;
 import vibe3d.documents.model.document : Document, ImageData, ImagePlaneData, ItemKind, Layer;
-import edit_session : EditSession;
-import forms_render : FormsPanel;
-import guarded_action_controller : GuardObservationPorts,
+import vibe3d.editing.tools.interactive.edit_session : EditSession;
+import vibe3d.ui.editor.forms_render : FormsPanel;
+import vibe3d.apps.desktop.guarded_action_controller : GuardObservationPorts,
     GuardedActionController, GuardedActionPorts;
 import vibe3d.mesh.core.mesh : makeCube;
-import registry : Registry;
-import session_owner : Session;
+import vibe3d.editing.tools.interactive.registry : Registry;
+import vibe3d.runtime.application_core.session_owner : Session;
 import tests.unit.census_symbols : blankNonCode;
 import tests.unit.ui.headless_panel : HeadlessPanel, openPanel;
-import tool : Tool;
-import tool_activation_ownership : ToolTransition;
-import ui.discard_guard : GuardRecord;
-import ui.image_list_panel : ImageListDrawSnapshot, ImageListPanelRoles,
+import vibe3d.editing.tools.interactive.tool : Tool;
+import vibe3d.editing.commands.runtime.tool_activation_ownership : ToolTransition;
+import vibe3d.ui.editor.ui.discard_guard : GuardRecord;
+import vibe3d.ui.editor.ui.image_list_panel : ImageListDrawSnapshot, ImageListPanelRoles,
     ImageListPanelState, bindImageListPanel, drawImageListPanel,
     imageListConfirmView, imageListDrawSnapshot, resetImageListDrawSnapshot;
-import ui.item_rename : ItemRenameController, ItemRenameState;
-import ui.layer_list_panel : LayerListDrawSnapshot, LayerListPanelRoles,
+import vibe3d.ui.editor.ui.item_rename : ItemRenameController, ItemRenameState;
+import vibe3d.ui.editor.ui.layer_list_panel : LayerListDrawSnapshot, LayerListPanelRoles,
     bindLayerListPanel, drawLayerListPanel, layerListDrawSnapshot,
     resetLayerListDrawSnapshot;
 import vibe3d.viewport.camera.view : View;
@@ -768,7 +768,7 @@ unittest { // J5 census: one resolve contract, one state per binding, no statics
 }
 
 unittest { // R0: an empty token holds nothing, not even the null item
-    import ui.retained_item : RetainedItem;
+    import vibe3d.ui.editor.ui.retained_item : RetainedItem;
     RetainedItem token;
     Document document;
     document.layers = [new Layer];

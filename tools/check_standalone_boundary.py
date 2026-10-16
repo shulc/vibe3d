@@ -25,10 +25,10 @@ CORE_CELLS = ('document-primary', 'invocation-order', 'invocation-outcomes', 'in
 
 STB_REVISION = 'a66f6917718ea128076a2c5660e37f362a785144'
 # Canonical JSON pins include configuration/build-type grants and platform keys.
-DESCRIPTORS = {'packages/command-runtime': '94d79c84259b3591d0020a9dfe24cbfa2c9522c5f4ea7dd39f97fbbbbedb1770',
- 'packages/application-core': '3a4500cbf4d229a885ea315625a36fa7477e2ff4ce272923ef2e4db9f2a8cde2',
- 'tests/core': 'a642c349c5ff8c74060826a46b801641a2d0069de4254d26af92aed44cbaccd7',
- 'tools/cli': 'ac4b90f821fd3800c66a883112e5a74a0819d179a2391d790ea8d578ec07ab8c'}
+DESCRIPTORS = {'libraries/editing/commands/runtime': 'ff1dd64b9132e4efefb2de6e37147d2a36dba3f3f27c0bbdf5c90c2ac7a280b4',
+ 'libraries/runtime/application-core': '726d9ded4b78e985691d02ed10e38b6433a92fedd7808847785df071799aadd2',
+ 'tests/core': 'b678a7760103fecf02f1a1cfe3f97e4eb5dc293dcbc855c26e174a0bd9ff9d18',
+ 'apps/cli': 'c7c64fb2de42ff3632b140339723277c4756e813f6098bd63e9bfd777670db98'}
 HOOKS = ('preGenerateCommands', 'postGenerateCommands', 'preBuildCommands',
          'postBuildCommands', 'preRunCommands', 'postRunCommands')
 IMAGE_BUILD = ['cmake -B $PACKAGE_DIR/build -DCMAKE_GENERATOR=Ninja -DCMAKE_BUILD_TYPE=Release $PACKAGE_DIR',
@@ -44,12 +44,34 @@ def require(condition, message):
         raise BoundaryError(message)
 
 
+def descriptor_context(root):
+    import check_package_support_boundary as support
+    root = Path(root).resolve()
+    matches = [relative for relative in DESCRIPTORS
+               if root.parts[-len(Path(relative).parts):] == Path(relative).parts]
+    require(len(matches) == 1, 'unexpected root package coordinate')
+    relative = matches[0]
+    project = root.parents[len(Path(relative).parts) - 1]
+    roles = {support.SPECS['command-runtime']['root']: support.SPECS['command-runtime']['name'],
+             support.SPECS['application-core']['root']: support.SPECS['application-core']['name'],
+             'tests/core': 'vibe3d-core-tests', 'apps/cli': 'vibe3d:cli'}
+    require(relative in roles, 'unexpected root package coordinate')
+    return project, relative, roles[relative]
+
+
+def describe_arguments(root, config, compiler):
+    project, relative, owner = descriptor_context(root)
+    return (['dub', 'describe'] + ([] if relative == 'tests/core' else [owner])
+            + ['--root=' + str(root if relative == 'tests/core' else project),
+               '--config=' + config, '--compiler=' + compiler, '--quiet'])
+
+
 def validate_package_settings(description, root, compiler="dmd"):
     import check_package_support_boundary as support
-    project=root.parents[1]
-    manifest=json.loads((root/'dub.json').read_text()); owner=manifest['name']
-    require(owner in ('vibe3d-command-runtime','vibe3d-application-core','vibe3d-core-tests','vibe3d-cli'), 'unexpected root package')
-    for path in {project/'packages/command-runtime',project/'packages/application-core',root}:
+    project, relative, owner = descriptor_context(root)
+    manifest=json.loads((root/'dub.json').read_text())
+    require(owner in (support.SPECS['command-runtime']['name'],support.SPECS['application-core']['name'],'vibe3d-core-tests','vibe3d:cli'), 'unexpected root package')
+    for path in {project/support.SPECS['command-runtime']['root'],project/support.SPECS['application-core']['root'],root}:
         raw=json.loads((path/'dub.json').read_text())
         grants={k:v for k,v in raw.items() if k not in ('description','license','toolchainRequirements')}
         digest=hashlib.sha256(json.dumps(grants,sort_keys=True,separators=(',',':')).encode()).hexdigest()
@@ -60,14 +82,14 @@ def validate_package_settings(description, root, compiler="dmd"):
     expected={owner}
     for dependency in manifest.get('dependencies', {}):
         expected|={support.SPECS[x]['name'] for x in support.closure(support.internal_owner(dependency))}
-    if owner in ('vibe3d-command-runtime','vibe3d-application-core'):
+    if owner in (support.SPECS['command-runtime']['name'],support.SPECS['application-core']['name']):
         expected|={support.SPECS[x]['name'] for x in support.closure(support.internal_owner(owner))}
-    if 'vibe3d-document-io' in expected: expected.add('d-stb-image')
+    if support.SPECS['document-io']['name'] in expected: expected.add('d-stb-image')
     require(len(active_list)==len(expected) and set(active)==expected,'resolved package population changed')
     image=Path(active['d-stb-image']['path']).resolve() if 'd-stb-image' in active else None
     if image is not None:
         require(image.parts[-2:]==(STB_REVISION,'d-stb-image'),'resolved image revision changed')
-    roots=([root/'source/main.d'] if owner=='vibe3d-cli' else [(root/name).resolve() for name in manifest['sourceFiles']] if owner=='vibe3d-core-tests' else sorted((root/'source').rglob('*.d')))
+    roots=([root/manifest['mainSourceFile']] if owner=='vibe3d:cli' else [(root/name).resolve() for name in manifest['sourceFiles']] if owner=='vibe3d-core-tests' else sorted((root/'source').rglob('*.d')))
     if owner=='vibe3d-core-tests':
         require(tuple(path.name for path in roots)==CORE_ROOTS, 'CORE mapped five root identities changed')
     targets={t['rootPackage']:t for t in description['targets']}
@@ -147,11 +169,12 @@ def main(argv=None):
     parser.add_argument('--evidence-dir')
     args = parser.parse_args(argv)
     root = Path(args.root).resolve()
-    owner = json.loads((root / 'dub.json').read_text())['name']
+    project, relative, owner = descriptor_context(root)
+    manifest = json.loads((root / 'dub.json').read_text())
     require(not args.unittest or owner == 'vibe3d-core-tests', 'only CORE has independent unittest acceptance')
     require(owner != 'vibe3d-core-tests' or args.unittest,
             'CORE executable construction requires --unittest; ordinary library evidence uses explicit support-owner recipes')
-    config = args.config or ('core' if owner == 'vibe3d-core-tests' else 'application' if owner == 'vibe3d-cli' else 'modeling-noai')
+    config = args.config or ('core' if owner == 'vibe3d-core-tests' else 'application' if owner == 'vibe3d:cli' else 'modeling-noai')
     mode = 'unittest' if args.unittest else 'production'
     evidence = Path(args.evidence_dir).resolve() if args.evidence_dir else root / '.boundary' / mode
     evidence.mkdir(parents=True, exist_ok=True)
@@ -160,8 +183,9 @@ def main(argv=None):
         env.pop(variable, None)
     compiler = shutil.which(args.compiler)
     require(compiler is not None, 'compiler not found: ' + args.compiler)
-    describe = ['dub', 'describe', '--root=' + str(root), '--config=' + config, '--compiler=' + compiler, '--quiet']
-    described = run(describe, root, env, evidence, 'describe')
+    command_root = root if relative == 'tests/core' else project
+    describe = describe_arguments(root, config, compiler)
+    described = run(describe, command_root, env, evidence, 'describe')
     require(described.returncode == 0, 'DUB describe failed (see describe.stderr.log)')
     description = json.loads(described.stdout)
     (evidence / 'describe.json').write_text(json.dumps(description, indent=2) + '\n')
@@ -170,15 +194,17 @@ def main(argv=None):
     # to the explicit support-owner recipes, without an ordinary redirect.
     build_root = root
     build_config = config
-    command = ['dub', 'test' if args.unittest else 'build', '--root=' + str(build_root),
-               '--config=' + build_config, '--compiler=' + compiler, '--force', '--verbose']
-    result = run(command, root, env, evidence, 'build-run')
+    command = (['dub', 'test' if args.unittest else 'build']
+               + ([] if relative == 'tests/core' else [owner])
+               + ['--root=' + str(command_root), '--config=' + build_config,
+                  '--compiler=' + compiler, '--force', '--verbose'])
+    result = run(command, command_root, env, evidence, 'build-run')
     output = result.stdout + result.stderr
     require(result.returncode == 0, 'DUB build/runtime failed: ' +
             next((line for line in output.splitlines() if 'Error:' in line or 'AssertError@' in line), 'see build-run logs'))
     total = validate_runtime(output) if args.unittest else None
     import check_package_support_boundary as support
-    try:commands=support.compiler_commands(output,build_root)
+    try:commands=support.compiler_commands(output,command_root)
     except support.BoundaryError as error:raise BoundaryError(str(error))
     actual_inputs={}
     for invocation in commands:
@@ -199,8 +225,10 @@ def main(argv=None):
     (evidence/'actual-compiler-argv.json').write_text(json.dumps(commands,indent=2)+'\n')
     (evidence/'actual-input-hashes.json').write_text(json.dumps(actual_inputs,indent=2)+'\n')
 
-    binary = build_root / ('vibe3d-core-tests-test-' + config if args.unittest else
-                           'lib'+owner+'.a' if owner in ('vibe3d-command-runtime','vibe3d-application-core') else owner)
+    binary = (build_root / ('vibe3d-core-tests-test-' + config) if args.unittest else
+              build_root / support.archive_name(support.internal_owner(owner))
+              if owner in (support.SPECS['command-runtime']['name'],support.SPECS['application-core']['name']) else
+              build_root / manifest.get('targetPath', '.') / manifest.get('targetName', manifest['name']))
     require(binary.is_file(), 'fresh DUB output missing: ' + str(binary))
     revision = subprocess.run(['git', 'rev-parse', 'HEAD'], cwd=root, text=True, capture_output=True)
     sha = revision.stdout.strip() if revision.returncode == 0 else 'uncommitted-copy'

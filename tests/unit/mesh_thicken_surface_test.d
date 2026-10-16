@@ -31,7 +31,7 @@ import vibe3d.mesh.core.mesh;
 import vibe3d.mesh.ops.mesh_ops.bridge : kBridgeEditScope;
 import vibe3d.mesh.ops.mesh_ops.thicken : thickenSurface;
 static import vibe3d.mesh.ops.mesh_ops.thicken;
-import math : Vec3;
+import vibe3d.util.math.math : Vec3;
 import tests.unit.mesh_by_value_gate;
 
 // The seam's compile-time gate: no function in the extracted kernel module may

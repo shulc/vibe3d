@@ -79,11 +79,11 @@ import std.math   : fabs, sqrt, abs;
 import std.format : format;
 import std.algorithm : max, min;
 
-import math : Vec3, normalize, dot;
+import vibe3d.util.math.math : Vec3, normalize, dot;
 import vibe3d.util.spatial.spatial : ModelSpace;
 import vibe3d.mesh.core.mesh     : Mesh;
 import vibe3d.documents.model.document : ItemXform;
-import toolpipe.obbox : ObbFrame, ObbSource, obbFromPoints;
+import vibe3d.editing.pipeline.evaluation.toolpipe.obbox : ObbFrame, ObbSource, obbFromPoints;
 
 void main() {}
 

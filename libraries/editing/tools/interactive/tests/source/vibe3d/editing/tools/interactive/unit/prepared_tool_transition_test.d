@@ -1,0 +1,909 @@
+module vibe3d.editing.tools.interactive.unit.prepared_tool_transition_test;
+
+import vibe3d.editing.contracts.prepared_tool_effect;
+import vibe3d.editing.tools.interactive.prepared_tool_transition;
+import vibe3d.mesh.change.change_bus : ChangeBus, PreparedDeliveryJournal, PreparedDeliverySpec,
+                    PreparedMeshSubjectOwner;
+import vibe3d.editing.commands.runtime.command_history : CommandHistory, HistoryEntry, HistoryFlags,
+                        PreparedHistoryImage;
+import vibe3d.documents.model.document : PreparedLayerReadScope;
+import vibe3d.editing.commands.runtime.record_observer_hub : PreparedRecordObserverImage;
+import vibe3d.editing.tools.interactive.tool : Tool, ToolSessionPolicy;
+import vibe3d.editing.tools.interactive.registry : PreparedPipeAttrs, ToolFactory;
+import vibe3d.editing.commands.runtime.tool_activation_ownership : ArmDoor, PipeArmScope;
+import vibe3d.editing.tools.interactive.tools.edit.topology_pen.tool : TopologyPenTool;
+import std.algorithm : canFind, endsWith, startsWith;
+
+import vibe3d.editing.commands.editor.commands.layer.xform_edit : LayerXformEdit;
+import vibe3d.editing.commands.editor.commands.mesh.vertex_edit : MeshVertexEdit;
+import vibe3d.editing.tools.interactive.commands.tool.lifecycle : ToolActivationCommand;
+import vibe3d.documents.model.document : Layer;
+import vibe3d.editing.contracts.editmode : EditMode;
+import vibe3d.util.math.math : Vec3;
+import vibe3d.mesh.core.mesh : makeCube;
+import vibe3d.viewport.gpu.mesh_gpu : GpuMesh;
+import vibe3d.editing.pipeline.contracts.operator : VectorStack;
+import vibe3d.editing.tools.interactive.pipe_gizmo_host : PipeGizmoHost;
+import vibe3d.editing.tools.interactive.prepared_record_context : PreparedRecordContext, PreparedToolDoorClient;
+import vibe3d.editing.commands.runtime.record_observer_hub : RecordObserverHub;
+import vibe3d.editing.contracts.seltype : SelType;
+import std.json : JSONValue;
+import vibe3d.editing.pipeline.contracts.toolpipe.packets : SubjectPacket;
+import vibe3d.editing.pipeline.runtime.toolpipe.pipeline : g_pipeCtx, Pipeline;
+import vibe3d.editing.pipeline.evaluation.toolpipe.stages.actcenter : ActionCenterStage;
+import vibe3d.editing.pipeline.evaluation.toolpipe.stages.axis : AxisStage;
+import vibe3d.editing.pipeline.evaluation.toolpipe.stages.constrain : ConstrainStage;
+import vibe3d.editing.pipeline.evaluation.toolpipe.stages.falloff : FalloffStage;
+import vibe3d.editing.tools.interactive.tools.transform.xfrm_transform : XfrmTransformTool;
+import vibe3d.viewport.camera.view : View;
+
+// ---------------------------------------------------------------------------
+// The prepared-effect FIELD SHAPE census (task 4052)
+// ---------------------------------------------------------------------------
+// Each named shape below replaces one `tests/compile_fail/prepared_effect_*.d`
+// fixture: a file whose whole content was `static assert(requirePreparedField!T)`
+// and whose contract was that dmd must REJECT it. `!__traits(compiles, ...)`
+// states the same refusal inside a module that compiles. The seven were never
+// the expensive half -- 0.148 s of dmd across all of them, measured 2026-09-04
+// against 21.5 s for the 65 copy fixtures -- they are retired because a
+// fixture directory still needs a caller, and seven files is a caller's worth
+// of scaffolding for seven `static assert`s.
+//
+// THE ORDER IS THE POINT. The positive control sits FIRST: an `isPreparedField`
+// that answered `false` for everything would satisfy all seven negatives and
+// say nothing at all. druntime stops a module at its first failed assert, so a
+// run that reaches the negatives has already cleared the control -- one run
+// buys both halves.
+//
+// What did NOT move: the fixtures also pinned the diagnostic TEXT
+// ("prepared effect field is not owned"). `__traits(compiles)` cannot see a
+// message, so that string is pinned by `token_census_gate` in
+// tools/check_prepared_protocol.py against packages/edit-contracts/source/prepared_tool_effect.d.
+private class PreparedEffectBorrowedClass { int value; }          // _class.d
+private alias PreparedEffectDelegate = void delegate();           // _delegate.d
+private alias PreparedEffectFunctionPointer = void function();    // _function_pointer.d
+private struct PreparedEffectNestedPointer { int* borrowed; }     // _nested_pointer.d
+private struct PreparedEffectNestedSlice { ubyte[] borrowed; }    // _nested_slice.d
+private struct PreparedEffectBorrowingView { int[] source; size_t index; } // _view.d
+
+// THREE OF THE SEVEN FIXTURES COULD NOT DISCRIMINATE, and copying them
+// faithfully would have carried that across. `_nested_pointer`, `_nested_slice`
+// and `_view` were plain structs with no `@PreparedAggregate`, so
+// `isPreparedField` refused them at its LAST branch -- "not an admitted
+// aggregate" -- and never reached the recursive field check they were written
+// to state. Their refusal is real but it is the wrong refusal: delete
+// `isDynamicArray!T` or `isPointer!T` from the rule and all three stay green.
+// These three carry the UDA, so the only thing that can refuse them is the
+// recursion over their fields, and the mutation drill in the card shows each
+// going red on its own term.
+@PreparedAggregate private struct PreparedEffectOwnedAggregate { OwnedId owner; ulong value; }
+@PreparedAggregate private struct PreparedEffectAggregatePointer { OwnedId owner; int* borrowed; }
+@PreparedAggregate private struct PreparedEffectAggregateSlice { OwnedId owner; ubyte[] borrowed; }
+@PreparedAggregate private struct PreparedEffectAggregateView { OwnedId owner; int[] source; size_t index; }
+
+unittest {
+    // The control. Must stay GREEN; everything below it is a refusal.
+    static assert(isPreparedField!PreparedToolEffect);
+    static assert(__traits(compiles, requirePreparedField!PreparedToolEffect));
+
+    // prepared_effect_direct_slice.d
+    static assert(!isPreparedField!(ubyte[]));
+    static assert(!__traits(compiles, requirePreparedField!(ubyte[])));
+    // prepared_effect_class.d
+    static assert(!isPreparedField!PreparedEffectBorrowedClass);
+    static assert(!__traits(compiles, requirePreparedField!PreparedEffectBorrowedClass));
+    // prepared_effect_delegate.d
+    static assert(!isPreparedField!PreparedEffectDelegate);
+    static assert(!__traits(compiles, requirePreparedField!PreparedEffectDelegate));
+    // prepared_effect_function_pointer.d
+    static assert(!isPreparedField!PreparedEffectFunctionPointer);
+    static assert(!__traits(compiles, requirePreparedField!PreparedEffectFunctionPointer));
+    // prepared_effect_nested_pointer.d
+    static assert(!isPreparedField!PreparedEffectNestedPointer);
+    static assert(!__traits(compiles, requirePreparedField!PreparedEffectNestedPointer));
+    // prepared_effect_nested_slice.d
+    static assert(!isPreparedField!PreparedEffectNestedSlice);
+    static assert(!__traits(compiles, requirePreparedField!PreparedEffectNestedSlice));
+    // prepared_effect_view.d
+    static assert(!isPreparedField!PreparedEffectBorrowingView);
+    static assert(!__traits(compiles, requirePreparedField!PreparedEffectBorrowingView));
+
+    // The bare shapes the old block already carried, kept.
+    static assert(!isPreparedField!(int*));
+    static assert(!isPreparedField!(void delegate()));
+    static assert(!isPreparedField!Object);
+
+    // The RECURSION, which the three nested fixtures above could not reach.
+    // Control first again: an admitted aggregate of owned fields is ACCEPTED,
+    // so "the aggregate branch always says false" cannot pass the three below.
+    static assert(isPreparedField!PreparedEffectOwnedAggregate);
+    static assert(__traits(compiles, requirePreparedField!PreparedEffectOwnedAggregate));
+    static assert(!isPreparedField!PreparedEffectAggregatePointer);
+    static assert(!__traits(compiles, requirePreparedField!PreparedEffectAggregatePointer));
+    static assert(!isPreparedField!PreparedEffectAggregateSlice);
+    static assert(!__traits(compiles, requirePreparedField!PreparedEffectAggregateSlice));
+    static assert(!isPreparedField!PreparedEffectAggregateView);
+    static assert(!__traits(compiles, requirePreparedField!PreparedEffectAggregateView));
+}
+
+private class CountingPreparedTool : Tool {
+    static int destroyed;
+    ~this() { ++destroyed; }
+}
+
+/// A tool whose session policy declares the activation row (slice M1: the
+/// field replaced the marker interface).
+private class LifecyclePreparedTool : Tool {
+    override ToolSessionPolicy sessionPolicy() const nothrow @nogc {
+        static immutable ToolSessionPolicy policy = { activationRow: true };
+        return policy;
+    }
+}
+
+unittest {
+    assert((new TopologyPenTool).sessionPolicy().activationRow,
+        "Topology Pen arm must opt into lifecycle history");
+    assert(toolArmEmitsLifecycle(new LifecyclePreparedTool),
+        "the activationRow policy must classify the prepared arm for recording");
+    // Slice M3: the cutting tools' rows come from their CLASS's policy, never
+    // from an id (the id arm and its parameter are gone).
+    import vibe3d.editing.tools.interactive.tools.slice.slice_tool : SliceTool;
+    import vibe3d.editing.tools.interactive.tools.slice.edge_slice_tool : EdgeSliceTool;
+    import vibe3d.editing.tools.interactive.tools.slice.loop_slice_tool : LoopSliceTool;
+    assert((new SliceTool(null, null, null, null)).sessionPolicy().activationRow
+           && (new EdgeSliceTool(null, null, null, null)).sessionPolicy().activationRow
+           && (new LoopSliceTool(null, null, null, null)).sessionPolicy().activationRow,
+        "a cutting-tool class lost the activation row its policy declares");
+    static assert(!__traits(compiles, toolArmEmitsLifecycle(null, "mesh.sliceTool")),
+        "the arm classifier takes an id again");
+    assert(!toolArmEmitsLifecycle(new CountingPreparedTool),
+        "an unmarked ordinary tool acquired a lifecycle record");
+    // No candidate classifies as no row, as the marker cast answered for null.
+    assert(!toolArmEmitsLifecycle(null),
+        "a null candidate acquired a lifecycle record");
+}
+
+unittest {
+    CountingPreparedTool.destroyed = 0;
+    PreparedCandidateOwner owner;
+    auto first = new CountingPreparedTool;
+    auto second = new CountingPreparedTool;
+    owner.prepare(first, null);
+    owner.prepare(second, null);
+    assert(CountingPreparedTool.destroyed == 1,
+           "repeated candidate prepare leaked its replaced candidate");
+    ToolFactory failing = () { throw new Exception("prepare failed"); };
+    try owner.prepareFrom(failing, null);
+    catch (Exception) {}
+    assert(owner.preparedCandidate() is second,
+           "failed replacement discarded the previously prepared candidate");
+    owner.discardCandidate();
+    assert(CountingPreparedTool.destroyed == 2,
+           "candidate discard did not run the terminal disposer exactly once");
+}
+
+unittest {
+    auto history = new CommandHistory;
+    HistoryEntry lifecycle = { label: "prepared", flags:
+        HistoryFlags.Undoable | HistoryFlags.ToolLifecycle };
+    auto image = history.prepareLifecycleAppend(lifecycle);
+    history.installPreparedImage(image);
+    assert(history.toolLifecycleCount() == 1,
+           "prepared history install did not append its lifecycle row");
+    assert(!history.canRedo(),
+           "prepared lifecycle append did not invalidate redo");
+}
+
+unittest {
+    auto anchor1 = new Object(), anchor2 = new Object();
+    auto owner1 = new PreparedMeshSubjectOwner(anchor1, 11, 101);
+    auto owner2 = new PreparedMeshSubjectOwner(anchor2, 22, 202);
+    auto rows = [PreparedDeliverySpec(owner1, owner1.issue(), 3, 1),
+                 PreparedDeliverySpec(owner2, owner2.issue(), 8, 4)];
+    auto journal = PreparedDeliveryJournal.prepare(rows);
+    rows[0].flags = 99; // post-prepare alias mutation cannot affect owner copy
+    ChangeBus bus;
+    size_t[] subjects; uint[] flags; uint[] domains;
+    bus.onMeshChanged((size_t s, uint f) nothrow { subjects ~= s; flags ~= f; });
+    bus.onSelectionChanged((uint d) nothrow { domains ~= d; });
+    journal.replay(bus);
+    assert(subjects.length == 2,
+           "prepared journal lost/coalesced a delivery");
+    assert(subjects == [11, 22] && flags == [3, 8] && domains == [1, 4],
+           "prepared journal changed subject/flags/domain order");
+
+    bool refused;
+    try PreparedDeliveryJournal.prepare([
+        PreparedDeliverySpec(owner1, owner2.issue(), 1, 0)]);
+    catch (Exception) refused = true;
+    assert(refused, "a token issued by another owner was accepted");
+    auto generationOwner = new PreparedMeshSubjectOwner(new Object(), 33, 303);
+    auto stale = PreparedDeliveryJournal.prepare([
+        PreparedDeliverySpec(generationOwner, generationOwner.issue(), 1, 0)]);
+    assert(stale.validate());
+    generationOwner.issue();
+    assert(!stale.validate(), "a superseded subject generation stayed valid");
+}
+
+// ===========================================================================
+// The prepared-token copy census (task 4052)
+// ===========================================================================
+// WHAT THIS REPLACES, AND WHAT IT COST. Until 2026-09-04 the non-copyability
+// of a prepared token was stated by one file per token under
+// `tests/compile_fail/` -- 66 of them, each three to six lines of
+// `T original; auto forbiddenCopy = original;` -- and checked by
+// `tools/check_prepared_protocol.py` launching one `dmd -c` per fixture and
+// requiring the rejection to mention a disabled copy. Measured on this host
+// with `dmd` behind a timing wrapper (2026-09-04): 65 of those compiles cost
+// 21.5 s of the scanner's 39.9 s wall. The property is one `__traits` call, so
+// the 66 fixtures are gone and the census below is paid by
+// `dub test --config=tests`, which compiles this module anyway.
+//
+// WHY IT IS NOT VACUOUS -- the failure mode this whole file exists to avoid.
+// The census set is chosen by NAME (a struct called `Prepared*Token` or
+// `Validated*Token`, declared by one of the modules listed below), NEVER by
+// copyability. Deleting `@disable this(this)` from a token therefore leaves it
+// in the set and reddens its own `static assert` with its own name. A set
+// derived from "has a disabled copy" would be a tautology and could not go red
+// at all. `kCopyableByDesign` is asserted in the POSITIVE direction for the
+// same reason: a stale exception cannot hide, because giving one of those three
+// a disabled copy reddens the row that excuses it.
+//
+// THE HOLE D CANNOT SEE, and who closes it. D compile-time reflection cannot
+// enumerate the modules on disk, so `kTokenModules` could silently fall behind
+// a new `source/prepared_*.d` and the census would then be honestly green over
+// a smaller set -- the "pattern matches nothing" shape. That half is
+// filesystem enumeration, which is exactly what the Python census can see and
+// D cannot: `token_census_gate` in `tools/check_prepared_protocol.py` compares
+// this list, the two counts below and the exception list against the tree, and
+// refuses a drift in either direction. Neither half is sufficient alone.
+private enum string[] kTokenModules = [
+    "vibe3d.editing.commands.runtime.command_history",
+    "vibe3d.documents.model.document",
+    "vibe3d.editing.tools.interactive.handles.shapes",
+    "vibe3d.viewport.gpu.mesh_gpu",
+    "vibe3d.editing.tools.interactive.prepared_bridge_activation",
+    "vibe3d.editing.tools.interactive.prepared_command_wrapper_activation",
+    "vibe3d.editing.tools.interactive.prepared_edge_bevel_activation",
+    "vibe3d.editing.tools.interactive.prepared_edge_extend_deactivate",
+    "vibe3d.editing.tools.interactive.prepared_edge_extend_tool_activation",
+    "vibe3d.editing.tools.interactive.prepared_edge_extrude_activation",
+    "vibe3d.editing.tools.interactive.prepared_edge_slice_activation",
+    "vibe3d.editing.tools.interactive.prepared_edge_slice_deactivate",
+    "vibe3d.editing.tools.interactive.prepared_inherited_noop",
+    "vibe3d.editing.tools.interactive.prepared_loop_slice_activation",
+    "vibe3d.editing.tools.interactive.prepared_loop_slice_deactivate",
+    "vibe3d.editing.tools.interactive.prepared_mirror_activation",
+    "vibe3d.editing.tools.interactive.prepared_move_update",
+    "vibe3d.editing.tools.interactive.prepared_param_update",
+    "vibe3d.editing.tools.interactive.prepared_poly_bevel_activation",
+    "vibe3d.editing.tools.interactive.prepared_poly_extrude_activation",
+    "vibe3d.editing.tools.interactive.prepared_poly_inset_activation",
+    "vibe3d.editing.tools.interactive.prepared_private_state",
+    "vibe3d.editing.tools.interactive.prepared_radial_array_transition",
+    "vibe3d.editing.tools.interactive.prepared_rotate_update",
+    "vibe3d.editing.tools.interactive.prepared_scale_update",
+    "vibe3d.editing.tools.interactive.prepared_slice_activation",
+    "vibe3d.editing.tools.interactive.prepared_slice_deactivate",
+    "vibe3d.editing.tools.interactive.prepared_smooth_shift_activation",
+    "vibe3d.editing.tools.interactive.prepared_stroke_extrude_activation",
+    "vibe3d.editing.tools.interactive.prepared_tack_activation",
+    "vibe3d.editing.contracts.prepared_tool_effect",
+    "vibe3d.editing.tools.interactive.prepared_topology_pen_activation",
+    "vibe3d.editing.tools.interactive.prepared_topology_pen_deactivate",
+    "vibe3d.editing.tools.interactive.prepared_topology_pen_update",
+    "vibe3d.editing.tools.interactive.prepared_transform_activation",
+    "vibe3d.editing.tools.interactive.prepared_transform_product_activation",
+    "vibe3d.editing.tools.interactive.prepared_vertex_bevel_activation",
+    "vibe3d.editing.tools.interactive.prepared_vertex_extrude_activation",
+    "vibe3d.editing.tools.interactive.prepared_vertex_merge_activation",
+    "vibe3d.editing.tools.interactive.prepared_xfrm_activation_session",
+    "vibe3d.editing.tools.interactive.prepared_xfrm_replay",
+    "vibe3d.editing.tools.interactive.prepared_xfrm_slot_poll",
+    "vibe3d.editing.tools.interactive.prepared_xfrm_update_boundary",
+    "vibe3d.editing.tools.interactive.prepared_xfrm_update_edit_close",
+    "vibe3d.editing.tools.interactive.prepared_xfrm_update_tail",
+    "vibe3d.editing.tools.interactive.snap_render",
+];
+
+// The one package-qualified entry needs a static import spelled out here: dmd
+// deprecates naming `handles.shapes` through the string mixin below ("module
+// handles.shapes is not accessible here"), because the package symbol is not
+// in scope at the point the mixin's `__traits(allMembers, ...)` resolves it.
+static import vibe3d.editing.tools.interactive.handles.shapes;
+static import vibe3d.editing.contracts.prepared_tool_effect;
+static foreach (m; kTokenModules) mixin("static import " ~ m ~ ";");
+
+/// Membership in the census, by NAME alone -- see the note above.
+private bool isPreparedTokenName(string n) {
+    return n.endsWith("Token")
+        && (n.startsWith("Prepared") || n.startsWith("Validated"));
+}
+
+private enum string[] kCensusTokens = () {
+    string[] rows;
+    static foreach (mod; kTokenModules)
+        static foreach (name; __traits(allMembers, mixin(mod)))
+            static if (isPreparedTokenName(name)) rows ~= mod ~ "." ~ name;
+    return rows;
+}();
+
+// POPULATION FLOOR. "Every token in the census is non-copyable" is true over an
+// empty census, and over a census of one. Both counts are pinned, so a module
+// dropped from the list above, or a token renamed out of the pattern, moves a
+// number rather than quietly shrinking the set the asserts run over.
+static assert(kTokenModules.length == 46,
+    "prepared-token module list changed -- update the count and the Python "
+    ~ "token_census_gate together");
+static assert(kCensusTokens.length == 104,
+    "prepared-token population changed -- a token was added, removed or "
+    ~ "renamed out of the Prepared*Token / Validated*Token pattern");
+
+/// Three tokens ship WITHOUT a disabled copy, and no retired fixture ever
+/// covered one of them (the 66 fixtures named 76 types out of 134). They are
+/// pinned as copyable so the exception cannot rot -- but they are THREE
+/// DIFFERENT cases, not one in triplicate. Only `PreparedGpuResourceToken` has
+/// a `Validated*` counterpart to be asymmetric with; the other two have none,
+/// and for them the copy CANNOT be disabled -- each is consumed by value from
+/// an lvalue, so `@disable this(this)` stops the build (measured 2026-09-04:
+/// handles/shapes.d(2048) and change_bus.d(121/123)). Their defence against a
+/// second consumer is the owner's generation counter, not the postblit.
+///
+/// The GPU pair's decision is now MADE and the compiler REFUSED it. Card 4090
+/// ruled the ban in on 2026-09-06 -- a copy before validation is no safer than
+/// one after it -- and the measurement ran first, as that ruling required.
+/// `@disable this(this)` on `PreparedGpuResourceToken` stops the `modeling`
+/// build (dmd 2.112.1, 2026-09-06) at the two forwarding sites that pass an
+/// lvalue into a by-value parameter -- mesh_gpu.d 2175 `validateEnlisted` ->
+/// `validatePrepared(token, ...)` and 2184 `validateEnlisted()` ->
+/// `validateEnlisted(enlistedPrepared, ...)`, reported at 2176/2185 with the
+/// ban inserted. That is the SAME shape that stops the other two, so the third
+/// row is a requirement as well, not a pending choice.
+///
+/// A copy is not merely permitted here, it is USED: the stale-generation
+/// refusal cell in mesh_gpu.d's own unittest is BUILT out of one
+/// (`auto stale = fresh; ++stale.generation;`, mesh_gpu.d:2742), so the ban
+/// costs that cell a rewrite as well as the two signatures.
+///
+/// The asymmetry with `ValidatedGpuResourceToken` therefore survives for a
+/// reason nobody chose: the `Validated` half is only ever written through an
+/// `out` (`validatePrepared`) or taken by `ref` (`installPrepared`), while the
+/// `Prepared` half is forwarded BY VALUE through `validatePrepared` /
+/// `discardPrepared` / `validateEnlisted`. Homogenising the pair is a change
+/// to those three signatures, not to the declaration -- an open owner
+/// decision. Do not put the ban back without it.
+private enum string[] kCopyableByDesign = [
+    "vibe3d.editing.tools.interactive.handles.shapes.PreparedClickPointResourceToken",
+    "vibe3d.viewport.gpu.mesh_gpu.PreparedGpuResourceToken",
+    "vibe3d.editing.contracts.prepared_tool_effect.PreparedSubjectToken",
+];
+
+static foreach (mod; kTokenModules)
+    static foreach (name; __traits(allMembers, mixin(mod)))
+        static if (isPreparedTokenName(name)) {
+            static if (kCopyableByDesign.canFind(mod ~ "." ~ name))
+                static assert(__traits(isCopyable,
+                        __traits(getMember, mixin(mod), name)),
+                    "kCopyableByDesign lists " ~ mod ~ "." ~ name ~ ", which "
+                    ~ "now disables its copy -- delete that row");
+            else
+                static assert(!__traits(isCopyable,
+                        __traits(getMember, mixin(mod), name)),
+                    "prepared token " ~ mod ~ "." ~ name ~ " became copyable: "
+                    ~ "restore `@disable this(this)`. A prepared token is a "
+                    ~ "one-shot capability; a copy is a second consumer.");
+        }
+
+// SIX prepared aggregates are non-copyable without being spelled `*Token`,
+// so the pattern above reaches none of them. Until 2026-09-04 this comment and
+// the Python gate both said TWO -- `PreparedArm` and `PreparedCandidateOwner`,
+// the only pair that had ever owned a compile-fail fixture. Nothing regressed
+// when the fixtures went, because the other five were never covered by
+// anything; but the miscount was the stated rationale for keying the census on
+// the name suffix, so it is corrected here and the roster is walked out of the
+// tree by `token_census_gate` in tools/check_prepared_protocol.py.
+//
+// Five can be named from this module and are asserted below.
+// `prepared_arm_copy.d` was the fixture for the first two.
+static assert(!__traits(isCopyable, PreparedArm),
+    "PreparedArm became copyable: restore `@disable this(this)`");
+static assert(!__traits(isCopyable, PreparedCandidateOwner),
+    "PreparedCandidateOwner became copyable: restore `@disable this(this)`");
+static assert(!__traits(isCopyable, PreparedHistoryImage),
+    "PreparedHistoryImage became copyable: restore `@disable this(this)`");
+static assert(!__traits(isCopyable, PreparedLayerReadScope),
+    "PreparedLayerReadScope became copyable: restore `@disable this(this)`");
+static assert(!__traits(isCopyable, PreparedRecordObserverImage),
+    "PreparedRecordObserverImage became copyable: restore `@disable this(this)`");
+// The remaining one is a `private struct` -- `command_history.PreparedHistoryBatch`
+// -- which this module cannot import at any protection level, so no
+// `static assert` can reach it. For that one the scanner's source walk IS the check: it reads the
+// `@disable this(this)` out of the declaration and reports a disagreement with
+// its roster. That is the same division of labour as the module list above --
+// the compiler states what it can see, the scanner states what is on disk.
+
+// EVERY RETIRED FIXTURE HAS A NAMED REPLACEMENT. This is the list of token
+// types the 66 deleted files named, and each must be a member of the census
+// above -- so the replacement is provably a superset of what was removed, not
+// merely something in the same area. `PreparedArm`, the 76th, is asserted by
+// name just above. Four parameter-update tokens (Slice, Edge Slice, Loop
+// Slice, Edge Extend) left the roster when their owners folded into
+// `prepared_param_update.PreparedParamToken` (task 9427).
+private enum string[] kRetiredCopyFixtureTokens = [
+    "PreparedBridgeActivationToken",
+    "PreparedBridgeDeactivateToken",
+    "PreparedCommandWrapperActivationToken",
+    "PreparedEdgeBevelActivationToken",
+    "PreparedEdgeExtendDeactivateToken",
+    "PreparedEdgeExtendToolActivationPostToken",
+    "PreparedEdgeExtendToolActivationPreToken",
+    "PreparedEdgeExtrudeActivationToken",
+    "PreparedEdgeSliceActivationToken",
+    "PreparedEdgeSliceDeactivateToken",
+    "PreparedInheritedNoopToken",
+    "PreparedLoopSliceActivationToken",
+    "PreparedLoopSliceDeactivateToken",
+    "PreparedMirrorActivationToken",
+    "PreparedMirrorDeactivateToken",
+    "PreparedMoveUpdateToken",
+    "PreparedPolyBevelActivationToken",
+    "PreparedPolyExtrudeActivationToken",
+    "PreparedPolyInsetActivationToken",
+    "PreparedRadialArrayTransitionToken",
+    "PreparedRotateUpdateToken",
+    "PreparedScaleUpdateToken",
+    "PreparedSliceActivationToken",
+    "PreparedSmoothShiftActivationToken",
+    "PreparedStrokeExtrudeActivationToken",
+    "PreparedTackActivationToken",
+    "PreparedTopologyPenActivationToken",
+    "PreparedTopologyPenDeactivateToken",
+    "PreparedTransformActivationToken",
+    "PreparedTransformProductActivationToken",
+    "PreparedVertexBevelActivationToken",
+    "PreparedVertexExtrudeActivationToken",
+    "PreparedVertexMergeActivationToken",
+    "PreparedXfrmActivationPreToken",
+    "PreparedXfrmReplayToken",
+    "PreparedXfrmSlotPollToken",
+    "PreparedXfrmUpdateBoundaryToken",
+    "PreparedXfrmUpdateEditCloseToken",
+    "PreparedXfrmUpdateTailToken",
+    "ValidatedBridgeActivationToken",
+    "ValidatedBridgeDeactivateToken",
+    "ValidatedCommandWrapperActivationToken",
+    "ValidatedEdgeBevelActivationToken",
+    "ValidatedEdgeExtendToolActivationPostToken",
+    "ValidatedEdgeExtendToolActivationPreToken",
+    "ValidatedEdgeExtrudeActivationToken",
+    "ValidatedEdgeSliceActivationToken",
+    "ValidatedLoopSliceActivationToken",
+    "ValidatedMirrorActivationToken",
+    "ValidatedMirrorDeactivateToken",
+    "ValidatedMoveUpdateToken",
+    "ValidatedPolyBevelActivationToken",
+    "ValidatedPolyExtrudeActivationToken",
+    "ValidatedPolyInsetActivationToken",
+    "ValidatedRadialArrayTransitionToken",
+    "ValidatedRotateUpdateToken",
+    "ValidatedScaleUpdateToken",
+    "ValidatedSliceActivationToken",
+    "ValidatedSmoothShiftActivationToken",
+    "ValidatedStrokeExtrudeActivationToken",
+    "ValidatedTackActivationToken",
+    "ValidatedTopologyPenActivationToken",
+    "ValidatedTopologyPenDeactivateToken",
+    "ValidatedTransformActivationToken",
+    "ValidatedTransformProductActivationToken",
+    "ValidatedVertexBevelActivationToken",
+    "ValidatedVertexExtrudeActivationToken",
+    "ValidatedVertexMergeActivationToken",
+    "ValidatedXfrmSlotPollToken",
+    "ValidatedXfrmUpdateEditCloseToken",
+    "ValidatedXfrmUpdateTailToken",
+];
+
+private bool censusCovers(string typeName) {
+    foreach (row; kCensusTokens)
+        if (row.length > typeName.length + 1
+            && row[$ - typeName.length .. $] == typeName
+            && row[$ - typeName.length - 1] == '.')
+            return true;
+    return false;
+}
+
+static assert(kRetiredCopyFixtureTokens.length == 71,
+    "the retired-fixture roster changed size");
+static foreach (t; kRetiredCopyFixtureTokens)
+    static assert(censusCovers(t),
+        "retired copy fixture for " ~ t ~ " has no replacement in the census");
+
+
+// ---------------------------------------------------------------------------
+// EVERY refusal out of `PreparedRecordContext.validate()` names a reason
+// (task 4482, its fifth path found by task 4483's review)
+// ---------------------------------------------------------------------------
+// `validate()` has five ways to refuse: four literal `return false` and a tail
+// that returns a false `validated_Once` when the history declines the token.
+// Only the four were writing `validateFailure_`, so `prepareArm` threw
+// "prepared tool arm incoming validation refused for '<id>': " with an EMPTY
+// tail — the exact unreadable refusal the messages were added to remove, on
+// the one kind of context that carries history and is never marked
+// no-history.
+//
+// ORDER IS THE POINT, and it buys both halves in one run. The positive control
+// sits FIRST: a `validateFailureReason` that answered the same string for
+// everything would satisfy the negative below and say nothing. druntime stops
+// a module at its first failed assert, so a run that reaches the negative has
+// already cleared the control.
+unittest {
+    import vibe3d.editing.commands.runtime.command_history : CommandHistory;
+    import vibe3d.editing.tools.interactive.prepared_record_context : PreparedRecordContext;
+    import vibe3d.editing.commands.runtime.record_observer_hub : RecordObserverHub;
+
+    auto history = new CommandHistory();
+    auto hub = new RecordObserverHub();
+
+    // A history holds ONE prepared slot, claimed in the context constructor.
+    // The second context therefore carries a token the history does not own,
+    // which is what drives the tail path and nothing else.
+    auto holder  = new PreparedRecordContext(history, hub);
+    auto starved = new PreparedRecordContext(history, hub);
+
+    // Control: the accepting tail must leave NO reason behind.
+    assert(holder.validate(),
+           "the context holding the history's prepared slot must validate");
+    assert(holder.validateFailureReason() == "",
+           "a successful validate must name no refusal reason, got: "
+           ~ holder.validateFailureReason());
+
+    // The fifth path.
+    assert(!starved.validate(),
+           "a context whose token the history does not own must refuse");
+    assert(starved.validateFailureReason() == "history refused the prepared token",
+           "the tail refusal must name itself; got \"" ~
+           starved.validateFailureReason() ~ "\" (an empty string is the "
+           ~ "defect: it reaches the user as a message ending in ': ')");
+}
+
+private class NoPreparedDoorTool : Tool { }
+
+private class TestPreparedDoorTool : Tool, PreparedToolDoorClient {
+    override ToolSessionPolicy sessionPolicy() const nothrow @nogc {
+        static immutable ToolSessionPolicy policy = { activationRow: true };
+        return policy;
+    }
+    bool refuseActivation;
+    size_t* activationCalls;
+
+    this(bool refuseActivation, size_t* activationCalls) {
+        this.refuseActivation = refuseActivation;
+        this.activationCalls = activationCalls;
+    }
+
+    override bool prepareDoorDeactivate(PreparedRecordContext context,
+            Layer, ulong, ulong) {
+        return context !is null && context.markNoHistoryInstall();
+    }
+
+    override bool prepareDoorActivate(PreparedRecordContext context,
+            Layer, ulong, ulong) {
+        ++*activationCalls;
+        return !refuseActivation && context !is null &&
+            context.markNoHistoryInstall();
+    }
+}
+
+// A switch is speculative through both refusal sites. The stand drives a
+// non-zero item edit first, then checks the post-outgoing refusal, incoming
+// refusal, and the single successful publication.
+unittest {
+    auto savedPipe = g_pipeCtx;
+    scope(exit) g_pipeCtx = savedPipe;
+    g_pipeCtx = null;
+
+    auto layer = new Layer;
+    layer.meshRef() = makeCube();
+    GpuMesh gpu;
+    EditMode mode = EditMode.Polygons;
+    auto view = new View(0, 0, 800, 600);
+    auto history = new CommandHistory;
+    auto outgoing = new XfrmTransformTool(
+        () => &layer.meshRef(), &gpu, &mode, () => SelType.Item,
+        (ref Layer[] targets) { targets = [layer]; });
+    outgoing.flagR = true;
+    outgoing.setUndoBindings(history,
+        () => new MeshVertexEdit(&layer.meshRef(), view, mode));
+    outgoing.setItemUndoFactory(
+        () => new LayerXformEdit(&layer.meshRef(), view, mode));
+    outgoing.activate();
+    VectorStack pose;
+    SubjectPacket subject;
+    subject.mesh = &layer.meshRef();
+    subject.editMode = mode;
+    subject.selType = SelType.Item;
+    pose.put(&subject);
+    outgoing.update(pose);
+    history.record(new ToolActivationCommand(
+        &layer.meshRef(), view, mode, "rotate", ""));
+    immutable seededRunId = history.nextRun();
+    outgoing.openLiveSessionForTest();
+    layer.xform.rot = Vec3(0, 40, 0);
+
+    const pendingXform = layer.xform;
+    immutable switchRunId = history.currentRunId;
+    assert(pendingXform.rot != Vec3(0, 0, 0),
+        "tool-switch refusal stand has a ZERO item edit");
+    assert(outgoing.publicEditIsOpen(),
+        "tool-switch refusal stand did not retain its pending item edit");
+    assert(history.undoEntriesVisible().length == 1 &&
+           history.toolLifecycleCount() == 1 &&
+           switchRunId >= seededRunId && switchRunId != 0 &&
+           !history.runOpen(),
+        "tool-switch refusal stand did not start from one activation row");
+
+    Tool active = outgoing;
+    string activeId = "rotate";
+    Pipeline pipeline;
+    pipeline.add(new ActionCenterStage(() => &layer.meshRef(), &mode));
+    pipeline.add(new AxisStage);
+    pipeline.add(new ConstrainStage);
+    pipeline.add(new FalloffStage(() => &layer.meshRef(), &mode));
+    PreparedPipeAttrs attrs;
+    auto host = new PipeGizmoHost;
+    auto observers = new RecordObserverHub;
+    JSONValue args = JSONValue.emptyObject;
+    string callbackActiveId = activeId;
+    auto activateCallback = (string id) { callbackActiveId = id; };
+    auto deactivateCallback = () { callbackActiveId = ""; };
+
+    void assertAttemptUnchanged(string door) {
+        assert(layer.xform == pendingXform,
+            door ~ ": refusal changed the pending item transform");
+        assert(active is outgoing && activeId == "rotate",
+            door ~ ": refusal changed the active tool");
+        assert(outgoing.publicEditIsOpen(),
+            door ~ ": refusal closed the outgoing open edit");
+        assert(history.undoEntriesVisible().length == 1 &&
+               history.toolLifecycleCount() == 1 &&
+               history.currentRunId == switchRunId &&
+               !history.runOpen(),
+            door ~ ": refusal changed history or its open-run state");
+    }
+
+    size_t noDoorConstructions;
+    ToolFactory noDoorFactory = () {
+        ++noDoorConstructions;
+        return new NoPreparedDoorTool;
+    };
+    string refusalMessage;
+    try {
+        auto ignored = prepareArm(noDoorFactory, "test.no-door", outgoing,
+            history, observers, layer, pipeline, attrs, host, args, pose,
+            17, 23, &layer.meshRef(), view, mode, activeId,
+            activateCallback, deactivateCallback);
+    } catch (Exception e) {
+        refusalMessage = e.msg;
+    }
+    assert(noDoorConstructions == 1 &&
+           refusalMessage == "candidate lacks prepared activation door",
+        "post-outgoing-preparation refusal was not reached: " ~ refusalMessage);
+    assertAttemptUnchanged("post-outgoing-preparation refusal");
+
+    size_t refusedActivationCalls;
+    ToolFactory refusingFactory = () => new TestPreparedDoorTool(
+        true, &refusedActivationCalls);
+    refusalMessage = null;
+    try {
+        auto ignored = prepareArm(refusingFactory, "test.refusing", outgoing,
+            history, observers, layer, pipeline, attrs, host, args, pose,
+            17, 23, &layer.meshRef(), view, mode, activeId,
+            activateCallback, deactivateCallback);
+    } catch (Exception e) {
+        refusalMessage = e.msg;
+    }
+    assert(refusedActivationCalls == 1 &&
+           refusalMessage == "prepared candidate activation refused for "
+               ~ "'test.refusing' (lifecycleReplay=false)",
+        "incoming activation refusal was not reached: " ~ refusalMessage);
+    assertAttemptUnchanged("incoming activation refusal");
+
+    size_t acceptedActivationCalls;
+    TestPreparedDoorTool acceptedCandidate;
+    ToolFactory acceptedFactory = () {
+        acceptedCandidate = new TestPreparedDoorTool(
+            false, &acceptedActivationCalls);
+        return acceptedCandidate;
+    };
+    PreparedArm acceptedArm = prepareArm(acceptedFactory, "test.accepted",
+        outgoing, history, observers, layer, pipeline, attrs, host, args, pose,
+        17, 23, &layer.meshRef(), view, mode, activeId,
+        activateCallback, deactivateCallback);
+    assert(acceptedActivationCalls == 1,
+        "successful incoming activation preparation was not reached");
+    assertAttemptUnchanged("validated pre-install transaction");
+    assert(commitPreparedArm(active, activeId, acceptedArm) &&
+           active is acceptedCandidate && activeId == "test.accepted" &&
+           layer.xform == pendingXform,
+        "successful switch did not publish the candidate with the pending transform intact");
+    auto rows = history.undoEntriesVisible();
+    assert(rows.length == 3 &&
+           rows[0].cmd.name == "tool.activate" &&
+           rows[1].cmd.name == "layer.xform.edit" &&
+           rows[2].cmd.name == "tool.activate",
+        "successful switch did not preserve item-edit then activation order");
+    assert(rows[1].runId == 0 && history.currentRunId == switchRunId &&
+           !history.runOpen(),
+        "switch history did not close the edit run on the detached image");
+    assert(history.undo() && callbackActiveId == "rotate" &&
+           layer.xform == pendingXform,
+        "first switch undo did not leave the item edit standing");
+    assert(history.undo() && layer.xform.rot == Vec3(0, 0, 0),
+        "second switch undo did not restore the item payload");
+    assert(history.redo() && layer.xform == pendingXform,
+        "item payload did not survive its local undo/redo round-trip");
+}
+
+// ---------------------------------------------------------------------------
+// restorePredecessor (slice M4; task 7118 gap 221, C-M4-token switch twin).
+// Undoing the arm row of a classified incoming tool restores its predecessor,
+// WHICHEVER tool it was, through the row's onActivate (a replay arm, which
+// recalls the values the drop stored — slice M5); the row carries the arm's
+// session token and the predecessor's, which the session hands back.
+// ---------------------------------------------------------------------------
+private class PlainOutgoingDoorTool : Tool, PreparedToolDoorClient {
+    override bool prepareDoorDeactivate(PreparedRecordContext context,
+            Layer, ulong, ulong) {
+        return context !is null && context.markNoHistoryInstall();
+    }
+    override bool prepareDoorActivate(PreparedRecordContext context,
+            Layer, ulong, ulong) {
+        return context !is null && context.markNoHistoryInstall();
+    }
+}
+
+/// An incoming tool whose session owns its steps (the cutting tools, Edge
+/// Extend): its row's redo is the §22 one.
+private class StepsDoorTool : TestPreparedDoorTool {
+    this(size_t* calls) { super(false, calls); }
+    override ToolSessionPolicy sessionPolicy() const nothrow @nogc {
+        static immutable ToolSessionPolicy policy = { activationRow: true, sessionSteps: true };
+        return policy;
+    }
+}
+
+private struct SwitchUndoTrace {
+    size_t redoAfterUndo;
+    string previousId;
+    size_t activationRows;
+    string activated;
+    bool deactivated;
+    ulong token, previousToken;
+}
+
+// Switch from `outgoing` (registered as `outgoingId`) to a classified
+// emitter candidate, then undo the one activation row the switch recorded.
+private SwitchUndoTrace switchThenUndo(Tool outgoing, string outgoingId, bool stepsIncoming = false) {
+    auto savedPipe = g_pipeCtx;
+    scope(exit) g_pipeCtx = savedPipe;
+    g_pipeCtx = null;
+    auto layer = new Layer;
+    layer.meshRef() = makeCube();
+    EditMode mode = EditMode.Edges;
+    auto view = new View(0, 0, 800, 600);
+    auto history = new CommandHistory;
+    VectorStack pose;
+    SubjectPacket subject;
+    subject.mesh = &layer.meshRef();
+    subject.editMode = mode;
+    pose.put(&subject);
+    Pipeline pipeline;
+    pipeline.add(new ActionCenterStage(() => &layer.meshRef(), &mode));
+    pipeline.add(new AxisStage);
+    pipeline.add(new ConstrainStage);
+    pipeline.add(new FalloffStage(() => &layer.meshRef(), &mode));
+    PreparedPipeAttrs attrs;
+    auto host = new PipeGizmoHost;
+    auto observers = new RecordObserverHub;
+    JSONValue args = JSONValue.emptyObject;
+    SwitchUndoTrace tr;
+    size_t calls;
+    ToolFactory factory = () => stepsIncoming ? new StepsDoorTool(&calls)
+                                              : new TestPreparedDoorTool(false, &calls);
+    PreparedArm arm = prepareArm(factory, "test.incoming", outgoing, history,
+        observers, layer, pipeline, attrs, host, args, pose, 17, 23,
+        &layer.meshRef(), view, mode, outgoingId,
+        (string id) { tr.activated = id; }, () { tr.deactivated = true; },
+        false, PipeArmScope.presetArm, null, ArmDoor.key, 41, 40);
+    Tool active = outgoing;
+    string activeId = outgoingId;
+    assert(commitPreparedArm(active, activeId, arm), "switch rig did not publish");
+    foreach (e; history.undoEntries())
+        if (auto t = cast(const ToolActivationCommand) e.cmd) {
+            tr.previousId = t.previousId();
+            tr.token = t.sessionToken();
+            tr.previousToken = t.previousToken();
+            ++tr.activationRows;
+        }
+    if (tr.activationRows != 1) return tr;
+    assert(history.undo(), "switch rig: the activation row did not undo");
+    tr.redoAfterUndo = history.redoEntries().length;
+    return tr;
+}
+
+unittest { // P1: ANY predecessor is restorable (slice M4, C-M4-token switch twin)
+    auto tr = switchThenUndo(new PlainOutgoingDoorTool, "test.plain");
+    assert(tr.activationRows == 1, "P1 rig: expected one activation row");
+    assert(tr.previousId == "test.plain" && tr.activated == "test.plain" && !tr.deactivated,
+        "an unclassified predecessor was not restored by its successor's row: previous '"
+        ~ tr.previousId ~ "', activated '" ~ tr.activated ~ "'");
+    assert(tr.token == 41 && tr.previousToken == 40,
+        "the row does not carry the arm's session token and its predecessor's");
+}
+
+unittest { // P3: an emitter predecessor keeps the same shape (onActivate)
+    size_t calls;
+    auto tr = switchThenUndo(new TestPreparedDoorTool(false, &calls), "test.emitter");
+    assert(tr.activationRows == 1, "P3 rig: expected one activation row");
+    assert(tr.previousId == "test.emitter" && tr.activated == "test.emitter"
+        && !tr.deactivated,
+        "an emitter predecessor's restore changed shape");
+}
+
+unittest { // review of M4: the redo of a sessionSteps row survives its undo only over a
+    import std.format : format;
+           // predecessor that writes no activation row (§22 / gap 205 scope, unchanged)
+    size_t calls;
+    auto plain = switchThenUndo(new PlainOutgoingDoorTool, "test.plain", true);
+    auto emitter = switchThenUndo(new TestPreparedDoorTool(false, &calls), "test.emitter", true);
+    assert(plain.redoAfterUndo == 1 && emitter.redoAfterUndo == 0,
+           format("M4 review: redo after undo — over an unclassified predecessor %s (want 1), over a "
+                  ~ "row-writing one %s (want 0)", plain.redoAfterUndo, emitter.redoAfterUndo));
+}
+
+unittest { // Vertex door: a switch away enlists only the snap clear, an arm nothing
+    import vibe3d.mesh.core.mesh : Mesh;
+    import vibe3d.editing.selection.query.snap : SnapResult;
+    import vibe3d.editing.tools.interactive.snap_render : publishLastSnap, clearLastSnap, g_lastSnap;
+    import vibe3d.editing.tools.interactive.tools.create.vertex_place : VertexTool;
+    Mesh mesh; GpuMesh gpu;
+    auto tool = new VertexTool(() => &mesh, &gpu, null);
+    scope (exit) clearLastSnap();
+    SnapResult seed; seed.snapped = true; seed.targetIndex = 21;
+    auto fresh() { return new PreparedRecordContext(new CommandHistory(),
+                                                    new RecordObserverHub()); }
+    size_t model, ui;
+
+    publishLastSnap(seed);
+    auto away = fresh();
+    assert(tool.prepareDoorDeactivate(away, null, 0, 0) && away.validate(),
+        "a switch away was refused: " ~ away.validateFailureReason());
+    assert(g_lastSnap == seed, "the snap cleared before install");
+    away.install();
+    assert(g_lastSnap == SnapResult.init, "a switch away left the snap published");
+    away.installedDepths(model, ui);
+    assert(model == 0 && ui == 0, "a switch away recorded history");
+
+    publishLastSnap(seed);
+    auto arm = fresh();
+    assert(tool.prepareDoorActivate(arm, null, 0, 0) && arm.validate(),
+        "an arm was refused: " ~ arm.validateFailureReason());
+    arm.install();
+    assert(g_lastSnap == seed, "an arm touched the snap");
+    arm.installedDepths(model, ui);
+    assert(model == 0 && ui == 0, "an arm recorded history");
+
+    // A context already sealed with history refuses the no-history seal; the
+    // door then abandons its journal rather than leaving it to validate.
+    auto sealedAway = fresh(), sealedArm = fresh();
+    assert(sealedAway.markHistoryInstall() && sealedArm.markHistoryInstall(),
+        "control: the history seal was refused");
+    assert(!tool.prepareDoorDeactivate(sealedAway, null, 0, 0),
+        "a switch away took a no-history seal over a history seal");
+    assert(!sealedAway.validate(), "a refused switch away left its journal live");
+    assert(!tool.prepareDoorActivate(sealedArm, null, 0, 0),
+        "an arm took a no-history seal over a history seal");
+    assert(!sealedArm.validate(), "a refused arm left its journal live");
+    assert(!tool.prepareDoorDeactivate(null, null, 0, 0)
+        && !tool.prepareDoorActivate(null, null, 0, 0), "a null context was accepted");
+}

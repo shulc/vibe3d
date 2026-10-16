@@ -1,5 +1,5 @@
 // Task 20261040: both registered product doors, full original mesh.
-import forms : loadForms, RowKind, parseBinding, substituteQuery;
+import vibe3d.ui.forms.forms : loadForms, RowKind, parseBinding, substituteQuery;
 import http_client : getJson, postJson, testBaseUrl;
 import std.net.curl : get;
 import std.array : replace;

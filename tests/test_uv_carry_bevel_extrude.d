@@ -79,7 +79,7 @@ private size_t extrudeFacesOnce(ref Mesh m, const bool[] mask, float distance,
     return n;
 }
 
-import math : Vec3;
+import vibe3d.util.math.math : Vec3;
 
 void main() {}
 

@@ -272,7 +272,7 @@ jobs:
       run: |
         python3 - <<'EOF'
         import json, re, sys
-        spec = json.load(open("packages/interchange/dub.json"))["dependencies"]["lwo2-writer"]
+        spec = json.load(open("libraries/documents/interchange/dub.json"))["dependencies"]["lwo2-writer"]
         ver = spec.get("version", "")
         if not re.fullmatch(r"[0-9a-f]{40}", ver):
             sys.exit(

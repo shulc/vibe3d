@@ -204,8 +204,8 @@ unittest // the facing is decided at one site; the builder orders every ring ali
     // Builder purpose excludes the actual SnapGuide aggregate's separate
     // protocol. Pin its population and meaning, rather than exempting a file.
     import std.string : indexOf;
-    import tools.create.pen_geometry : LineGuide;
-    import toolpipe.guide : SnapGuide, SnapPurpose;
+    import vibe3d.editing.tools.creation.tools.create.pen_geometry : LineGuide;
+    import vibe3d.editing.selection.query.toolpipe.guide : SnapGuide, SnapPurpose;
     static assert(is(LineGuide : SnapGuide));
     static assert(is(typeof((new LineGuide).purpose()) == SnapPurpose));
     enum guideHead = "class " ~ __traits(identifier, LineGuide) ~ " : SnapGuide";

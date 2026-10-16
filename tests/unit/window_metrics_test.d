@@ -23,9 +23,9 @@
 // either lane can reach it while `--test` never resizes the window.
 module tests.unit.window_metrics_test;
 
-import editor_app   : Layout;
-import input_router : applyWindowMetrics;
-import viewport     : ViewportManager, LayoutPreset;
+import vibe3d.apps.desktop.editor_app   : Layout;
+import vibe3d.apps.desktop.input_router : applyWindowMetrics;
+import vibe3d.viewport.host.viewport     : ViewportManager, LayoutPreset;
 
 unittest {
     // ── THE LAYOUT LAW ──

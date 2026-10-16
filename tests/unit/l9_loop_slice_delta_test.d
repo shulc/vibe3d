@@ -33,7 +33,7 @@ import vibe3d.mesh.edit_replay.mesh_edit_replay : apply, revert;
 import std.conv   : to;
 import std.format : format;
 
-import command;
+import vibe3d.editing.commands.runtime.command;
 import vibe3d.mesh.core.mesh;
 import vibe3d.mesh.edit_log.mesh_edit_delta : MeshEditDelta;
 import vibe3d.viewport.camera.view;
@@ -43,7 +43,7 @@ import vibe3d.mesh.change.change_bus : changeBus;
 import tests.unit.fixtures : makeTaggedGridFull, dumpMeshPlanes, diffMeshPlanes;
 import tests.unit.census_symbols : LedgerHit, LedgerRow, blankNonCode,
     enclosingSymbols, reconcile, symbolAt;
-import commands.mesh.loop_slice : MeshAddLoop, MeshLoopSlice;
+import vibe3d.editing.commands.editor.commands.mesh.loop_slice : MeshAddLoop, MeshLoopSlice;
 
 /// Edge 1 (`[1, 5]`) is interior on this stand; edge 0 (`[0, 1]`) is on the rim.
 private enum uint kInteriorSeed = 1;

@@ -28,11 +28,11 @@
 
 import vibe3d.mesh.core.mesh;
 import vibe3d.mesh.ops.mesh_stats;
-import math : Vec3;
+import vibe3d.util.math.math : Vec3;
 import vibe3d.viewport.camera.view : View;
 import vibe3d.editing.contracts.editmode : EditMode;
-import command : Command;
-import commands.select.by_stat : SelectByStatVertex, SelectByStatEdge,
+import vibe3d.editing.commands.runtime.command : Command;
+import vibe3d.editing.commands.editor.commands.select.by_stat : SelectByStatVertex, SelectByStatEdge,
                                  SelectByStatPolygon;
 import std.algorithm : count, canFind;
 import std.conv : to;

@@ -1,0 +1,371 @@
+module vibe3d.editing.commands.runtime.tool_activation_ownership;
+
+import vibe3d.editing.contracts.seltype : SelType;
+
+// TASK 4053 — the single ownership table for tool-activation transitions.
+//
+// INVARIANT: every way the active tool can change is a member of
+// `ToolTransition`, and `activationDoorFor` names the ONE door that owns it.
+// Production dispatches on this function; it does not re-derive the answer at
+// the call site. A new way to change the active tool is a new enum member, and
+// the `final switch` below refuses to compile until that member is given an
+// owner — which is the whole point of the table.
+//
+// WHAT THIS REPLACES, and why a grep could not have found it. Two doors were
+// live at the same time: the prepared transaction (`prepared_tool_transition`)
+// and the legacy virtual pair `Tool.activate()` / `Tool.deactivate()`. They
+// were never DUPLICATED on one transition — they were PARTITIONED by it, so no
+// transition ever ran both and no double-fire was observable. Since commit
+// 7844bfee every ARM is prepared and `Tool.activate()` became unreachable from
+// production; the drops stayed legacy. The discriminating check for this file
+// is therefore a driven TRANSITION, never the presence or absence of a method.
+//
+// The legacy rows below are not leftovers: each is a drop whose measured state
+// breaks an invariant the prepared deactivation doors are written against, and
+// each carries its reason. Evidence, and what each still needs:
+// doc/tasks/done/4053-prepared-one-activation-door.md.
+
+/// Every transition that can change the active tool, named after the gesture
+/// or seam that drives it rather than after the function it lands in — several
+/// share one funnel, and the funnel is exactly what cannot tell them apart.
+enum ToolTransition : ubyte {
+    /// `tool.set <id> on` through the command bridge.
+    commandArm,
+    /// `activateToolById` — a tool button, a shortcut, the tool panel.
+    interactiveArm,
+    /// A lifecycle undo/redo restoring a previously armed tool.
+    replayArm,
+    /// `tool.reset` (Ctrl+D) rebuilding the same id at declared defaults.
+    resetRearm,
+    /// `tool.set <id> off`, `tool.release` (Q), and Space with a tool armed —
+    /// the user drops the tool outright, with the document and primary layer
+    /// untouched.
+    explicitDrop,
+    /// `activateToolById` with the id that is already active (the toggle).
+    sameIdToggleDrop,
+    /// A lifecycle redo re-dropping a tool it had restored.
+    replayDrop,
+    /// A selection-mode command (key, mode button, `select.typeFrom`), to a
+    /// new type or the current one (K-CD CD2 / CD2s / CD3s).
+    selTypeFlipDrop,
+    /// The active-layer / primary change hook.
+    activeLayerChangedDrop,
+    /// The document-replace disarm seam (`tool_disarm`): a new document.
+    documentReplaceDisarm,
+    /// The same seam before a primary-layer move (`DisarmMode.dropOnly`).
+    primaryMoveDrop,
+    /// A scene reset / raw mesh load dropping whatever was armed.
+    sceneResetDrop,
+    /// A mesh-rebuilding command (subdivide, triple, remesh, …) dropping the
+    /// tool before it rewrites the geometry under it.
+    meshRebuildDrop,
+    /// The command funnel's pre-apply drop for commands that can move or
+    /// remove the tool's own edit target (`dropsActiveToolBeforeApply`).
+    commandPreApplyDrop,
+    /// `EditSession`'s cancel-then-drop during interactive undo.
+    editCancelDrop,
+    /// The `scope(exit)` drop at shutdown.
+    shutdownDrop,
+}
+
+/// The doors. One arm door, one drop door — and the drop door is the LEGACY
+/// one for every transition, which task 4053 measured rather than inherited.
+enum ActivationDoor : ubyte {
+    /// `prepared_tool_transition.prepareArm` + `commitPreparedArm`. Owns the
+    /// incoming candidate AND, on a switch, the outgoing tool's deactivation.
+    preparedArm,
+    /// `Tool.deactivate()` called live, then `destroy()`.
+    legacyDeactivate,
+}
+
+/// The table. One `final switch`, no default, so an unowned transition is a
+/// compile error rather than a silent fall-through to the old door.
+ActivationDoor activationDoorFor(ToolTransition t) pure nothrow @safe @nogc {
+    final switch (t) {
+        // ---- the arm door -------------------------------------------------
+        // `resetRearm` re-arms the SAME id, so it is a switch A->A and enters
+        // the same transaction; it is listed separately because it is the one
+        // arm that is not a user asking for a different tool.
+        case ToolTransition.commandArm:
+        case ToolTransition.interactiveArm:
+        case ToolTransition.replayArm:
+        case ToolTransition.resetRearm:
+            return ActivationDoor.preparedArm;
+
+        // ---- EVERY drop is still on the legacy door, and this task MEASURED
+        // ---- why rather than assuming it ----------------------------------
+        // `explicitDrop` and `sameIdToggleDrop` were converted and reverted in
+        // this same task. They hold the layer invariant, the switch already
+        // runs every one of those doors with exactly that layer, and the
+        // conversion still broke TWO driven cells, because the prepared
+        // deactivation is not a faithful twin of `deactivate()`:
+        //
+        //   tests/test_item_drag_undo.d(288) — "a panel rotate edit must
+        //   surface one arm plus exactly ONE edit … before=1 after=2". The
+        //   prepared consolidate reads `history.currentRunId` off the LIVE
+        //   history while it consolidates the DETACHED image the record went
+        //   into, so it gathers the wrong run.
+        //
+        //   tests/test_tool_gesture_g2.d(388) — the mirror drop "ticked 0
+        //   unbatched geometry commits" on the DOCUMENT mesh. The prepared
+        //   door installs a stamped mesh IMAGE where `deactivate()` writes
+        //   through the live mesh primitives, so the change-bus counter the
+        //   measured delivery law is stated in never moves.
+        //
+        // Both divergences exist on the SWITCH transition today, where nothing
+        // measures them. Tasks 4240 (cells first, then conversion) and 4243
+        // (the two divergences themselves) own the rest.
+        case ToolTransition.explicitDrop:
+        case ToolTransition.sameIdToggleDrop:
+        // `activeLayerChangedDrop` fires exactly WHEN the primary moved or went
+        // away, so `document.primary` is either null or a different layer than
+        // the tool's mesh — and the prepared doors guard on
+        // `layer !is null && &layer.meshRef() is mesh` (mirror.d, box.d,
+        // pen.d, …), which would REFUSE and throw out of a drop that must not
+        // fail.
+        case ToolTransition.activeLayerChangedDrop:
+        // `shutdownDrop` runs from a `scope(exit)` declared ABOVE the
+        // PipeGizmoHost's own, so the GL owner the prepared resource effects
+        // are validated against is already torn down when it fires.
+        case ToolTransition.shutdownDrop:
+        // The remaining NINE — counted off the `case` labels below, which is
+        // the only count that cannot drift from the rows — have no driven cell
+        // of their own at all. That is a weaker position than the two above
+        // rather than a stronger one: for them a door change would be green
+        // before, green after, and green again when reverted. Cells first,
+        // then conversion: task 4240 (which owns all ten uncelled drops, the
+        // two just above included); the two rows that need the DOOR itself
+        // fixed: 4241 and 4243.
+        case ToolTransition.replayDrop:
+        case ToolTransition.selTypeFlipDrop:
+        case ToolTransition.documentReplaceDisarm:
+        case ToolTransition.primaryMoveDrop:
+        case ToolTransition.sceneResetDrop:
+        case ToolTransition.meshRebuildDrop:
+        case ToolTransition.commandPreApplyDrop:
+        case ToolTransition.editCancelDrop:
+            return ActivationDoor.legacyDeactivate;
+    }
+}
+
+/// Why a live tool operation is being closed (tool session model, slice M2;
+/// doc/tool_session_model_plan_2026-09-24.md R4.2). `command` is the value of
+/// NO transition: it comes only from the command funnel's close branch
+/// (`CommandExecutor.applyOrRefire`). `undoFirstGroup` and `enter` are the
+/// reasons slice M3 routes through the session; nothing produces them yet.
+enum CloseReason : ubyte { none, command, drop, switch_, discard, undoFirstGroup, enter }
+
+/// Which door a command came through: a script (`/api/command`, replay) or
+/// the UI (keys, buttons, panels, `?origin=ui`).
+enum CommandDoor : ubyte { script, ui }
+
+/// Whether the arm itself opens the postmode. Some selected tool stages wait
+/// for a viewport press; replay and reset restore an already live postmode.
+bool postmodeArmedOnArm(ToolTransition t, bool startsOnPress)
+        pure nothrow @safe @nogc {
+    return !startsOnPress ||
+        (t != ToolTransition.commandArm && t != ToolTransition.interactiveArm);
+}
+
+/// What `EditSession.closeOperation` did: whether it committed a live
+/// operation, and whether the tool stays armed across the command.
+/// `dropsTool` (slice M4): the command funnel must drop the tool before the
+/// command applies — the policy's fallback, decided by the session
+/// (`closeForCommand`), never by the funnel.
+struct CloseOutcome { bool closed; bool staysArmed; bool dropsTool; }
+
+/// The close reason of every transition, carried from what each transition's
+/// door already does (M2 moves no commit): an arm closes the retained
+/// predecessor (`switch_`), a reset re-arm discards, a replay or an edit-cancel
+/// drop has nothing left to close, and every other drop commits through the
+/// door's `deactivate()` — the command funnel's pre-apply drop included, whose
+/// close is still the door's (R4.2: `commandPreApplyDrop -> drop`).
+CloseReason closeReasonFor(ToolTransition t) pure nothrow @safe @nogc {
+    final switch (t) {
+        case ToolTransition.commandArm:
+        case ToolTransition.interactiveArm:
+            return CloseReason.switch_;
+        case ToolTransition.replayArm:
+        case ToolTransition.replayDrop:
+        case ToolTransition.editCancelDrop:
+            return CloseReason.none;
+        case ToolTransition.resetRearm:
+            return CloseReason.discard;
+        case ToolTransition.explicitDrop:
+        case ToolTransition.sameIdToggleDrop:
+        case ToolTransition.selTypeFlipDrop:
+        case ToolTransition.activeLayerChangedDrop:
+        case ToolTransition.documentReplaceDisarm:
+        case ToolTransition.primaryMoveDrop:
+        case ToolTransition.sceneResetDrop:
+        case ToolTransition.meshRebuildDrop:
+        case ToolTransition.commandPreApplyDrop:
+        case ToolTransition.shutdownDrop:
+            return CloseReason.drop;
+    }
+}
+
+/// Whether a drop by this transition writes a DROP lifecycle row for a tool
+/// whose policy says `dropWritesRow` (wave plan 8640 S6, D6'): exactly the
+/// three user exits — Esc / Space / Q / `tool.set <id> off`, the armed tool's
+/// own button, a selection-mode command. Captured: X-esc, X-space, X-q, X-sel
+/// (a flip), X-button-same (B-drop); the current-type row is uncaptured (one
+/// door). A replay, a reset, a
+/// layer or document change and a command's own drop write no row.
+bool dropWritesRowFor(ToolTransition t) pure nothrow @safe @nogc {
+    final switch (t) {
+        case ToolTransition.explicitDrop:
+        case ToolTransition.sameIdToggleDrop:
+        case ToolTransition.selTypeFlipDrop:
+            return true;
+        case ToolTransition.commandArm:
+        case ToolTransition.interactiveArm:
+        case ToolTransition.replayArm:
+        case ToolTransition.resetRearm:
+        case ToolTransition.replayDrop:
+        case ToolTransition.activeLayerChangedDrop:
+        case ToolTransition.documentReplaceDisarm:
+        case ToolTransition.primaryMoveDrop:
+        case ToolTransition.sceneResetDrop:
+        case ToolTransition.meshRebuildDrop:
+        case ToolTransition.commandPreApplyDrop:
+        case ToolTransition.editCancelDrop:
+        case ToolTransition.shutdownDrop:
+            return false;
+    }
+}
+
+/// What a user drop carries into its drop row (S6, pure data, no tool id):
+/// `clearsTask` — the Esc rung, which also writes the empty task row above the
+/// drop row (L39); `flipsSelType` — a selection-type key, whose row restores
+/// `selBefore` when undone (through the funnel that does not drop the tool).
+struct DropContext {
+    bool clearsTask;
+    bool flipsSelType;
+    SelType selBefore;
+    /// The drop is a `tool.set` off / flush (K-CD4 CD4cQ, CD_SAME_UNDO): Q or
+    /// `tool.set <id> off`, or a selection-type key to the current type.
+    bool toolSetDoor;
+}
+
+/// Task 5911, "re-arm doors after a break": fresh user arms install every slot
+/// written by the preset. Lifecycle replay installs every unlocked written
+/// slot and yields each user-locked written slot independently; a same-id reset
+/// keeps the whole pipe, while resetting to another id is a real switch.
+/// Evidence: `toolcards/tool_drop_pipe_stages/findings.md`, ROUND 7/8. The
+/// design and door matrix are in `doc/tool_drop_pipe_stages_plan.md`.
+enum PipeArmScope : ubyte { presetArm, replayRestore, keepPipe }
+
+PipeArmScope pipeArmScopeFor(ToolTransition t, bool rearmsActiveId)
+        pure nothrow @safe @nogc {
+    final switch (t) {
+        case ToolTransition.commandArm:
+        case ToolTransition.interactiveArm:
+            return PipeArmScope.presetArm;
+        case ToolTransition.replayArm:
+            return PipeArmScope.replayRestore;
+        case ToolTransition.resetRearm:
+            return rearmsActiveId ? PipeArmScope.keepPipe
+                                  : PipeArmScope.presetArm;
+        case ToolTransition.explicitDrop:
+        case ToolTransition.sameIdToggleDrop:
+        case ToolTransition.replayDrop:
+        case ToolTransition.selTypeFlipDrop:
+        case ToolTransition.activeLayerChangedDrop:
+        case ToolTransition.documentReplaceDisarm:
+        case ToolTransition.primaryMoveDrop:
+        case ToolTransition.sceneResetDrop:
+        case ToolTransition.meshRebuildDrop:
+        case ToolTransition.commandPreApplyDrop:
+        case ToolTransition.editCancelDrop:
+        case ToolTransition.shutdownDrop:
+            assert(0, "a drop has no pipe arm scope");
+    }
+}
+
+/// Slice M5: does this arm store the tool it replaces into the per-preset
+/// attribute cache and recall the incoming preset's nodes? Every arm does,
+/// except the tool reset, which rebuilds at declared defaults.
+bool armUsesAttrCache(ToolTransition t) pure nothrow @safe @nogc {
+    final switch (t) {
+        case ToolTransition.commandArm:
+        case ToolTransition.interactiveArm:
+        case ToolTransition.replayArm:
+            return true;
+        case ToolTransition.resetRearm:
+            return false;
+        case ToolTransition.explicitDrop:
+        case ToolTransition.sameIdToggleDrop:
+        case ToolTransition.replayDrop:
+        case ToolTransition.selTypeFlipDrop:
+        case ToolTransition.activeLayerChangedDrop:
+        case ToolTransition.documentReplaceDisarm:
+        case ToolTransition.primaryMoveDrop:
+        case ToolTransition.sceneResetDrop:
+        case ToolTransition.meshRebuildDrop:
+        case ToolTransition.commandPreApplyDrop:
+        case ToolTransition.editCancelDrop:
+        case ToolTransition.shutdownDrop:
+            assert(0, "a drop does not arm");
+    }
+}
+
+/// Slice M3 (plan R4.5; capture C-H1-door, gap 300): WHICH DOOR an arm came
+/// through decides whether its activation history row joins the first undo
+/// group of the tool's operation window. `key`: a key, a tool button, the tool
+/// panel, or a command typed at the UI's command line (the typed command line
+/// behaves like the key, C-H1-door-es-cl) — the activation joins, so the undo
+/// that removes the first gesture also ends the tool. `script`: a command from
+/// the script door (`/api/command`) — the activation is its own row
+/// (C-H1-door-es-api): the first undo removes the gesture and the tool stays,
+/// the second removes the activation. `none`: the arm replays or rebuilds a row
+/// it did not write through a user door (a lifecycle redo keeps the row's own
+/// door; the tool reset re-arms at defaults).
+enum ArmDoor : ubyte { none, key, script }
+
+ArmDoor armDoorFor(ToolTransition t, bool uiOrigin) pure nothrow @safe @nogc {
+    final switch (t) {
+        case ToolTransition.interactiveArm:
+            return ArmDoor.key;
+        case ToolTransition.commandArm:
+            return uiOrigin ? ArmDoor.key : ArmDoor.script;
+        case ToolTransition.replayArm:
+        case ToolTransition.resetRearm:
+            return ArmDoor.none;
+        case ToolTransition.explicitDrop:
+        case ToolTransition.sameIdToggleDrop:
+        case ToolTransition.replayDrop:
+        case ToolTransition.selTypeFlipDrop:
+        case ToolTransition.activeLayerChangedDrop:
+        case ToolTransition.documentReplaceDisarm:
+        case ToolTransition.primaryMoveDrop:
+        case ToolTransition.sceneResetDrop:
+        case ToolTransition.meshRebuildDrop:
+        case ToolTransition.commandPreApplyDrop:
+        case ToolTransition.editCancelDrop:
+        case ToolTransition.shutdownDrop:
+            assert(0, "a drop has no arm door");
+    }
+}
+
+/// Whether a drop of an ARMED tool by this transition puts the remembered
+/// background constraint back into the pipe (`ConstrainStage.noteToolDropped`).
+/// Captured law: a door re-inserts it iff it drops the armed tool; one row per
+/// door, its cell in fixtures/constraint_boot.json (`cases`, `drop_doors`). A
+/// tool switch is not a drop; the other doors are uncaptured and stay out.
+bool dropRemembersConstraint(ToolTransition t) pure nothrow @safe @nogc {
+    switch (t) {
+        case ToolTransition.explicitDrop:          // first-drop-move, K-CD Q
+        case ToolTransition.sameIdToggleDrop:      // K-CD CD1 same-tool-key
+        case ToolTransition.selTypeFlipDrop:       // K-CD CD2 / CD2s, CD3 / CD3s (the mode buttons)
+        case ToolTransition.documentReplaceDisarm: // E8 newscene-armed-seeds, scene-open-with-tool-armed
+            return true;
+        default: return false;  // primaryMoveDrop: K-CD CD4 primary-move-item-list
+    }
+}
+
+/// True when the transition publishes a NEW active tool. Kept beside the table
+/// so "is this an arm?" has one answer too.
+bool isArm(ToolTransition t) pure nothrow @safe @nogc {
+    return activationDoorFor(t) == ActivationDoor.preparedArm;
+}

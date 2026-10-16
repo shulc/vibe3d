@@ -37,8 +37,8 @@ import std.file      : readText;
 import std.math      : abs, floor, isNaN;
 import std.format    : format;
 
-import math            : Vec3;
-import weightmap_view;
+import vibe3d.util.math.math            : Vec3;
+import vibe3d.viewport.display_policy.weightmap_view;
 
 // ---------------------------------------------------------------------------
 // Fixture plumbing

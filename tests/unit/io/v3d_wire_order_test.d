@@ -6,8 +6,8 @@ import std.json : JSONValue, parseJSON;
 import std.path : buildPath;
 import std.random : uniform;
 
-import io.native : readV3d, writeV3d;
-import math : Vec3;
+import vibe3d.documents.io.io.native : readV3d, writeV3d;
+import vibe3d.util.math.math : Vec3;
 import vibe3d.mesh.core.mesh : MapDomain, Mesh;
 
 private float edgeValueAtPair(in Mesh m, string name, uint a, uint b) {

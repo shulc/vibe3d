@@ -43,7 +43,7 @@
 
 import vibe3d.mesh.core.mesh;
 import vibe3d.mesh.ops.mesh_ops.loop_slice : insertEdgeLoops, kLoopSliceEditScope;
-import math;
+import vibe3d.util.math.math;
 import std.json;
 import std.format : format;
 import std.math : abs, fmin, fmax;

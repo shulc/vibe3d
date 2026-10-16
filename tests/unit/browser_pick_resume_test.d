@@ -16,21 +16,21 @@ import std.format : format;
 import std.path : buildPath;
 import std.process : thisProcessID;
 
-import command : Command, g_testMode;
-import command_history : RecordMode;
-import commands.file.load : FileLoad;
-import commands.image.commands : ImageLoad, ImageReplace;
+import vibe3d.editing.commands.runtime.command : Command, g_testMode;
+import vibe3d.editing.commands.runtime.command_history : RecordMode;
+import vibe3d.apps.desktop.commands.file.load : FileLoad;
+import vibe3d.runtime.document_actions.commands.image.commands : ImageLoad, ImageReplace;
 import vibe3d.documents.model.document : Document, ItemKind, Layer;
 import vibe3d.editing.contracts.editmode : EditMode;
-import guarded_action_controller;
-import io.browser_pick_resume;
-import io.file_dialog : PickOutcome, PickResult, pickOpenPath,
+import vibe3d.apps.desktop.guarded_action_controller;
+import vibe3d.platform.file.io.browser_pick_resume;
+import vibe3d.platform.file.io.file_dialog : PickOutcome, PickResult, pickOpenPath,
                         selectBrowserBackendForTest;
-import io.formats : FilterSpec;
-import io.image_path : writeTestBmp;
+import vibe3d.documents.interchange.io.formats : FilterSpec;
+import vibe3d.documents.io.io.image_path : writeTestBmp;
 import vibe3d.mesh.core.mesh : Mesh, makeCube;
 import vibe3d.editing.params.params : Param;
-import ui.discard_guard : GuardAnswer, GuardRecord, UiRunOutcome;
+import vibe3d.ui.editor.ui.discard_guard : GuardAnswer, GuardRecord, UiRunOutcome;
 import vibe3d.viewport.camera.view : View;
 
 private:
@@ -445,7 +445,7 @@ unittest {
     writeTestBmp(p1, 5, 7);
     foreach (p; [p0, p1]) {
         auto ld = new ImageLoad(doc.activeMesh(), v, EditMode.Vertices, &doc, null);
-        import command_args : bindArgs;
+        import vibe3d.editing.commands.runtime.command_args : bindArgs;
         import std.json : JSONValue;
         auto j = JSONValue(["path": JSONValue(p)]);
         bindArgs(ld, j);
@@ -457,7 +457,7 @@ unittest {
 
     auto rep = new ImageReplace(doc.activeMesh(), v, EditMode.Vertices, &doc, null);
     {
-        import command_args : bindArgs;
+        import vibe3d.editing.commands.runtime.command_args : bindArgs;
         import std.json : JSONValue;
         auto j = JSONValue(["index": JSONValue(cast(long) doc.indexOf(images[1]))]);
         bindArgs(rep, j);

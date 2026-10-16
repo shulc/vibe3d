@@ -2,23 +2,23 @@
 // production call and its ordering so a correct helper cannot hide mis-wiring.
 module tests.unit.commands.pipe_command_registration_test;
 
-import application_command_binding : CommandInvocationContext,
+import vibe3d.apps.desktop.application_command_binding : CommandInvocationContext,
     CommandInvocationOutcome, CommandInvocationResult;
-import command : Command, CommandOrigin;
-import command_history : CommandHistory;
-import commands.tool.host : ToolHostReadView;
-import commands.actr : ActrPresetCommand;
-import commands.falloff : FalloffPresetCommand, FalloffAddCommand,
+import vibe3d.editing.commands.runtime.command : Command, CommandOrigin;
+import vibe3d.editing.commands.runtime.command_history : CommandHistory;
+import vibe3d.editing.tools.interactive.commands.tool.host : ToolHostReadView;
+import vibe3d.apps.desktop.commands.actr : ActrPresetCommand;
+import vibe3d.editing.tools.interactive.commands.falloff : FalloffPresetCommand, FalloffAddCommand,
     FalloffRemoveCommand, FalloffClearCommand, FalloffAutoSizeCommand,
     FalloffReverseCommand;
-import commands.workplane : WorkplaneResetCommand, WorkplaneEditCommand,
+import vibe3d.apps.desktop.commands.workplane : WorkplaneResetCommand, WorkplaneEditCommand,
     WorkplaneRotateCommand, WorkplaneOffsetCommand,
     WorkplaneAlignToSelectionCommand;
-import edit_session : EditSession, LiveEvalClient, ParameterChangeBatch;
+import vibe3d.editing.tools.interactive.edit_session : EditSession, LiveEvalClient, ParameterChangeBatch;
 import vibe3d.editing.contracts.editmode : EditMode;
-import math : Vec3;
+import vibe3d.util.math.math : Vec3;
 import vibe3d.mesh.core.mesh : Mesh;
-import pipe_command_registration : registerPipeStageCommands;
+import vibe3d.apps.desktop.pipe_command_registration : registerPipeStageCommands;
 import std.algorithm : count, sort, uniq;
 import std.array : array;
 import std.file : exists, readText;
@@ -29,13 +29,13 @@ import std.string : indexOf;
 import tests.unit.census_symbols : blankNonCode, LedgerRow, reconcile,
     registrationFamilyBytes, statementsContaining, symbolTokenHits;
 import tests.unit.live_registration_rig : LiveRegistrationRig;
-import tool : Tool;
-import toolpipe.pipeline : g_pipeCtx, ToolPipeContext;
-import toolpipe.stage : TaskCode;
-import toolpipe.stages.actcenter : ActionCenterStage;
-import toolpipe.stages.axis : AxisStage;
-import toolpipe.stages.falloff : FalloffStage;
-import toolpipe.stages.workplane : WorkplaneStage;
+import vibe3d.editing.tools.interactive.tool : Tool;
+import vibe3d.editing.pipeline.runtime.toolpipe.pipeline : g_pipeCtx, ToolPipeContext;
+import vibe3d.editing.pipeline.runtime.toolpipe.stage : TaskCode;
+import vibe3d.editing.pipeline.evaluation.toolpipe.stages.actcenter : ActionCenterStage;
+import vibe3d.editing.pipeline.evaluation.toolpipe.stages.axis : AxisStage;
+import vibe3d.editing.pipeline.evaluation.toolpipe.stages.falloff : FalloffStage;
+import vibe3d.editing.pipeline.evaluation.toolpipe.stages.workplane : WorkplaneStage;
 
 private enum repoRoot = buildNormalizedPath(
     dirName(__FILE_FULL_PATH__), "..", "..", "..");

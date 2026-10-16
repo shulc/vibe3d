@@ -31,27 +31,27 @@ import vibe3d.mesh.edit_replay.mesh_edit_replay : apply, revert;
 import std.format : format;
 import std.math   : isClose;
 
-import command;
+import vibe3d.editing.commands.runtime.command;
 import vibe3d.mesh.core.mesh;
 import vibe3d.viewport.camera.view;
 import vibe3d.editing.contracts.editmode;
-import math      : Vec3;
+import vibe3d.util.math.math      : Vec3;
 import vibe3d.editing.params.params    : Param;
-import http_json : meshPlanesJson;
+import vibe3d.runtime.application_core.http_json : meshPlanesJson;
 import vibe3d.mesh.edit_log.mesh_edit_delta : MeshEditDelta, MeshOpEntry, MeshEditScope;
 import vibe3d.editing.pipeline.contracts.operator  : VectorStack;
 import vibe3d.editing.pipeline.contracts.toolpipe.packets : SubjectPacket;
-import commands.mesh.position_undo : PositionUndo;
+import vibe3d.editing.commands.editor.commands.mesh.position_undo : PositionUndo;
 
-import commands.mesh.smooth        : MeshSmooth;
-import commands.mesh.jitter        : MeshJitter;
-import commands.mesh.quantize      : MeshQuantize;
-import commands.mesh.magnet        : MeshMagnet;
-import commands.mesh.linear_align  : MeshLinearAlign;
-import commands.mesh.radial_align  : MeshRadialAlign;
-import commands.mesh.vertex_center : MeshCenterVertices;
-import commands.mesh.vertex_set    : MeshSetPosition;
-import commands.mesh.edge_slide    : MeshEdgeSlide;
+import vibe3d.editing.commands.editor.commands.mesh.smooth        : MeshSmooth;
+import vibe3d.editing.commands.editor.commands.mesh.jitter        : MeshJitter;
+import vibe3d.editing.commands.editor.commands.mesh.quantize      : MeshQuantize;
+import vibe3d.editing.commands.editor.commands.mesh.magnet        : MeshMagnet;
+import vibe3d.editing.commands.editor.commands.mesh.linear_align  : MeshLinearAlign;
+import vibe3d.editing.commands.editor.commands.mesh.radial_align  : MeshRadialAlign;
+import vibe3d.editing.commands.editor.commands.mesh.vertex_center : MeshCenterVertices;
+import vibe3d.editing.commands.editor.commands.mesh.vertex_set    : MeshSetPosition;
+import vibe3d.editing.commands.editor.commands.mesh.edge_slide    : MeshEdgeSlide;
 
 // ---------------------------------------------------------------------------
 // The stand.

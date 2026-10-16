@@ -2,8 +2,8 @@ module tests.unit.ui.stage_mode_popup_regression_test;
 
 import std.format : format;
 import vibe3d.editing.params.params : valueForWireTag;
-import toolpipe.stages.actcenter : ActionCenterStage;
-import toolpipe.stages.axis : AxisStage;
+import vibe3d.editing.pipeline.evaluation.toolpipe.stages.actcenter : ActionCenterStage;
+import vibe3d.editing.pipeline.evaluation.toolpipe.stages.axis : AxisStage;
 
 
 
@@ -30,8 +30,8 @@ import toolpipe.stages.axis : AxisStage;
 // hand-copied labels that used to sit there cannot come back.
 unittest {
     import std.file : exists;
-    import buttonset : loadStatusLine, ActionKind, PopupItem, PopupItemKind;
-    import ui.mode_popup : dynamicModePopupItems;
+    import vibe3d.ui.editor.buttonset : loadStatusLine, ActionKind, PopupItem, PopupItemKind;
+    import vibe3d.ui.editor.ui.mode_popup : dynamicModePopupItems;
 
     enum yamlPath = "config/statusline.yaml";
     // A hard fail beats a silent skip for a gate test — but say what to DO
@@ -180,12 +180,12 @@ unittest {
 // publishes.
 unittest {
     import std.file  : exists;
-    import buttonset : loadStatusLine, ActionKind, PopupItem, PopupItemKind;
+    import vibe3d.ui.editor.buttonset : loadStatusLine, ActionKind, PopupItem, PopupItemKind;
     // Through the kind-string dispatcher, not the leaf builder: the dispatcher
     // is what the renderer, the startup id-validator and test_button_actions
     // call, and renaming its case labels emptied every menu while a
     // builder-facing pin stayed green.
-    import ui.mode_popup : dynamicModePopupItems;
+    import vibe3d.ui.editor.ui.mode_popup : dynamicModePopupItems;
 
     enum yamlPath = "config/statusline.yaml";
     assert(exists(yamlPath),

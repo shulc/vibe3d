@@ -3,9 +3,9 @@
 // private symbol stayed behind -- see the task for the count.
 module tests.unit.ui.availability_test;
 
-import buttonset : Action, ActionKind;
-import registry  : Registry;
-import ui.availability;
+import vibe3d.ui.editor.buttonset : Action, ActionKind;
+import vibe3d.editing.tools.interactive.registry  : Registry;
+import vibe3d.ui.editor.ui.availability;
 
 unittest {
     // The script-line id is the leading token, with no parse and no

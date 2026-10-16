@@ -13,7 +13,7 @@ import std.format : format;
 import vibe3d.documents.model.document;
 import vibe3d.mesh.core.mesh    : Mesh;
 import vibe3d.editing.contracts.seltype : SelMode;
-import retopology_order : entersItemSequence, retopologyDrawSequence, SeqEntry;
+import vibe3d.viewport.display_policy.retopology_order : entersItemSequence, retopologyDrawSequence, SeqEntry;
 
 // ---------------------------------------------------------------------------
 // Source census of the sequence's wiring in `source/ui/viewport_render.d`.

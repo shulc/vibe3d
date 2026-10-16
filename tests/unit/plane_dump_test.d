@@ -32,7 +32,7 @@ module tests.unit.plane_dump_test;
 import std.format : format;
 
 import vibe3d.mesh.core.mesh;
-import http_json : meshPlanesJson, PlaneDumpMeta;
+import vibe3d.runtime.application_core.http_json : meshPlanesJson, PlaneDumpMeta;
 
 import tests.unit.fixtures : makeTaggedGridFull;
 

@@ -1,0 +1,354 @@
+{
+  "targetType": "executable",
+  "sourcePaths": [],
+  "toolchainRequirements": {
+    "dmd": ">=2.111.0",
+    "ldc": ">=1.41.0"
+  },
+  "buildTypes": {
+    "profile-fp": {
+      "buildOptions": [
+        "debugMode",
+        "debugInfo",
+        "optimize"
+      ],
+      "dflags-dmd": [
+        "-gs"
+      ],
+      "dflags-ldc": [
+        "--frame-pointer=all"
+      ]
+    },
+    "perf": {
+      "buildOptions": [
+        "releaseMode",
+        "optimize",
+        "inline"
+      ],
+      "versions": [
+        "PerfProbe"
+      ]
+    },
+    "perf-count": {
+      "buildOptions": [
+        "debugMode",
+        "debugInfo"
+      ],
+      "versions": [
+        "PerfProbe"
+      ]
+    },
+    "perf-unit": {
+      "buildOptions": [
+        "debugMode",
+        "debugInfo",
+        "unittests"
+      ],
+      "versions": [
+        "PerfProbe"
+      ]
+    },
+    "check": {
+      "buildOptions": [
+        "debugMode",
+        "debugInfo"
+      ],
+      "dflags-ldc": [
+        "--boundscheck=on",
+        "--checkaction=C",
+        "--frame-pointer=all"
+      ],
+      "versions": [
+        "SanitizerSelfTest"
+      ]
+    },
+    "check-unit": {
+      "buildOptions": [
+        "debugMode",
+        "debugInfo",
+        "unittests"
+      ],
+      "dflags-ldc": [
+        "--boundscheck=on",
+        "--frame-pointer=all"
+      ],
+      "versions": [
+        "SanitizerSelfTest"
+      ]
+    },
+    "check-release": {
+      "buildOptions": [
+        "releaseMode",
+        "optimize",
+        "inline",
+        "debugInfo"
+      ],
+      "dflags-ldc": [
+        "--boundscheck=on",
+        "--frame-pointer=all"
+      ],
+      "versions": [
+        "SanitizerSelfTest"
+      ]
+    },
+    "sanitize": {
+      "buildOptions": [
+        "debugMode",
+        "debugInfo"
+      ],
+      "dflags-ldc": [
+        "--fsanitize=address",
+        "--fsanitize-address-use-after-return=never",
+        "--checkaction=C",
+        "--frame-pointer=all"
+      ],
+      "versions": [
+        "SanitizerSelfTest"
+      ]
+    },
+    "sanitize-unit": {
+      "buildOptions": [
+        "debugMode",
+        "debugInfo",
+        "unittests"
+      ],
+      "dflags-ldc": [
+        "--fsanitize=address",
+        "--fsanitize-address-use-after-return=never",
+        "--frame-pointer=all"
+      ],
+      "versions": [
+        "SanitizerSelfTest"
+      ]
+    },
+    "tsan": {
+      "buildOptions": [
+        "debugMode",
+        "debugInfo"
+      ],
+      "dflags-ldc": [
+        "--fsanitize=thread",
+        "--enable-asserts=false",
+        "--frame-pointer=all"
+      ],
+      "versions": [
+        "SanitizerSelfTest",
+        "SanitizerThreadPreinit"
+      ]
+    }
+  },
+  "name": "vibe3d-editor-ui-tests",
+  "dependencies": {
+    "vibe3d:forms-model": {
+      "path": "../../../.."
+    },
+    "vibe3d:ai-advisor": {
+      "path": "../../../.."
+    },
+    "vibe3d:application-core": {
+      "path": "../../../.."
+    },
+    "vibe3d:camera-model": {
+      "path": "../../../.."
+    },
+    "vibe3d:command-runtime": {
+      "path": "../../../.."
+    },
+    "vibe3d:display-policy": {
+      "path": "../../../.."
+    },
+    "vibe3d:document-actions": {
+      "path": "../../../.."
+    },
+    "vibe3d:document-channels": {
+      "path": "../../../.."
+    },
+    "vibe3d:document-io": {
+      "path": "../../../.."
+    },
+    "vibe3d:document-model": {
+      "path": "../../../.."
+    },
+    "vibe3d:edit-contracts": {
+      "path": "../../../.."
+    },
+    "vibe3d:editor-commands": {
+      "path": "../../../.."
+    },
+    "vibe3d:input-events": {
+      "path": "../../../.."
+    },
+    "vibe3d:interactive-tools": {
+      "path": "../../../.."
+    },
+    "vibe3d:interchange": {
+      "path": "../../../.."
+    },
+    "vibe3d:mesh": {
+      "path": "../../../.."
+    },
+    "vibe3d:mesh-ops": {
+      "path": "../../../.."
+    },
+    "vibe3d:param-schema": {
+      "path": "../../../.."
+    },
+    "vibe3d:pipe-evaluation": {
+      "path": "../../../.."
+    },
+    "vibe3d:pipe-runtime": {
+      "path": "../../../.."
+    },
+    "vibe3d:profiling": {
+      "path": "../../../.."
+    },
+    "vibe3d:remesh-runtime": {
+      "path": "../../../.."
+    },
+    "vibe3d:viewport-gpu": {
+      "path": "../../../.."
+    },
+    "vibe3d:viewport-host": {
+      "path": "../../../.."
+    },
+    "vibe3d:log": {
+      "path": "../../../.."
+    },
+    "vibe3d:math": {
+      "path": "../../../.."
+    },
+    "vibe3d:spatial": {
+      "path": "../../../.."
+    },
+    "vibe3d:interaction-data": {
+      "path": "../../../.."
+    },
+    "vibe3d:interaction-query": {
+      "path": "../../../.."
+    },
+    "vibe3d:mesh-snapshot": {
+      "path": "../../../.."
+    },
+    "vibe3d:pipe-contracts": {
+      "path": "../../../.."
+    },
+    "vibe3d:scene-query": {
+      "path": "../../../.."
+    },
+    "d_imgui": {
+      "version": "d535ba78c7d01aca3c9d45ca94ea8e55455ffb7f",
+      "repository": "git+https://github.com/shulc/D-ImGui.git"
+    },
+    "dyaml": {
+      "version": "22e4724474795eefb64ee9742f980b49bb34f6ef",
+      "repository": "git+https://github.com/shulc/D-YAML.git"
+    },
+    "bindbc-sdl": "~>1.5.2",
+    "bindbc-opengl": "~>1.1.1",
+    "vibe3d:ai3d-runtime": {
+      "path": "../../../.."
+    }
+  },
+  "versions": [
+    "SDL_2020",
+    "GL_33",
+    "IMGUI_OPENGL3",
+    "IMGUI_SDL2"
+  ],
+  "importPaths": [
+    "source",
+    "../source"
+  ],
+  "configurations": [
+    {
+      "name": "algorithm",
+      "subConfigurations": {
+        "vibe3d:forms-model": "isolated-tests",
+        "vibe3d:ai-advisor": "isolated-tests",
+        "vibe3d:ai3d-runtime": "isolated-tests",
+        "vibe3d:application-core": "isolated-tests",
+        "vibe3d:camera-model": "isolated-tests",
+        "vibe3d:command-runtime": "isolated-tests",
+        "vibe3d:display-policy": "isolated-tests",
+        "vibe3d:document-actions": "isolated-tests",
+        "vibe3d:document-channels": "isolated-tests",
+        "vibe3d:document-io": "isolated-tests",
+        "vibe3d:document-model": "isolated-tests",
+        "vibe3d:edit-contracts": "isolated-tests",
+        "vibe3d:editor-commands": "isolated-tests",
+        "vibe3d:input-events": "isolated-tests",
+        "vibe3d:interactive-tools": "isolated-tests",
+        "vibe3d:interchange": "isolated-tests",
+        "vibe3d:mesh": "isolated-tests",
+        "vibe3d:mesh-ops": "isolated-tests",
+        "vibe3d:param-schema": "isolated-tests",
+        "vibe3d:pipe-evaluation": "isolated-tests",
+        "vibe3d:pipe-runtime": "isolated-tests",
+        "vibe3d:profiling": "isolated-tests",
+        "vibe3d:remesh-runtime": "isolated-tests",
+        "vibe3d:viewport-gpu": "isolated-tests",
+        "vibe3d:viewport-host": "isolated-tests",
+        "vibe3d:log": "isolated-tests",
+        "vibe3d:math": "isolated-tests",
+        "vibe3d:spatial": "isolated-tests",
+        "vibe3d:interaction-data": "isolated-tests",
+        "vibe3d:interaction-query": "isolated-tests",
+        "vibe3d:mesh-snapshot": "isolated-tests",
+        "vibe3d:pipe-contracts": "isolated-tests",
+        "vibe3d:scene-query": "isolated-tests"
+      }
+    }
+  ],
+  "sourceFiles": [
+    "../source/vibe3d/ui/editor/args_dialog.d",
+    "../source/vibe3d/ui/editor/buttonset.d",
+    "../source/vibe3d/ui/editor/copilot_overlay.d",
+    "../source/vibe3d/ui/editor/copilot_panel.d",
+    "../source/vibe3d/ui/editor/forms_render.d",
+    "../source/vibe3d/ui/editor/imgui_event_gate.d",
+    "../source/imgui_flag_abi.c",
+    "../source/vibe3d/ui/editor/imgui_flag_boundary.d",
+    "../source/vibe3d/ui/editor/imgui_style.d",
+    "../source/vibe3d/ui/editor/pie_geometry.d",
+    "../source/vibe3d/ui/editor/pie_menus.d",
+    "../source/vibe3d/ui/editor/pie_state.d",
+    "../source/vibe3d/ui/editor/popup_state.d",
+    "../source/vibe3d/ui/editor/ui/action_menu.d",
+    "../source/vibe3d/ui/editor/ui/availability.d",
+    "../source/vibe3d/ui/editor/ui/button_face.d",
+    "../source/vibe3d/ui/editor/ui/channel_rows.d",
+    "../source/vibe3d/ui/editor/ui/channels_panel.d",
+    "../source/vibe3d/ui/editor/ui/command_notice.d",
+    "../source/vibe3d/ui/editor/ui/dock_drag.d",
+    "../source/vibe3d/ui/editor/ui/guard_modal_state.d",
+    "../source/vibe3d/ui/editor/ui/history_panel.d",
+    "../source/vibe3d/ui/editor/ui/image_list_panel.d",
+    "../source/vibe3d/ui/editor/ui/image_rows.d",
+    "../source/vibe3d/ui/editor/ui/imgui_window_class.d",
+    "../source/vibe3d/ui/editor/ui/item_glyphs.d",
+    "../source/vibe3d/ui/editor/ui/item_rename.d",
+    "../source/vibe3d/ui/editor/ui/item_rows.d",
+    "../source/vibe3d/ui/editor/ui/layer_list_panel.d",
+    "../source/vibe3d/ui/editor/ui/mode_popup.d",
+    "../source/vibe3d/ui/editor/ui/panel_chrome.d",
+    "../source/vibe3d/ui/editor/ui/panel_host_roles.d",
+    "../source/vibe3d/ui/editor/ui/panels.d",
+    "../source/vibe3d/ui/editor/ui/pie_record.d",
+    "../source/vibe3d/ui/editor/ui/pie_render.d",
+    "../source/vibe3d/ui/editor/ui/remesh_modal_state.d",
+    "../source/vibe3d/ui/editor/ui/retained_item.d",
+    "../source/vibe3d/ui/editor/ui/stat_record.d",
+    "../source/vibe3d/ui/editor/ui/stat_rows.d",
+    "../source/vibe3d/ui/editor/ui/tool_properties_panel.d",
+    "../source/vibe3d/ui/editor/ui/viewport_props_role.d",
+    "source/vibe3d/ui/editor/tests/unit/ui/channel_rows_test.d",
+    "source/vibe3d/ui/editor/tests/unit/ui/command_notice_test.d",
+    "source/vibe3d/ui/editor/tests/unit/ui/stat_rows_test.d",
+    "source/vibe3d/ui/editor/ui/availability_source_test.d",
+    "source/vibe3d/ui/editor/ui/item_click_source_test.d"
+  ],
+  "workingDirectory": ".",
+  "dflags": [
+    "-P-I$D_IMGUI_PACKAGE_DIR/extern/cimgui"
+  ]
+}

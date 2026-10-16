@@ -9,7 +9,7 @@ import tests.unit.http_test_client : receiveUntilClosed;
 import core.atomic : atomicLoad, atomicStore;
 import core.thread : Thread;
 import core.time : Duration, MonoTime, msecs, seconds;
-import http_server : HttpRequestContext, HttpResponse, HttpServer,
+import vibe3d.runtime.http.http_server : HttpRequestContext, HttpResponse, HttpServer,
     InProcessHttpTransport;
 import std.algorithm : canFind;
 import std.conv : to;

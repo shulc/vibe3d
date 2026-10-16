@@ -4,10 +4,10 @@
 module tests.unit.commands.select.loop_test;
 
 import vibe3d.mesh.core.mesh;
-import math : Vec3;
+import vibe3d.util.math.math : Vec3;
 import vibe3d.viewport.camera.view;
 import vibe3d.editing.contracts.editmode : EditMode;
-import commands.select.loop : SelectLoop;
+import vibe3d.editing.commands.editor.commands.select.loop : SelectLoop;
 
 // ---------------------------------------------------------------------------
 // `select.loop` opens with a PAIR of preconditions:

@@ -5,7 +5,7 @@ module tests.unit.gpu_pass_timer_test;
 
 import tests.unit.census_symbols : exists = wave15Exists;
 
-import gpu_pass_timer;
+import vibe3d.viewport.gpu.gpu_pass_timer;
 
 import std.algorithm : canFind, count;
 import std.file : SpanMode;

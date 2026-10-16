@@ -5,7 +5,7 @@ import tests.unit.http_test_client : receiveUntilClosed;
 import core.atomic : atomicLoad, atomicStore;
 import core.thread : Thread;
 import core.time : Duration, MonoTime, msecs, seconds;
-import http_server : BridgeResultKind, ClaimProbePoint, HttpServer;
+import vibe3d.runtime.http.http_server : BridgeResultKind, ClaimProbePoint, HttpServer;
 import vibe3d.util.profiling.perf_probe : DrawPass, FrameWorkProbe, g_fc;
 import std.algorithm : canFind, count;
 import std.file : readText;

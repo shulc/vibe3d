@@ -13,12 +13,12 @@ import std.string : strip;
 
 import vibe3d.editing.interaction.data.ai.interaction : AiAdvisorDecision, AiCandidate, AiCandidateKind,
     AiElementCandidateKind, AiInteractionContext, AiInteractionPhase, AiIntent;
-import ai.interaction_log : AiInteractionLogRecord, makeAiInteractionLogRecord,
+import vibe3d.runtime.ai_advisor.ai.interaction_log : AiInteractionLogRecord, makeAiInteractionLogRecord,
     parseAiInteractionLogLine;
-import ai.element_candidates : collectElementCandidates,
+import vibe3d.runtime.ai_advisor.ai.element_candidates : collectElementCandidates,
     resolveElementCandidateDecision;
-import ai.training_dataset : exportAiTrainingDatasetJsonl;
-import ai.ranker_schema : aiRankerLabelFromRecord;
+import vibe3d.runtime.ai_advisor.ai.training_dataset : exportAiTrainingDatasetJsonl;
+import vibe3d.runtime.ai_advisor.ai.ranker_schema : aiRankerLabelFromRecord;
 
 void main() {}
 

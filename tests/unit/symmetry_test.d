@@ -11,11 +11,11 @@ import tests.unit.census_symbols : exists = wave15Exists;
 
 import std.algorithm : sort, max;
 import std.math      : abs;
-import math : Vec3, dot;
+import vibe3d.util.math.math : Vec3, dot;
 import vibe3d.mesh.core.mesh : Mesh;
 import vibe3d.editing.pipeline.contracts.toolpipe.packets : SymmetryPacket;
 import std.conv : to;
-import symmetry;
+import vibe3d.editing.selection.query.symmetry;
 
 
 // mirrorEdgePoint (Edge Slice's mirrored chain): the image edge of (v0, v1) is
@@ -297,8 +297,8 @@ import tests.unit.census_symbols : exists = wave15Exists;
 // current plane.
 unittest {
     import vibe3d.editing.pipeline.contracts.operator : VectorStack;
-    import toolpipe.pipeline : ToolPipeContext, resetToolSwitchTransientStages;
-    import toolpipe.stages.symmetry : SymmetryStage;
+    import vibe3d.editing.pipeline.runtime.toolpipe.pipeline : ToolPipeContext, resetToolSwitchTransientStages;
+    import vibe3d.editing.pipeline.evaluation.toolpipe.stages.symmetry : SymmetryStage;
     auto ctx = new ToolPipeContext;
     auto st = new SymmetryStage(null, null);
     ctx.pipeline.add(st);
@@ -343,10 +343,10 @@ unittest {
     import vibe3d.editing.pipeline.contracts.operator : VectorStack;
     import vibe3d.editing.contracts.editmode : EditMode;
     import vibe3d.editing.contracts.seltype : SelType;
-    import toolpipe.pipeline : g_pipeCtx, ToolPipeContext;
+    import vibe3d.editing.pipeline.runtime.toolpipe.pipeline : g_pipeCtx, ToolPipeContext;
     import vibe3d.editing.pipeline.contracts.toolpipe.packets : ActionCenterPacket;
-    import toolpipe.stages.symmetry : SymmetryStage;
-    import toolpipe.stages.actcenter : ActionCenterStage;
+    import vibe3d.editing.pipeline.evaluation.toolpipe.stages.symmetry : SymmetryStage;
+    import vibe3d.editing.pipeline.evaluation.toolpipe.stages.actcenter : ActionCenterStage;
     auto m = new Mesh;
     m.addVertex(Vec3( 0.5f, 0, 0));   // 0 +X
     m.addVertex(Vec3(-0.5f, 0, 0));   // 1 -X
@@ -725,15 +725,15 @@ unittest {
 
 // (u8) the production kernel `applyXformMatrix` in the authoring frame, both loops.
 unittest {
-    import math : lookAt, perspectiveMatrix;
+    import vibe3d.util.math.math : lookAt, perspectiveMatrix;
 import vibe3d.util.spatial.spatial : AimViewport, Viewport, aimSpace, ModelSpace;
     import std.math : PI;
     import vibe3d.editing.pipeline.contracts.toolpipe.packets : FalloffPacket, FalloffType;
-    import tools.transform.transform : TransformTool;
-    static import tools.transform.cluster_values;
-    static assert(is(TransformTool.ClusterPivots == tools.transform.cluster_values.ClusterPivots));
-    static assert(is(TransformTool.ClusterAxes == tools.transform.cluster_values.ClusterAxes));
-    import tools.transform.xform_kernels : applyXformMatrix, BlendMode;
+    import vibe3d.editing.tools.interactive.tools.transform.transform : TransformTool;
+    static import vibe3d.editing.tools.transform.tools.transform.cluster_values;
+    static assert(is(TransformTool.ClusterPivots == vibe3d.editing.tools.transform.tools.transform.cluster_values.ClusterPivots));
+    static assert(is(TransformTool.ClusterAxes == vibe3d.editing.tools.transform.tools.transform.cluster_values.ClusterAxes));
+    import vibe3d.editing.tools.transform.tools.transform.xform_kernels : applyXformMatrix, BlendMode;
     Viewport vp;
     vp.view = lookAt(Vec3(0, 0, 5), Vec3(0, 0, 0), Vec3(0, 1, 0));
     vp.proj = perspectiveMatrix(PI / 2, 1.0f, 0.1f, 100.0f);

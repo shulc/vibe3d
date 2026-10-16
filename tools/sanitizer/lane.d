@@ -1861,9 +1861,9 @@ void cmdTsanParallelCompletion() {
     scope(exit) if (exists(probeBinary)) std.file.remove(probeBinary);
     run([ldc, "-g", "-O0", "--fsanitize=thread",
          "--enable-asserts=false", "--frame-pointer=all",
-         "--d-version=SanitizerThreadPreinit", "-Isource",
+         "--d-version=SanitizerThreadPreinit", "-Iapps/desktop/source",
          "-of=" ~ probeBinary, probeSource, "libraries/util/parallel/source/vibe3d/util/parallel/tsan_annotate.d",
-         "source/tsan_preinit.d"], env);
+         "apps/desktop/source/vibe3d/apps/desktop/tsan_preinit.d"], env);
     if (!exists(probeBinary))
         fail("tsan-parallel-completion: compiler produced no " ~ probeBinary);
 

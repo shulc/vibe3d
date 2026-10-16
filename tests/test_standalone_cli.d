@@ -257,7 +257,7 @@ private struct Run { int status; JSONValue[] states, outcomes; string error; }
 private Run runCli(string root, string input, string script, string output, string diagnostics = "", bool observeProcess = false, bool readDiagnostics = true) {
     auto outLog = buildPath(root, "stdout.jsonl"), errLog = buildPath(root, "stderr.log");
     auto outFile = File(outLog, "w"), errFile = File(errLog, "w");
-    string[] argv = [buildPath(repo, "tools/cli/vibe3d-cli"), "run", "--input", input,
+    string[] argv = [buildPath(repo, "vibe3d-cli"), "run", "--input", input,
         "--commands", script, "--output", output];
     if (diagnostics.length) argv ~= ["--state-output", diagnostics];
     auto env = environment.toAA;
@@ -472,12 +472,12 @@ unittest {
     import std.array : join;
     environmentKeyControls();
     // Build once from this exact checkout, never reuse a stale helper binary.
-    auto build = execute(["dub", "build", "--root=" ~ buildPath(repo, "tools/cli"), "--compiler=dmd"], null, Config.none, size_t.max, repo);
+    auto build = execute(["dub", "build", ":cli", "--compiler=dmd"], null, Config.none, size_t.max, repo);
     assert(build.status == 0, "CLI fresh build: " ~ build.output);
     auto revision = execute(["git", "rev-parse", "HEAD"], null, Config.none, size_t.max, repo);
     sourcePin = revision.status == 0 ? revision.output.strip : "mutation-copy";
-    binaryHash = digest(buildPath(repo, "tools/cli/vibe3d-cli"));
-    auto dynamic = execute(["ldd", buildPath(repo, "tools/cli/vibe3d-cli")]);
+    binaryHash = digest(buildPath(repo, "vibe3d-cli"));
+    auto dynamic = execute(["ldd", buildPath(repo, "vibe3d-cli")]);
     assert(dynamic.status == 0 && dynamic.output.length > 100, "CLI runtime: populated ldd witness");
     foreach (name; ["sdl", "libgl", "libegl", "imgui", "libx11", "nfde", "libxcb", "wayland"])
         assert(!dynamic.output.toLower.canFind(name), "CLI runtime: forbidden linked library " ~ name);
@@ -698,7 +698,7 @@ unittest {
         ["run", "--input"], ["run", "--input", ""],
         ["run", "--input", input, "--commands", script, "--output", output, "--state-output", ""],
         ["run", "--input", input, "--input", input, "--commands", script, "--output", output]]) {
-        auto badArguments = execute([buildPath(repo, "tools/cli/vibe3d-cli")] ~ flags);
+        auto badArguments = execute([buildPath(repo, "vibe3d-cli")] ~ flags);
         Run bad; bad.status = badArguments.status; bad.error = badArguments.output;
         errorSchema(bad, "arguments");
         assert(read(input) == existingInput && read(output) == existingOutput,

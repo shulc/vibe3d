@@ -1,6 +1,6 @@
 module tests.unit.haul_axis_latch_test;
 
-import tools.edit.haul_axis_latch : HaulAxisLatch, HaulAxis;
+import vibe3d.editing.tools.interactive.tools.edit.haul_axis_latch : HaulAxisLatch, HaulAxis;
 
 import tests.unit.census_symbols : readText = wave15ReadText;
 import std.string : indexOf;

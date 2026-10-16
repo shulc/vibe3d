@@ -3,20 +3,20 @@
 // private symbol stayed behind -- see the task for the count.
 module tests.unit.commands.mesh.symmetrize_test;
 
-import command;
+import vibe3d.editing.commands.runtime.command;
 import vibe3d.editing.pipeline.contracts.operator : Operator, Task, VectorStack, PacketKind, OperatorActrCommon;
 import vibe3d.mesh.core.mesh;
 import vibe3d.viewport.camera.view;
 import vibe3d.editing.contracts.editmode;
-import math   : Vec3;
+import vibe3d.util.math.math   : Vec3;
 import vibe3d.editing.params.params : Param;
 import vibe3d.mesh.change.change_bus : MeshEditScope;
 import vibe3d.editing.pipeline.contracts.toolpipe.packets : SymmetryPacket, SubjectPacket;
-import symmetry : rebuildPairing, rebuildPairingTopological, applySymmetryMirror;
-import math : Vec3;
+import vibe3d.editing.selection.query.symmetry : rebuildPairing, rebuildPairingTopological, applySymmetryMirror;
+import vibe3d.util.math.math : Vec3;
 import vibe3d.mesh.core.mesh : Mesh;
 import vibe3d.editing.pipeline.contracts.toolpipe.packets : SymmetryPacket;
-import commands.mesh.symmetrize;
+import vibe3d.editing.commands.editor.commands.mesh.symmetrize;
 
 unittest {
     import std.math : abs;

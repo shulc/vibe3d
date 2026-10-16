@@ -59,8 +59,8 @@ module tests.unit.quit_window_close_guard_test;
 import vibe3d.mesh.core.mesh     : Mesh, makeCube;
 import vibe3d.viewport.camera.view     : View;
 import vibe3d.editing.contracts.editmode : EditMode;
-import commands.file.quit : FileQuit;
-static import command;
+import vibe3d.apps.desktop.commands.file.quit : FileQuit;
+static import command = vibe3d.editing.commands.runtime.command;
 
 // One `FileQuit` per row, built directly — no app, no HTTP, no registry.
 private bool discardsWith(bool fromWindowClose, bool testMode) {

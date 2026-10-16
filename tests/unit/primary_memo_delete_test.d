@@ -16,7 +16,7 @@
 module tests.unit.primary_memo_delete_test;
 
 unittest {
-    import commands.layer.commands : LayerDelete;
+    import vibe3d.runtime.document_actions.commands.layer.commands : LayerDelete;
     import vibe3d.documents.model.document;
     import vibe3d.editing.contracts.editmode : EditMode;
     import vibe3d.editing.contracts.seltype  : SelMode;

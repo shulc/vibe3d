@@ -24,7 +24,7 @@
 
 import http_client : getJson, testBaseUrl, postJson;
 import http_command_helpers : commandBody;
-import forms : Form, Row, RowKind, loadForms, parseBinding, substituteQuery;
+import vibe3d.ui.forms.forms : Form, Row, RowKind, loadForms, parseBinding, substituteQuery;
 
 import std.net.curl;
 import std.json;

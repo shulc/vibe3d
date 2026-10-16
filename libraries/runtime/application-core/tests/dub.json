@@ -1,0 +1,234 @@
+{
+  "name": "vibe3d-application-core-tests",
+  "description": "Independent application-core public and retained private cells",
+  "license": "MIT",
+  "targetType": "executable",
+  "sourcePaths": [],
+  "importPaths": [
+    "source",
+    "../source"
+  ],
+  "sourceFiles": [
+    "../source/vibe3d/runtime/application_core/app_version.d",
+    "../source/vibe3d/runtime/application_core/http_json.d",
+    "../source/vibe3d/runtime/application_core/live_registration_roles.d",
+    "../source/vibe3d/runtime/application_core/morph_target.d",
+    "../source/vibe3d/runtime/application_core/pilot_command_registration.d",
+    "../source/vibe3d/runtime/application_core/session_owner.d",
+    "../source/vibe3d/runtime/application_core/standalone_application.d",
+    "source/vibe3d/runtime/application_core/tests/unit/command_invocation_test.d",
+    "source/vibe3d/runtime/application_core/tests/unit/standalone_application_test.d",
+    "source/vibe3d/runtime/application_core/tests/unit/application_core_population_test.d",
+    "../source/vibe3d/runtime/application_core/io/doc_state.d"
+  ],
+  "dflags": [],
+  "dependencies": {
+    "vibe3d:camera-model": {
+      "path": "../../../.."
+    },
+    "vibe3d:command-runtime": {
+      "path": "../../../.."
+    },
+    "vibe3d:document-model": {
+      "path": "../../../.."
+    },
+    "vibe3d:edit-contracts": {
+      "path": "../../../.."
+    },
+    "vibe3d:mesh": {
+      "path": "../../../.."
+    },
+    "vibe3d:mesh-change": {
+      "path": "../../../.."
+    },
+    "vibe3d:mesh-edit-log": {
+      "path": "../../../.."
+    },
+    "vibe3d:mesh-edit-replay": {
+      "path": "../../../.."
+    },
+    "vibe3d:mesh-preview": {
+      "path": "../../../.."
+    },
+    "vibe3d:mesh-snapshot": {
+      "path": "../../../.."
+    },
+    "vibe3d:param-schema": {
+      "path": "../../../.."
+    },
+    "vibe3d:pipe-contracts": {
+      "path": "../../../.."
+    },
+    "vibe3d:pipe-runtime": {
+      "path": "../../../.."
+    },
+    "vibe3d:spatial": {
+      "path": "../../../.."
+    },
+    "vibe3d:json-number": {
+      "path": "../../../.."
+    },
+    "vibe3d:math": {
+      "path": "../../../.."
+    }
+  },
+  "toolchainRequirements": {
+    "dmd": ">=2.111.0",
+    "ldc": ">=1.41.0"
+  },
+  "configurations": [
+    {
+      "name": "algorithm",
+      "subConfigurations": {
+        "vibe3d:camera-model": "isolated-tests",
+        "vibe3d:command-runtime": "isolated-tests",
+        "vibe3d:document-model": "isolated-tests",
+        "vibe3d:edit-contracts": "isolated-tests",
+        "vibe3d:mesh": "isolated-tests",
+        "vibe3d:mesh-change": "isolated-tests",
+        "vibe3d:mesh-edit-log": "isolated-tests",
+        "vibe3d:mesh-edit-replay": "isolated-tests",
+        "vibe3d:mesh-preview": "isolated-tests",
+        "vibe3d:mesh-snapshot": "isolated-tests",
+        "vibe3d:param-schema": "isolated-tests",
+        "vibe3d:pipe-contracts": "isolated-tests",
+        "vibe3d:pipe-runtime": "isolated-tests",
+        "vibe3d:spatial": "isolated-tests",
+        "vibe3d:json-number": "isolated-tests",
+        "vibe3d:math": "isolated-tests"
+      }
+    }
+  ],
+  "buildTypes": {
+    "profile-fp": {
+      "buildOptions": [
+        "debugMode",
+        "debugInfo",
+        "optimize"
+      ],
+      "dflags-dmd": [
+        "-gs"
+      ],
+      "dflags-ldc": [
+        "--frame-pointer=all"
+      ]
+    },
+    "perf": {
+      "buildOptions": [
+        "releaseMode",
+        "optimize",
+        "inline"
+      ],
+      "versions": [
+        "PerfProbe"
+      ]
+    },
+    "perf-count": {
+      "buildOptions": [
+        "debugMode",
+        "debugInfo"
+      ],
+      "versions": [
+        "PerfProbe"
+      ]
+    },
+    "perf-unit": {
+      "buildOptions": [
+        "unittests",
+        "debugMode",
+        "debugInfo"
+      ],
+      "versions": [
+        "PerfProbe"
+      ]
+    },
+    "check": {
+      "buildOptions": [
+        "debugMode",
+        "debugInfo"
+      ],
+      "dflags-ldc": [
+        "--boundscheck=on",
+        "--checkaction=C",
+        "--frame-pointer=all"
+      ],
+      "versions": [
+        "SanitizerSelfTest"
+      ]
+    },
+    "check-unit": {
+      "buildOptions": [
+        "unittests",
+        "debugMode",
+        "debugInfo"
+      ],
+      "dflags-ldc": [
+        "--boundscheck=on",
+        "--frame-pointer=all"
+      ],
+      "versions": [
+        "SanitizerSelfTest"
+      ]
+    },
+    "check-release": {
+      "buildOptions": [
+        "releaseMode",
+        "optimize",
+        "inline",
+        "debugInfo"
+      ],
+      "dflags-ldc": [
+        "--boundscheck=on",
+        "--frame-pointer=all"
+      ],
+      "versions": [
+        "SanitizerSelfTest"
+      ]
+    },
+    "sanitize": {
+      "buildOptions": [
+        "debugMode",
+        "debugInfo"
+      ],
+      "dflags-ldc": [
+        "--fsanitize=address",
+        "--fsanitize-address-use-after-return=never",
+        "--checkaction=C",
+        "--frame-pointer=all"
+      ],
+      "versions": [
+        "SanitizerSelfTest"
+      ]
+    },
+    "sanitize-unit": {
+      "buildOptions": [
+        "unittests",
+        "debugMode",
+        "debugInfo"
+      ],
+      "dflags-ldc": [
+        "--fsanitize=address",
+        "--fsanitize-address-use-after-return=never",
+        "--frame-pointer=all"
+      ],
+      "versions": [
+        "SanitizerSelfTest"
+      ]
+    },
+    "tsan": {
+      "buildOptions": [
+        "debugMode",
+        "debugInfo"
+      ],
+      "dflags-ldc": [
+        "--fsanitize=thread",
+        "--enable-asserts=false",
+        "--frame-pointer=all"
+      ],
+      "versions": [
+        "SanitizerSelfTest",
+        "SanitizerThreadPreinit"
+      ]
+    }
+  }
+}

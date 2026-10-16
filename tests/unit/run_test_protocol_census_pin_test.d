@@ -158,6 +158,34 @@ exec(compile(ast.Module(body=[node for node in scanner.body
     type_ignores=[]), "check_prepared_protocol.py", "exec"))
 if mutation_rejected(lambda fixture: None, ""):
     raise SystemExit("prepared-protocol complete writer mutation fixture changed its census")
+def protocol_fixture_route_controls(fixture):
+    # Wave19: these original non-writer inputs need a separate presence control.
+    for relative in (
+            "packages/tool-state/source/tools/common/session_mesh_key.d",
+            "packages/tool-state/source/tools/edit/preview_rebuild.d",
+            "packages/transform-ops/source/tools/transform/arcball.d",
+            "packages/transform-ops/source/tools/transform/cluster_values.d",
+            "packages/transform-ops/source/tools/transform/item_xform_kernels.d",
+            "packages/transform-ops/source/tools/transform/morph_route.d",
+            "packages/transform-ops/source/tools/transform/relocate_plane.d",
+            "packages/transform-ops/source/tools/transform/scale_input.d",
+            "packages/transform-ops/source/tools/transform/xform_kernels.d",
+            "packages/creation-ops/source/tools/create/pen_geometry.d",
+            "packages/alignment-ops/source/tools/alignment/align_kernels.d"):
+        if not (fixture / relative).is_file():
+            raise SystemExit("prepared-protocol fixture original tool backing: " + relative)
+    recipe = json.loads((fixture / "dub.json").read_text())
+    if (recipe.get("sourcePaths"), "importPaths" in recipe,
+            recipe.get("mainSourceFile")) != (["source"], False, "source/app.d"):
+        raise SystemExit("prepared-protocol fixture historical root role")
+    # Independent C input inventory plus the adopted three whole backings;
+    # catalogs are the historical root role and its original 56 leaf roles.
+    if len(list(fixture.rglob("*.d"))) != 98:
+        raise SystemExit("prepared-protocol fixture complete source population 98")
+    if len(list(fixture.rglob("dub.json"))) != 57:
+        raise SystemExit("prepared-protocol fixture catalog population 57")
+if mutation_rejected(protocol_fixture_route_controls, ""):
+    raise SystemExit("prepared-protocol fixture route controls changed its writer census")
 PY" ~ preparedProtocolIdentityControls ~ q"PY
 failures = census_contracts.production_lexer_census(root)
 if failures:
@@ -165,8 +193,8 @@ if failures:
 # These are the approved complete current units, not generated lexer fixtures.
 import hashlib
 stat_origin = "tests/unit/ui/stat_rows_test.d"
-stat_physical = (root / "packages/editor-ui/tests/source/tests/unit/ui/stat_rows_test.d").read_bytes()
-stat_physical = census_contracts._wave19_import_original(root / "packages/editor-ui/tests/source/tests/unit/ui/stat_rows_test.d", stat_physical.decode(), root).encode()
+stat_physical = read_source_text(census_contracts.physical_source_path(
+    root / "packages/editor-ui/tests/source/tests/unit/ui/stat_rows_test.d", root=root), root=root).encode()
 stat_header = b"module tests.unit.ui.stat_rows_test;\n\n"
 if len(stat_physical) != 42593 or stat_physical[407:445] != stat_header:
     raise SystemExit("prepared-protocol stat physical whole-unit control")
@@ -186,9 +214,9 @@ for invalid in (stat_original, stat_physical[:407] + stat_header + stat_physical
             or census_contracts._source_validity[first] or census_contracts.source_inputs_intact(first)):
         raise SystemExit("prepared-protocol stat missing/duplicate/wrong-body input must be refused")
 stat_inverse_control(stat_physical, stat_original, True)
-editor_physical = (root / "source/editor_app.d").read_bytes()
-editor_current = editor_physical
-editor_physical = census_contracts._wave19_import_original(root / "source/editor_app.d", editor_physical.decode(), root).encode()
+editor_path = census_contracts.physical_source_path(root / "source/editor_app.d", root=root)
+editor_current = editor_path.read_bytes()
+editor_physical = read_source_text(editor_path, root=root).encode()
 first = census_contracts.source_input_start()
 editor_original = census_contracts._restore_source_text("source/editor_app.d", editor_physical.decode(), root).encode()
 if (len(editor_physical) != 52269 or len(editor_original) != 48220
@@ -198,7 +226,9 @@ if (len(editor_physical) != 52269 or len(editor_original) != 48220
     raise SystemExit("prepared-protocol editor complete inverse control")
 editor_wrong_body = (b" " if editor_physical[:1] != b" " else b"\n") + editor_physical[1:]
 editor_wrong_current = (b" " if editor_current[:1] != b" " else b"\n") + editor_current[1:]
-if census_contracts._wave19_import_original(root / "source/editor_app.d", editor_wrong_current.decode(), root).encode() != editor_wrong_body:
+if census_contracts._wave19_original(
+        census_contracts._wave19_import_original(editor_path, editor_wrong_current.decode(), root),
+        census_contracts._wave19_coordinate(editor_path, root)[1]).encode() != editor_wrong_body:
     raise SystemExit("prepared-protocol current wrong-body fixture retains only approved import tokens")
 first = census_contracts.source_input_start()
 if (census_contracts._restore_source_text("source/editor_app.d", editor_wrong_body.decode(), root)
@@ -217,6 +247,7 @@ backing_paths = {census_contracts.physical_source_path(path, root=root)
 backing_paths.update(census_contracts.physical_source_path(
     root / fragment["destination"], root=root)
     for fragment in census_contracts.SOURCE_FRAGMENTS)
+backing_paths.add(root / "dub.json")
 # Every finite selected owner's physical coordinate is chosen by its recipe.
 for _, old, new in census_contracts._WAVE19_OWNERS:
     backing_paths.add(root / (new if (root / new / "dub.json").is_file() else old) / "dub.json")
@@ -267,14 +298,14 @@ with tempfile.TemporaryDirectory(prefix="protocol-owners-") as scratch:
     got = census_contracts.production_lexer_census(partial)
     if got:
         raise SystemExit(f"prepared-protocol restored complete baseline: {got!r}")
-    carrier = partial / "source/editor_app.d"
+    carrier = partial / editor_path.relative_to(root)
     carrier.unlink()
     carrier.write_bytes(editor_wrong_current)
     got = census_contracts.production_lexer_census(partial)
     if not any("dspans lexer diagnostics on tree files" in message for message in got):
         raise SystemExit(f"prepared-protocol complete tree wrong-body refusal: {got!r}")
     carrier.unlink()
-    carrier.symlink_to(root / "source/editor_app.d")
+    carrier.symlink_to(editor_path)
 PY";
     const scratch = buildPath(tempDir(), format("protocol-census-%d", thisProcessID));
     mkdirRecurse(scratch);

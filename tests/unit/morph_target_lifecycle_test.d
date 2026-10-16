@@ -35,13 +35,13 @@ import std.file      : readText;
 import std.path      : buildPath, dirName;
 import std.string    : indexOf;
 
-import math        : Vec3;
+import vibe3d.util.math.math        : Vec3;
 import vibe3d.mesh.core.mesh        : Mesh, MapKind, makeCube;
 import vibe3d.documents.model.document    : Document, Layer;
 import vibe3d.viewport.camera.view        : View;
 import vibe3d.editing.contracts.editmode    : EditMode;
-import morph_target;
-import session_owner : Session;
+import vibe3d.runtime.application_core.morph_target;
+import vibe3d.runtime.application_core.session_owner : Session;
 import tests.unit.census_symbols : blankNonCode;
 
 private enum repoRoot = dirName(dirName(dirName(__FILE_FULL_PATH__)));
@@ -72,8 +72,8 @@ private string bodyAt(string code, string marker)
 // -> the post-apply assertion reddens (verified).
 // ---------------------------------------------------------------------------
 unittest {
-    import commands.scene.reset : SceneReset;
-    import io.doc_state : requestDocRebaseline, syncDocRevision, clearCurrentDoc;
+    import vibe3d.runtime.document_actions.commands.scene.reset : SceneReset;
+    import vibe3d.runtime.application_core.io.doc_state : requestDocRebaseline, syncDocRevision, clearCurrentDoc;
 
     // `morph_target` and `io.doc_state` are both process-global main-thread
     // state; leave both as this block found them.
@@ -113,13 +113,13 @@ unittest {
 // -> the post-load assertion reddens (verified).
 // ---------------------------------------------------------------------------
 unittest {
-    import commands.file.load : FileLoad;
-    import commands.file.save : FileSave;
+    import vibe3d.apps.desktop.commands.file.load : FileLoad;
+    import vibe3d.apps.desktop.commands.file.save : FileSave;
     import std.file : tempDir, remove, exists;
     import std.path : buildPath;
     import std.random : uniform;
     import std.format : format;
-    import io.doc_state : requestDocRebaseline, syncDocRevision, clearCurrentDoc;
+    import vibe3d.runtime.application_core.io.doc_state : requestDocRebaseline, syncDocRevision, clearCurrentDoc;
 
     scope (exit) {
         clearMorphTarget();
@@ -173,7 +173,7 @@ unittest {
 // coincidentally correct base.
 // ---------------------------------------------------------------------------
 unittest {
-    import display_sync : activeMeshResolver;
+    import vibe3d.viewport.gpu.display_sync : activeMeshResolver;
 
     const app = blankNonCode(readText(
         buildPath(repoRoot, "source", "app.d")));
@@ -275,7 +275,7 @@ unittest {
 // -> the background assertions redden (verified).
 // ---------------------------------------------------------------------------
 unittest {
-    import display_sync : activeMeshResolver;
+    import vibe3d.viewport.gpu.display_sync : activeMeshResolver;
 
     auto oldResolver = activeMeshResolver;
     scope (exit) { activeMeshResolver = oldResolver; clearMorphTarget(); }

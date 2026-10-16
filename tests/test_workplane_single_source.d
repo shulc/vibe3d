@@ -38,11 +38,11 @@ import std.net.curl : get, post;
 // to run_test.d's compile-mode detector (isSourceBackedTest scans for a
 // leading `import toolpipe.`/`tools.` line), so it gets linked against the
 // full project instead of the bare-path std-only compile line.
-import tools.create.create_common       : primitivePlacementFrame;
-import toolpipe.pipeline         : g_pipeCtx, ToolPipeContext;
-import toolpipe.stages.workplane : WorkplaneStage;
+import vibe3d.editing.tools.interactive.tools.create.create_common       : primitivePlacementFrame;
+import vibe3d.editing.pipeline.runtime.toolpipe.pipeline         : g_pipeCtx, ToolPipeContext;
+import vibe3d.editing.pipeline.evaluation.toolpipe.stages.workplane : WorkplaneStage;
 
-import M = math;
+import M = vibe3d.util.math.math;
 
 void main() {}
 

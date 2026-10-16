@@ -20,7 +20,7 @@
 module tests.unit.mesh_edge_chain_test;
 
 import vibe3d.mesh.core.mesh;
-import math : Vec3;
+import vibe3d.util.math.math : Vec3;
 import tests.unit.mesh_by_value_gate;
 
 // The seam's compile-time gate: nothing in this module may take a `Mesh` by

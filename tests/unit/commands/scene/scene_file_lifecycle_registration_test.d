@@ -3,23 +3,23 @@
 // lifecycle mutations report their behavioural red before textual fallout.
 module tests.unit.commands.scene.scene_file_lifecycle_registration_test;
 
-import application_command_binding : CommandInvocationContext,
+import vibe3d.apps.desktop.application_command_binding : CommandInvocationContext,
     CommandInvocationOutcome;
-import command : Command, CommandOrigin;
-static import command;
-import commands.scene.load_mesh : MeshLoadRaw;
+import vibe3d.editing.commands.runtime.command : Command, CommandOrigin;
+static import command = vibe3d.editing.commands.runtime.command;
+import vibe3d.runtime.document_actions.commands.scene.load_mesh : MeshLoadRaw;
 import core.exception : AssertError;
 import vibe3d.documents.model.document : Layer;
 import vibe3d.editing.contracts.editmode : EditMode;
 import vibe3d.mesh.core.mesh : MapKind, Mesh, SubpatchTrace, makeCube, makeOctahedron;
-import mesh_gpu : GpuMesh;
-import morph_target : clearMorphTarget, morphTargetName, setMorphTarget;
-import prefs : Prefs;
-import scene_file_lifecycle_registration : SceneLifecycleDoors,
+import vibe3d.viewport.gpu.mesh_gpu : GpuMesh;
+import vibe3d.runtime.application_core.morph_target : clearMorphTarget, morphTargetName, setMorphTarget;
+import vibe3d.apps.desktop.prefs : Prefs;
+import vibe3d.apps.desktop.scene_file_lifecycle_registration : SceneLifecycleDoors,
     registerSceneFileLifecycleCommands;
-import scene_reset_effects : SceneResetEffects;
+import vibe3d.apps.desktop.scene_reset_effects : SceneResetEffects;
 import vibe3d.editing.contracts.seltype : SelType;
-import shader : LitShader;
+import vibe3d.viewport.gpu.shader : LitShader;
 import std.algorithm : count;
 import std.array : join;
 import std.conv : to;
@@ -27,16 +27,16 @@ import std.exception : assertThrown;
 import std.file : exists, readText;
 import std.path : buildNormalizedPath, dirName;
 import std.string : indexOf, split;
-import subpatch_preview : SubpatchPreview;
+import vibe3d.viewport.subpatch.subpatch_preview : SubpatchPreview;
 import tests.unit.census_symbols : blankNonCode, registrationFamilyBytes;
 import tests.unit.live_registration_rig : LiveRegistrationRig;
-import tool : Tool;
-import tool_activation_ownership : ToolTransition;
-import tool_disarm : DisarmMode, DisarmOutcome, g_disarmActiveTool,
+import vibe3d.editing.tools.interactive.tool : Tool;
+import vibe3d.editing.commands.runtime.tool_activation_ownership : ToolTransition;
+import vibe3d.editing.tools.interactive.tool_disarm : DisarmMode, DisarmOutcome, g_disarmActiveTool,
     g_lastDisarm, kMaxDisarmSteps;
-import tools.slice.edge_slice_tool : EdgeSliceTool;
-import tools.slice.loop_slice_tool : LoopSliceTool;
-import viewport : LayoutPreset, ViewportManager;
+import vibe3d.editing.tools.interactive.tools.slice.edge_slice_tool : EdgeSliceTool;
+import vibe3d.editing.tools.interactive.tools.slice.loop_slice_tool : LoopSliceTool;
+import vibe3d.viewport.host.viewport : LayoutPreset, ViewportManager;
 
 static assert(!__traits(compiles, { SceneLifecycleDoors d; }));
 

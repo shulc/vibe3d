@@ -614,12 +614,12 @@ unittest // census: every unittest module that listens on a chosen port is pinne
 
     string[] offenders;
     size_t population, listeners;
-    import tests.unit.census_symbols : wave19MathPhysicalPath;
+    import tests.unit.census_symbols : wave19MathPhysicalPath, wave19MathLogicalText;
     const string[] censusRoots = ["tests/unit", "source", "packages/command-runtime/source", "packages/application-core/source", "packages/document-model/source", "packages/param-schema/source", "packages/pipe-runtime/source", "packages/mesh-ops/source", "packages/interchange/source", "packages/interaction-query/source", "packages/pipe-evaluation/source", "packages/tool-state/source", "packages/transform-ops/source", "packages/creation-ops/source", "packages/alignment-ops/source", "packages/input-events/source", "packages/display-policy/source", "packages/viewport-gpu/source", "packages/subpatch-preview/source", "packages/edit-contracts/source", "packages/mesh-change/source", "packages/mesh-contracts/source", "packages/mesh-edit-log/source", "packages/mesh-edit-replay/source", "packages/mesh-snapshot/source", "packages/mesh-topology/source", "packages/mesh/source", "packages/profiling/source", "packages/spatial/source", "util/log/source", "util/math/source", "util/parallel/source", "util/plane-bytes/source", "util/screen-buckets/source", "packages/mesh-ops/tests/source", "packages/interchange/tests/source", "packages/interaction-query/tests/source", "packages/pipe-evaluation/tests/source", "packages/document-model/tests/source", "packages/param-schema/tests/source", "packages/pipe-runtime/tests/source", "packages/tool-state/tests/source", "packages/transform-ops/tests/source", "packages/creation-ops/tests/source", "packages/alignment-ops/tests/source", "packages/input-events/tests/source", "packages/display-policy/tests/source", "packages/viewport-gpu/tests/source", "packages/subpatch-preview/tests/source", "packages/camera-model/source", "packages/document-channels/source", "packages/image-codec/source", "packages/document-io/source", "packages/selection-model/source", "packages/scene-query/source", "packages/editor-commands/source", "packages/ai-advisor/source", "packages/ai3d-runtime/source", "packages/document-actions/source", "packages/http-runtime/source", "packages/platform-file/source", "packages/remesh-runtime/source", "packages/ai-advisor/tests/source", "packages/ai3d-runtime/tests/source", "packages/document-actions/tests/source", "packages/remesh-runtime/tests/source"]
-        ~ (exists(buildPath(repoRoot, "packages/interactive-tools/source")) ? ["packages/interactive-tools/source"] : [])
-        ~ (exists(buildPath(repoRoot, "packages/interactive-tools/tests/source")) ? ["packages/interactive-tools/tests/source"] : [])
-        ~ (exists(buildPath(repoRoot, "packages/viewport-host/source")) ? ["packages/viewport-host/source"] : [])
-        ~ (exists(buildPath(repoRoot, "packages/viewport-host/tests/source")) ? ["packages/viewport-host/tests/source"] : [])
+        ~ (exists(wave19MathPhysicalPath(buildPath(repoRoot, "packages/interactive-tools/source"), repoRoot)) ? ["packages/interactive-tools/source"] : [])
+        ~ (exists(wave19MathPhysicalPath(buildPath(repoRoot, "packages/interactive-tools/tests/source"), repoRoot)) ? ["packages/interactive-tools/tests/source"] : [])
+        ~ (exists(wave19MathPhysicalPath(buildPath(repoRoot, "packages/viewport-host/source"), repoRoot)) ? ["packages/viewport-host/source"] : [])
+        ~ (exists(wave19MathPhysicalPath(buildPath(repoRoot, "packages/viewport-host/tests/source"), repoRoot)) ? ["packages/viewport-host/tests/source"] : [])
         ~ (exists(wave19MathPhysicalPath(buildPath(repoRoot, "packages/interaction-data/source"), repoRoot)) ? ["packages/interaction-data/source"] : [])
         ~ (exists(wave19MathPhysicalPath(buildPath(repoRoot, "packages/interaction-data/tests/source"), repoRoot)) ? ["packages/interaction-data/tests/source"] : []);
     const string[] historicalCarriers = [
@@ -768,7 +768,7 @@ unittest // census: every unittest module that listens on a chosen port is pinne
     {
             if (inputPath == __FILE_FULL_PATH__)
                 continue;
-            const src = readText(inputPath);
+            const src = wave19MathLogicalText(readText(inputPath));
             if (!src.canFind("unittest"))
                 continue;
             const binds = !!matchFirst(src, bindRx);

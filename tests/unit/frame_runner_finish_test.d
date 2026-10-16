@@ -9,7 +9,7 @@ import bindbc.sdl;
 import core.exception : AssertError;
 import core.time : Duration, MonoTime, msecs;
 import d_imgui.imgui_h : ImVec2, IM_COL32;
-import frame_runner : FrameFinishEvent, FrameFinishSdlTestOps,
+import vibe3d.apps.desktop.frame_runner : FrameFinishEvent, FrameFinishSdlTestOps,
     FramePresentMode, FrameRunner, frameFinishSdlOpsForTest,
     g_frameFinishTrace, installFrameFinishSdlOpsForTest,
     resolveFramePresentMode;
@@ -17,7 +17,7 @@ import imgui_impl_opengl3 : ImGui_ImplOpenGL3_Init,
     ImGui_ImplOpenGL3_NewFrame, ImGui_ImplOpenGL3_Shutdown;
 import imgui_impl_sdl2 : ImGui_ImplSDL2_Init, ImGui_ImplSDL2_NewFrame,
     ImGui_ImplSDL2_Shutdown;
-import input_frame_state : InputFrameState;
+import vibe3d.apps.desktop.input_frame_state : InputFrameState;
 import ImGui = d_imgui;
 import vibe3d.util.profiling.perf_probe : DrawPass, g_fc, g_frames;
 import std.conv : to;

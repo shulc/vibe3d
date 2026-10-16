@@ -5,7 +5,7 @@ import tests.unit.http_test_client : receiveUntilClosed;
 import core.atomic : atomicLoad, atomicOp, atomicStore;
 import core.thread : Thread;
 import core.time : Duration, MonoTime, msecs, seconds;
-import http_server : BridgeResultKind, HttpServer;
+import vibe3d.runtime.http.http_server : BridgeResultKind, HttpServer;
 import std.algorithm : canFind;
 import std.socket : InternetAddress, Socket, SocketOption,
     SocketOptionLevel, TcpSocket;

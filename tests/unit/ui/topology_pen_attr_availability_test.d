@@ -20,11 +20,11 @@ import std.json : JSONValue, parseJSON;
 import std.path : buildNormalizedPath, buildPath, dirName;
 
 import d_imgui.imgui_h : ImGuiKey;
-import forms : Form, loadForms;
-import forms_render : FormsPanel;
+import vibe3d.ui.forms.forms : Form, loadForms;
+import vibe3d.ui.editor.forms_render : FormsPanel;
 import vibe3d.editing.params.params : injectParamsInto, wireTagForValue;
 import tests.unit.ui.headless_panel : HeadlessPanel, openPanel;
-import tools.edit.topology_pen.tool : TopologyPenTool;
+import vibe3d.editing.tools.interactive.tools.edit.topology_pen.tool : TopologyPenTool;
 
 private enum repoRoot = buildNormalizedPath(dirName(__FILE_FULL_PATH__),
                                              "..", "..", "..");

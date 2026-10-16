@@ -43,7 +43,7 @@ import vibe3d.mesh.edit_replay.mesh_edit_replay : apply, revert;
 import vibe3d.mesh.core.mesh;
 import vibe3d.mesh.core.mesh_planes;
 import vibe3d.mesh.edit_log.mesh_edit_delta;
-import math : Vec3;
+import vibe3d.util.math.math : Vec3;
 import core.exception : AssertError;
 import std.format : format;
 import std.conv : to;

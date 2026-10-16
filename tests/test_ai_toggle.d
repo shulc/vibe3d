@@ -17,7 +17,7 @@ import std.json;
 import std.algorithm : canFind, map;
 import std.array : array;
 import std.stdio : stderr, writeln;
-import ai.copilot_gate : kCopilotEnabled;
+import vibe3d.runtime.ai_advisor.ai.copilot_gate : kCopilotEnabled;
 
 void main() {}
 

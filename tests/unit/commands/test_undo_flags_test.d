@@ -3,11 +3,11 @@
 // private symbol stayed behind -- see the task for the count.
 module tests.unit.commands.test_undo_flags_test;
 
-import command;
+import vibe3d.editing.commands.runtime.command;
 import vibe3d.mesh.core.mesh;
 import vibe3d.viewport.camera.view;
 import vibe3d.editing.contracts.editmode;
-import commands.test_undo_flags;
+import vibe3d.apps.desktop.commands.test_undo_flags;
 
 unittest {
     import vibe3d.viewport.camera.view : View;

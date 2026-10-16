@@ -11,9 +11,9 @@ import std.file : exists, remove;
 import std.path : buildPath;
 import std.json : parseJSON;
 import vibe3d.documents.model.document                : ItemKind, Document, Layer;
-import io.image_path           : writeTestBmp, imageTestDir, refreshImageMeta;
-import commands.image.commands : ImageLoad, ImageReplace, ImageReload;
-import commands.layer.commands : LayerAdd;
+import vibe3d.documents.io.io.image_path           : writeTestBmp, imageTestDir, refreshImageMeta;
+import vibe3d.runtime.document_actions.commands.image.commands : ImageLoad, ImageReplace, ImageReload;
+import vibe3d.runtime.document_actions.commands.layer.commands : LayerAdd;
 import vibe3d.editing.params.params                  : injectParamsInto;
 import vibe3d.mesh.core.mesh                    : makeCube;
 import vibe3d.viewport.camera.view                    : View;
@@ -23,7 +23,7 @@ import std.json : JSONValue;
 import core.memory : GC;
 import std.conv    : to;
 import std.range   : walkLength;
-import ui.image_rows;
+import vibe3d.ui.editor.ui.image_rows;
 
 // ---------------------------------------------------------------------------
 // R1 — the rows ARE the image items, in document order, carrying the DOCUMENT

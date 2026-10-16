@@ -16,7 +16,7 @@ import std.path      : buildPath, dirName;
 import std.string    : indexOf;
 
 import tests.unit.census_symbols : blankNonCode;
-import value_drag;
+import vibe3d.editing.tools.interactive.value_drag;
 
 private enum repoRoot = dirName(dirName(dirName(__FILE_FULL_PATH__)));
 

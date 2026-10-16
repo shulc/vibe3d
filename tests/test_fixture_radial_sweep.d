@@ -26,8 +26,8 @@ import std.conv : to;
 import std.math : abs, sin, cos, PI;
 import vibe3d.mesh.core.mesh;
 import vibe3d.mesh.ops.mesh_ops.revolve : kRevolveEditScope, revolveProfileEx;
-import math : Vec3;
-import tools.alignment.radial_sweep_tool;
+import vibe3d.util.math.math : Vec3;
+import vibe3d.editing.tools.interactive.tools.alignment.radial_sweep_tool;
 
 void main() {}
 

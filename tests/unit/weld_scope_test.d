@@ -16,9 +16,9 @@ import std.math   : PI, abs;
 import std.path   : buildPath, dirName;
 
 import vibe3d.mesh.core.mesh;
-import math : Vec3;
+import vibe3d.util.math.math : Vec3;
 import vibe3d.util.spatial.spatial : ModelSpace;
-import tools.alignment.mirror : MirrorParams, mirrorInPlace;
+import vibe3d.editing.tools.interactive.tools.alignment.mirror : MirrorParams, mirrorInPlace;
 import vibe3d.mesh.ops.mesh_ops.cleanup : cleanupMesh, kCleanupEditScope;
 
 private enum repoRoot = dirName(dirName(dirName(__FILE_FULL_PATH__)));

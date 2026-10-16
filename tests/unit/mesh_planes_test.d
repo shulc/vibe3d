@@ -26,7 +26,7 @@ module tests.unit.mesh_planes_test;
 
 import vibe3d.mesh.core.mesh;
 import vibe3d.mesh.core.mesh_planes;
-import math : Vec3;
+import vibe3d.util.math.math : Vec3;
 import std.format : format;
 
 // ---------------------------------------------------------------------------

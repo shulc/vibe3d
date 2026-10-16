@@ -14,7 +14,7 @@ import std.json : parseJSON;
 import std.path : buildPath, dirName;
 import std.process : Config, execute, thisProcessID;
 import std.string : indexOf, splitLines;
-import web_gl_loader : WebGlProcLookup, loadWebOpenGL,
+import vibe3d.apps.desktop.web_gl_loader : WebGlProcLookup, loadWebOpenGL,
     optionalDesktopGlSymbols, requiredWebGlSymbols, webClosureGlSymbols;
 
 private enum repoRoot = dirName(dirName(dirName(__FILE_FULL_PATH__)));

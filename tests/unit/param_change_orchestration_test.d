@@ -12,10 +12,10 @@ import tests.unit.census_symbols : readText = wave15ReadText;
 import std.path : buildPath, dirName;
 import std.string : count, indexOf, strip;
 
-import command_history : CommandHistory;
-import edit_session;
-import tool : Tool;
-import toolpipe.stage : Stage, TaskCode;
+import vibe3d.editing.commands.runtime.command_history : CommandHistory;
+import vibe3d.editing.tools.interactive.edit_session;
+import vibe3d.editing.tools.interactive.tool : Tool;
+import vibe3d.editing.pipeline.runtime.toolpipe.stage : Stage, TaskCode;
 import tests.unit.census_symbols : blankNonCode;
 
 private enum repoRoot = dirName(dirName(dirName(__FILE_FULL_PATH__)));
@@ -232,11 +232,11 @@ unittest { // frame-driven consumers are explicit and panel-independent
 }
 
 unittest { // production legacy schemas cannot produce a mixed-source batch
-    import property_panel : PropertyPanel;
+    import vibe3d.editing.tools.interactive.property_panel : PropertyPanel;
     import tests.unit.ui.headless_panel : openPanel;
     import vibe3d.editing.pipeline.contracts.toolpipe.packets : FalloffType;
-    import toolpipe.stages.axis : AxisStage;
-    import toolpipe.stages.falloff : FalloffStage;
+    import vibe3d.editing.pipeline.evaluation.toolpipe.stages.axis : AxisStage;
+    import vibe3d.editing.pipeline.evaluation.toolpipe.stages.falloff : FalloffStage;
 
     auto falloff = new FalloffStage();
     falloff.type = FalloffType.Screen;
@@ -285,9 +285,9 @@ unittest { // production legacy schemas cannot produce a mixed-source batch
 
 unittest { // a production activation-only widget still closes at the slot boundary
     import vibe3d.editing.params.params : Param;
-    import property_panel : PropertyPanel;
+    import vibe3d.editing.tools.interactive.property_panel : PropertyPanel;
     import tests.unit.ui.headless_panel : openPanel;
-    import toolpipe.stages.actcenter : ActionCenterStage;
+    import vibe3d.editing.pipeline.evaluation.toolpipe.stages.actcenter : ActionCenterStage;
 
     auto stage = new ActionCenterStage(null, null);
     stage.mode = ActionCenterStage.Mode.Auto;
@@ -431,7 +431,7 @@ private final class PanelProbeStage : Stage {
 }
 
 unittest { // an idle legacy panel is inert, then one real write evaluates and replays
-    import property_panel : PropertyPanel;
+    import vibe3d.editing.tools.interactive.property_panel : PropertyPanel;
     import tests.unit.ui.headless_panel : openPanel;
 
     auto trace = new Trace();
@@ -455,7 +455,7 @@ unittest { // an idle legacy panel is inert, then one real write evaluates and r
 }
 
 unittest { // real stage rows reach completion for both re-grade and slot ask
-    import property_panel : PropertyPanel;
+    import vibe3d.editing.tools.interactive.property_panel : PropertyPanel;
     import tests.unit.ui.headless_panel : openPanel;
 
     auto attrTrace = new Trace();
@@ -490,7 +490,7 @@ unittest { // real stage rows reach completion for both re-grade and slot ask
 }
 
 unittest { // one continuous slot drag is one activation, not one per motion frame
-    import property_panel : PropertyPanel;
+    import vibe3d.editing.tools.interactive.property_panel : PropertyPanel;
     import tests.unit.ui.headless_panel : openPanel;
 
     auto trace = new Trace();

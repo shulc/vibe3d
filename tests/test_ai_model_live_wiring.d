@@ -13,11 +13,11 @@ import vibe3d.editing.interaction.data.ai.advisor : AiAdvisor;
 import vibe3d.editing.interaction.data.ai.debug_trace : clearLatestHandleDebugTrace, latestHandleDebugTrace;
 import vibe3d.editing.interaction.data.ai.interaction : AiAdvisorDecision, AiCandidate, AiCandidateKind,
     AiInteractionContext, AiInteractionPhase, AiIntent;
-import ai.model_adapter : AiModelAdapter, AiModelAdapterConfig,
+import vibe3d.runtime.ai_advisor.ai.model_adapter : AiModelAdapter, AiModelAdapterConfig,
     AiModelAvailability, AiModelBackend, AiModelBackendPrediction,
     AiModelFallbackMode, AiModelStatus, aiModelAdapterMinConfidence;
-import ai.onnx_backend : OnnxModelBackend;
-import handler : Handler, HandleState, ToolHandles,
+import vibe3d.runtime.ai_advisor.ai.onnx_backend : OnnxModelBackend;
+import vibe3d.editing.tools.interactive.handler : Handler, HandleState, ToolHandles,
     setHandleAiAdvisor, setHandleDecisionProvider;
 import vibe3d.util.spatial.spatial : Viewport;
 

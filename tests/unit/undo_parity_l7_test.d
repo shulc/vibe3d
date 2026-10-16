@@ -75,18 +75,18 @@ module tests.unit.undo_parity_l7_test;
 import std.format : format;
 import std.json   : JSONValue, parseJSON;
 
-import command;
+import vibe3d.editing.commands.runtime.command;
 import vibe3d.mesh.core.mesh;
 import vibe3d.viewport.camera.view;
 import vibe3d.editing.contracts.editmode;
-import http_json : meshPlanesJson, PlaneDumpMeta;
+import vibe3d.runtime.application_core.http_json : meshPlanesJson, PlaneDumpMeta;
 
 import tests.unit.fixtures            : makeTaggedGridFull;
 import tests.unit.undo_parity_l0_test : ParityCell, comparePlanes, fixturePath,
                                         fixtureJson, setF, setI, setB;
 
-import commands.mesh.poly_inset : MeshPolygonInset;
-import commands.mesh.bevel      : MeshBevel;
+import vibe3d.editing.commands.editor.commands.mesh.poly_inset : MeshPolygonInset;
+import vibe3d.editing.commands.editor.commands.mesh.bevel      : MeshBevel;
 
 enum string kL7Family = "bevel";
 enum string kL7Stand  = "makeTaggedGridFull(3)";

@@ -16,8 +16,8 @@
 import std.algorithm : map, equal;
 import std.array     : array;
 
-import toolpipe.pipeline : Pipeline;
-import toolpipe.stage    : Stage, TaskCode, ordWght;
+import vibe3d.editing.pipeline.runtime.toolpipe.pipeline : Pipeline;
+import vibe3d.editing.pipeline.runtime.toolpipe.stage    : Stage, TaskCode, ordWght;
 import vibe3d.editing.pipeline.contracts.operator          : Operator, Task, VectorStack, PacketKind;
 
 void main() {}

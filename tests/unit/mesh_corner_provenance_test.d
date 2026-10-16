@@ -16,7 +16,7 @@
 module tests.unit.mesh_corner_provenance_test;
 
 import vibe3d.mesh.core.mesh;
-import math : Vec3;
+import vibe3d.util.math.math : Vec3;
 
 // Two quads sharing an edge, with a per-corner map whose value is a key of the
 // corner's own (face, corner) position — so a value that moved to a foreign

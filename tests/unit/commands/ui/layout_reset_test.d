@@ -1,7 +1,7 @@
 module tests.unit.commands.ui.layout_reset_test;
 
-import command_history : CommandHistory;
-import commands.ui.layout_reset : UiLayoutResetCommand;
+import vibe3d.editing.commands.runtime.command_history : CommandHistory;
+import vibe3d.apps.desktop.commands.ui.layout_reset : UiLayoutResetCommand;
 import vibe3d.editing.contracts.editmode : EditMode;
 import vibe3d.mesh.core.mesh : Mesh;
 import vibe3d.viewport.camera.view : View;

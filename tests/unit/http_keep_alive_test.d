@@ -9,7 +9,7 @@ import tests.unit.http_test_client : receiveOneResponse;
 
 import core.thread : Thread;
 import core.time : MonoTime, msecs, seconds;
-import http_server : HttpServer;
+import vibe3d.runtime.http.http_server : HttpServer;
 import std.algorithm : canFind;
 import std.socket : InternetAddress, Socket, SocketOption, SocketOptionLevel,
     TcpSocket;

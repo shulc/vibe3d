@@ -3,8 +3,8 @@ module tests.unit.io.file_model_test;
 
 import tests.unit.census_symbols : exists = wave15Exists;
 
-import io.file_model : browserFileModel, selectBrowserBackendForTest;
-static import io.file_dialog;
+import vibe3d.documents.io.io.file_model : browserFileModel, selectBrowserBackendForTest;
+static import vibe3d.platform.file.io.file_dialog;
 import tests.unit.census_symbols : wave15InputStart, wave15InputsIntact, wave15UseInputs;
 
 import std.algorithm : canFind, startsWith;
@@ -63,18 +63,18 @@ private void requireChooser(string code, string call) {
 }
 
 // Compatibility imports name the same functions and therefore the same storage.
-static assert(__traits(isSame, browserFileModel, io.file_dialog.browserFileModel));
+static assert(__traits(isSame, browserFileModel, vibe3d.platform.file.io.file_dialog.browserFileModel));
 static assert(__traits(isSame, selectBrowserBackendForTest,
-                       io.file_dialog.selectBrowserBackendForTest));
+                       vibe3d.platform.file.io.file_dialog.selectBrowserBackendForTest));
 
 unittest {
     scope (exit) selectBrowserBackendForTest(false);
-    io.file_dialog.selectBrowserBackendForTest(false);
+    vibe3d.platform.file.io.file_dialog.selectBrowserBackendForTest(false);
     assert(!browserFileModel(), "file model desktop mode");
-    io.file_dialog.selectBrowserBackendForTest(true);
+    vibe3d.platform.file.io.file_dialog.selectBrowserBackendForTest(true);
     assert(browserFileModel(), "file model compatibility setter shares storage");
     selectBrowserBackendForTest(false);
-    assert(!io.file_dialog.browserFileModel(), "file model lower setter shares storage");
+    assert(!vibe3d.platform.file.io.file_dialog.browserFileModel(), "file model lower setter shares storage");
 }
 
 unittest {

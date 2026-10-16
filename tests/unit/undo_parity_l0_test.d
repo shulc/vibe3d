@@ -47,12 +47,12 @@ module tests.unit.undo_parity_l0_test;
 import std.format : format;
 import std.json   : JSONValue, JSONType, parseJSON;
 
-import command;
+import vibe3d.editing.commands.runtime.command;
 import vibe3d.mesh.core.mesh;
 import vibe3d.viewport.camera.view;
 import vibe3d.editing.contracts.editmode;
-import math      : Vec3;
-import http_json : meshPlanesJson, PlaneDumpMeta;
+import vibe3d.util.math.math      : Vec3;
+import vibe3d.runtime.application_core.http_json : meshPlanesJson, PlaneDumpMeta;
 
 import tests.unit.fixtures : makeTaggedGridFull;
 
@@ -768,22 +768,22 @@ private string contrast(string a, string b)
 // cannot fail. It is named as a gap rather than filled with a decoy.
 // ===========================================================================
 
-import commands.mesh.smooth          : MeshSmooth;
-import commands.mesh.jitter          : MeshJitter;
-import commands.mesh.quantize        : MeshQuantize;
-import commands.mesh.magnet          : MeshMagnet;
-import commands.mesh.linear_align    : MeshLinearAlign;
-import commands.mesh.radial_align    : MeshRadialAlign;
-import commands.mesh.vertex_center   : MeshCenterVertices;
-import commands.mesh.vertex_set      : MeshSetPosition;
-import commands.mesh.edge_slide      : MeshEdgeSlide;
-import commands.mesh.hide            : MeshHide, MeshHideUnselected,
+import vibe3d.editing.commands.editor.commands.mesh.smooth          : MeshSmooth;
+import vibe3d.editing.commands.editor.commands.mesh.jitter          : MeshJitter;
+import vibe3d.editing.commands.editor.commands.mesh.quantize        : MeshQuantize;
+import vibe3d.editing.commands.editor.commands.mesh.magnet          : MeshMagnet;
+import vibe3d.editing.commands.editor.commands.mesh.linear_align    : MeshLinearAlign;
+import vibe3d.editing.commands.editor.commands.mesh.radial_align    : MeshRadialAlign;
+import vibe3d.editing.commands.editor.commands.mesh.vertex_center   : MeshCenterVertices;
+import vibe3d.editing.commands.editor.commands.mesh.vertex_set      : MeshSetPosition;
+import vibe3d.editing.commands.editor.commands.mesh.edge_slide      : MeshEdgeSlide;
+import vibe3d.editing.commands.editor.commands.mesh.hide            : MeshHide, MeshHideUnselected,
                                        MeshHideInvert, MeshUnhideAll;
-import commands.mesh.set_material    : MeshSetMaterial;
-import commands.mesh.set_part        : MeshSetPart;
-import commands.mesh.subpatch_toggle : SubpatchToggle;
-import commands.mesh.move_vertex     : MeshMoveVertex;
-import commands.mesh.symmetrize      : MeshSymmetrize;
+import vibe3d.editing.commands.editor.commands.mesh.set_material    : MeshSetMaterial;
+import vibe3d.editing.commands.editor.commands.mesh.set_part        : MeshSetPart;
+import vibe3d.editing.commands.editor.commands.mesh.subpatch_toggle : SubpatchToggle;
+import vibe3d.editing.commands.editor.commands.mesh.move_vertex     : MeshMoveVertex;
+import vibe3d.editing.commands.editor.commands.mesh.symmetrize      : MeshSymmetrize;
 
 enum string kL0Family = "position_marks";
 enum string kL0Stand  = "makeTaggedGridFull(3)+perturbed";

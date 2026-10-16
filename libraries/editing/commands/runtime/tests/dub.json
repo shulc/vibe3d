@@ -1,0 +1,120 @@
+{
+  "name": "vibe3d-command-runtime-tests",
+  "description": "Independent command-runtime public and retained private cells",
+  "license": "MIT",
+  "targetType": "executable",
+  "sourcePaths": [],
+  "importPaths": [
+    "source",
+    "../source"
+  ],
+  "sourceFiles": [
+    "../source/vibe3d/editing/commands/runtime/command.d",
+    "../source/vibe3d/editing/commands/runtime/command_args.d",
+    "../source/vibe3d/editing/commands/runtime/command_executor.d",
+    "../source/vibe3d/editing/commands/runtime/command_history.d",
+    "../source/vibe3d/editing/commands/runtime/command_invocation.d",
+    "../source/vibe3d/editing/commands/runtime/command_registry.d",
+    "../source/vibe3d/editing/commands/runtime/command_tool_policy.d",
+    "../source/vibe3d/editing/commands/runtime/commands/history/redo.d",
+    "../source/vibe3d/editing/commands/runtime/commands/history/undo.d",
+    "../source/vibe3d/editing/commands/editor/commands/mesh/gesture_payload.d",
+    "../source/vibe3d/editing/commands/editor/commands/mesh/mesh_edit_payload.d",
+    "../source/vibe3d/editing/commands/editor/commands/mesh/select.d",
+    "../source/vibe3d/editing/commands/editor/commands/mesh/selection_undo.d",
+    "../source/vibe3d/editing/commands/editor/commands/mesh/session_edit.d",
+    "../source/vibe3d/editing/commands/editor/commands/mesh/triple.d",
+    "../source/vibe3d/editing/commands/editor/commands/mesh/vertex_edit.d",
+    "../source/vibe3d/editing/commands/runtime/commands/select/drop.d",
+    "../source/vibe3d/editing/commands/runtime/commands/select/element.d",
+    "../source/vibe3d/editing/commands/runtime/commands/select/invert.d",
+    "../source/vibe3d/editing/commands/runtime/history_lifecycle_contract.d",
+    "../source/vibe3d/editing/commands/runtime/record_observer_hub.d",
+    "../source/vibe3d/editing/commands/runtime/tool_activation_ownership.d",
+    "source/vibe3d/editing/commands/runtime/tests/unit/base_revert_flag_test.d",
+    "source/vibe3d/editing/commands/runtime/tests/unit/command_apply_anchor_test.d",
+    "source/vibe3d/editing/commands/runtime/tests/unit/command_bindargs_test.d",
+    "source/vibe3d/editing/commands/runtime/tests/unit/command_history_source_public_test.d",
+    "source/vibe3d/editing/commands/runtime/tests/unit/command_registry_test.d",
+    "source/vibe3d/editing/commands/runtime/tests/unit/command_source_public_test.d",
+    "source/vibe3d/editing/commands/runtime/tests/unit/commands/mesh/session_edit_source_public_test.d",
+    "source/vibe3d/editing/commands/runtime/tests/unit/commands/select/element_source_public_test.d",
+    "source/vibe3d/editing/commands/runtime/tests/unit/record_observer_hub_source_public_test.d",
+    "source/vibe3d/editing/commands/runtime/tests/unit/session_edit_payload_test.d",
+    "source/vibe3d/editing/commands/runtime/tests/unit/command_runtime_population_test.d"
+  ],
+  "dflags": [],
+  "dependencies": {
+    "vibe3d:camera-model": {
+      "path": "../../../../.."
+    },
+    "vibe3d:document-model": {
+      "path": "../../../../.."
+    },
+    "vibe3d:edit-contracts": {
+      "path": "../../../../.."
+    },
+    "vibe3d:mesh": {
+      "path": "../../../../.."
+    },
+    "vibe3d:mesh-change": {
+      "path": "../../../../.."
+    },
+    "vibe3d:mesh-edit-log": {
+      "path": "../../../../.."
+    },
+    "vibe3d:mesh-edit-replay": {
+      "path": "../../../../.."
+    },
+    "vibe3d:mesh-ops": {
+      "path": "../../../../.."
+    },
+    "vibe3d:mesh-snapshot": {
+      "path": "../../../../.."
+    },
+    "vibe3d:param-schema": {
+      "path": "../../../../.."
+    },
+    "vibe3d:pipe-contracts": {
+      "path": "../../../../.."
+    },
+    "vibe3d:pipe-runtime": {
+      "path": "../../../../.."
+    },
+    "vibe3d:profiling": {
+      "path": "../../../../.."
+    },
+    "vibe3d:spatial": {
+      "path": "../../../../.."
+    },
+    "vibe3d:math": {
+      "path": "../../../../.."
+    }
+  },
+  "toolchainRequirements": {
+    "dmd": ">=2.111.0",
+    "ldc": ">=1.41.0"
+  },
+  "configurations": [
+    {
+      "name": "algorithm",
+      "subConfigurations": {
+        "vibe3d:camera-model": "isolated-tests",
+        "vibe3d:document-model": "isolated-tests",
+        "vibe3d:edit-contracts": "isolated-tests",
+        "vibe3d:mesh": "isolated-tests",
+        "vibe3d:mesh-change": "isolated-tests",
+        "vibe3d:mesh-edit-log": "isolated-tests",
+        "vibe3d:mesh-edit-replay": "isolated-tests",
+        "vibe3d:mesh-ops": "isolated-tests",
+        "vibe3d:mesh-snapshot": "isolated-tests",
+        "vibe3d:param-schema": "isolated-tests",
+        "vibe3d:pipe-contracts": "isolated-tests",
+        "vibe3d:pipe-runtime": "isolated-tests",
+        "vibe3d:profiling": "isolated-tests",
+        "vibe3d:spatial": "isolated-tests",
+        "vibe3d:math": "isolated-tests"
+      }
+    }
+  ]
+}

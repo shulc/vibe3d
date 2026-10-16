@@ -10,9 +10,9 @@ import std.path : buildPath;
 
 import vibe3d.editing.interaction.data.ai.interaction : AiCandidate, AiCandidateKind,
     AiInteractionContext, AiIntent;
-import ai.model_adapter : AiModelAdapter, AiModelAdapterConfig,
+import vibe3d.runtime.ai_advisor.ai.model_adapter : AiModelAdapter, AiModelAdapterConfig,
     AiModelAvailability, AiModelFallbackMode, AiModelStatus;
-import ai.onnx_backend : OnnxModelBackend;
+import vibe3d.runtime.ai_advisor.ai.onnx_backend : OnnxModelBackend;
 import onnxrt.backend : backendAvailable;
 
 void main() {}

@@ -190,7 +190,7 @@ import tests.unit.census_symbols : readText = wave15ReadText;
 // text census for the three spellings that bypass `private` across modules —
 // `__traits(getMember)`, string `mixin` and `.tupleof`.
 unittest { // compile fence: the four plan-uniform locations are unreachable from another module
-    import shader : LitShader;
+    import vibe3d.viewport.gpu.shader : LitShader;
     // Positive control first: the same probe DOES reach a public location of
     // the same class, so a false below means "private", not "probe broken".
     static assert(__traits(compiles, (LitShader s) { int v = s.locFaceAlpha; }),
@@ -407,7 +407,7 @@ import tests.unit.census_symbols : readText = wave15ReadText;
 }
 
 unittest { // compile fence: the normal-source locations are unreachable from another module too
-    import shader : LitShader;
+    import vibe3d.viewport.gpu.shader : LitShader;
     static assert(__traits(compiles, (LitShader s) { int v = s.locFaceAlpha; }),
         "control: the probe no longer reaches a public LitShader field — fix the probe, not the expectation");
     static assert(!__traits(compiles, (LitShader s) { int v = s.locSmoothNormals; }),

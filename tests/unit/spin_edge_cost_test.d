@@ -32,13 +32,13 @@ import std.algorithm : canFind, min;
 import std.conv      : to;
 import std.format    : format;
 
-import command;
+import vibe3d.editing.commands.runtime.command;
 import vibe3d.mesh.core.mesh;
 import vibe3d.viewport.camera.view;
 import vibe3d.editing.contracts.editmode;
-import math : Vec3;
-import selection_product : repointToEdgeKeys;
-import commands.mesh.spin_edge : MeshSpinEdge;
+import vibe3d.util.math.math : Vec3;
+import vibe3d.editing.selection.model.selection_product : repointToEdgeKeys;
+import vibe3d.editing.commands.editor.commands.mesh.spin_edge : MeshSpinEdge;
 
 // ---------------------------------------------------------------------------
 // helpers

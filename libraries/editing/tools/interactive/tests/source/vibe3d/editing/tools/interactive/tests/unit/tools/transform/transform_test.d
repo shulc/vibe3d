@@ -1,0 +1,92 @@
+// Module unittests for `tools.transform.transform`, moved verbatim out of source/tools/transform/transform.d by task 0706.
+// Blocks keep their original order and text. Blocks that read a module-
+// private symbol stayed behind -- see the task for the count.
+module vibe3d.editing.tools.interactive.tests.unit.tools.transform.transform_test;
+
+import vibe3d.editing.tools.interactive.tool;
+import vibe3d.editing.pipeline.contracts.operator : VectorStack;
+import vibe3d.mesh.core.mesh;
+import vibe3d.editing.contracts.editmode;
+import vibe3d.editing.contracts.seltype : SelType;
+import vibe3d.util.math.math : Vec3;
+import vibe3d.util.spatial.spatial : Viewport, AimViewport, aimSpace;
+import vibe3d.mesh.change.change_bus : MeshEditScope;
+import vibe3d.editing.commands.runtime.command : Command;
+import vibe3d.editing.commands.runtime.command_history : CommandHistory;
+import vibe3d.editing.commands.editor.commands.mesh.vertex_edit : MeshVertexEdit;
+import vibe3d.editing.selection.query.snap : SnapResult;
+import vibe3d.editing.pipeline.contracts.toolpipe.packets : FalloffPacket, FalloffType, SymmetryPacket, SnapPacket, SubjectPacket;
+import vibe3d.editing.pipeline.evaluation.toolpipe.stages.falloff : FalloffStage;
+import vibe3d.editing.pipeline.evaluation.toolpipe.stages.snap : SnapStage;
+import vibe3d.editing.pipeline.evaluation.toolpipe.stages.symmetry : SymmetryStage;
+import vibe3d.editing.pipeline.runtime.falloff : evaluateFalloff;
+import vibe3d.editing.selection.query.symmetry : applySymmetryMirror;
+import vibe3d.editing.tools.interactive.pipe_gizmo_host : PipeGizmoHost;
+import vibe3d.documents.model.document : primaryModelSpace;
+import vibe3d.editing.tools.interactive.tools.transform.transform;
+
+// ---------------------------------------------------------------------------
+// THE MOVING SET IS THE OPERAND (task 7144; the old helper returned the processed
+// verts UNION their mirror partners, and is deleted). Under the
+// captured law a transform writes ONLY its operand (gap 316): the mirror pass
+// writes a partner only when the partner is itself in the operand. So the
+// exclusion snapping needs — "every vertex this drag moves" — is the processed
+// list. CROSS-CHECK against the pass itself: run `applySymmetryMirror` and diff
+// the mesh; every written index must be processed. Population floor: the pass
+// wrote the in-operand partner of a pair, so the loop is not vacuous.
+// ---------------------------------------------------------------------------
+unittest {
+    import std.algorithm : canFind;
+    Mesh m;
+    m.vertices = [
+        Vec3( 0.30f, 0, 0),   // 0 — processed (+X member of a pair)
+        Vec3(-0.30f, 0, 0),   // 1 — its partner, ALSO processed
+        Vec3( 0.90f, 0, 0),   // 2 — processed, partner 3 NOT processed
+        Vec3(-0.90f, 0, 0),   // 3 — static
+    ];
+    SymmetryPacket sym;
+    sym.enabled     = true;
+    sym.axisIndex   = 0;
+    sym.planePoint  = Vec3(0, 0, 0);
+    sym.planeNormal = Vec3(1, 0, 0);
+    sym.pairOf      = [1, 0, 3, 2];
+    sym.onPlane     = [false, false, false, false];
+    sym.vertSign    = [+1, -1, +1, -1];
+    sym.baseSide    = +1;
+    immutable int[] processed = [0, 1, 2];
+    auto pre = m.vertices.dup;
+    m.vertices[0] = Vec3(0.45f, 0.1f, 0);   // the drag moved the operand
+    m.vertices[2] = Vec3(1.05f, 0.1f, 0);
+    auto afterDrag = m.vertices.dup;
+    bool[] procMask = new bool[](4);
+    foreach (vi; processed) procMask[vi] = true;
+    bool[] touched = new bool[](4);
+    applySymmetryMirror(&m, sym, procMask, touched);
+    int wrote;
+    foreach (i; 0 .. m.vertices.length) {
+        if (m.vertices[i] == afterDrag[i]) continue;
+        ++wrote;
+        assert(processed.canFind(cast(int)i),
+            "the mirror pass wrote a vertex outside the operand — the moving "
+            ~ "set is no longer the processed list, and snapping would offer "
+            ~ "the drag its own geometry");
+    }
+    assert(wrote == 1, "floor: the pass must copy the in-operand pair partner (1 write)");
+    assert(m.vertices[3] == pre[3], "the unselected partner of vertex 2 was written");
+}
+
+// The transform family's snap packet read (task 9405) goes through
+// `snap.snapPacketOf` — the published packet verbatim, or the init packet
+// (snapping OFF) when no SNAP stage ran.
+unittest {
+    import vibe3d.editing.selection.query.snap : snapPacketOf;
+    SnapPacket pub;
+    pub.enabled = true;
+    pub.innerRangePx = 7;
+    VectorStack withPkt;
+    withPkt.put(&pub);
+    assert(snapPacketOf(withPkt) == pub, "a published SNAP packet is read verbatim");
+    VectorStack none;
+    assert(snapPacketOf(none) == SnapPacket.init,
+        "no SNAP stage ran: the read answers the init packet, snapping off");
+}

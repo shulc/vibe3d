@@ -24,11 +24,11 @@ import vibe3d.mesh.edit_replay.mesh_edit_replay : apply, revert;
 import std.conv   : to;
 import std.format : format;
 
-import command;
+import vibe3d.editing.commands.runtime.command;
 import vibe3d.mesh.core.mesh;
 import vibe3d.viewport.camera.view;
 import vibe3d.editing.contracts.editmode;
-import math : Vec3;
+import vibe3d.util.math.math : Vec3;
 import vibe3d.mesh.edit_log.mesh_edit_delta : MeshEditDelta, MeshOpEntry;
 
 import tests.unit.fixtures : makeTaggedGridFull;
@@ -36,10 +36,10 @@ import tests.unit.fixtures : makeTaggedGridFull;
 // tests/unit/decl_needle.d for why a `private `-only needle went green.
 import tests.unit.decl_needle : declaresVarOfType;
 
-import commands.mesh.axis_slice   : MeshAxisSlice, MeshJulienne;
-import commands.mesh.screen_slice : MeshScreenSlice;
-import commands.mesh.edge_slice   : MeshEdgeSlice;
-import commands.mesh.cut_         : MeshCut;
+import vibe3d.editing.commands.editor.commands.mesh.axis_slice   : MeshAxisSlice, MeshJulienne;
+import vibe3d.editing.commands.editor.commands.mesh.screen_slice : MeshScreenSlice;
+import vibe3d.editing.commands.editor.commands.mesh.edge_slice   : MeshEdgeSlice;
+import vibe3d.editing.commands.editor.commands.mesh.cut_         : MeshCut;
 
 // ---------------------------------------------------------------------------
 // Shared scaffolding.

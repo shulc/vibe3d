@@ -10,11 +10,11 @@
 import bindbc.opengl;
 import bindbc.sdl;
 import core.exception : AssertError;
-import handles.gl_util : drawThickLinesExt, initThickLineProgram,
+import vibe3d.editing.tools.interactive.handles.gl_util : drawThickLinesExt, initThickLineProgram,
     setThickLineScreenSize, shutdownThickLineProgram;
-import math : Vec3, identityMatrix, perspectiveMatrix;
+import vibe3d.util.math.math : Vec3, identityMatrix, perspectiveMatrix;
 import vibe3d.util.spatial.spatial : Viewport;
-import shader : createProgram, thickLineFragSrc, thickLineVertexSrc;
+import vibe3d.viewport.gpu.shader : createProgram, thickLineFragSrc, thickLineVertexSrc;
 import std.conv : to;
 import std.format : format;
 import std.math : PI;

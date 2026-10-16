@@ -4,8 +4,8 @@ import std.algorithm : count;
 import std.json : JSONType, parseJSON;
 import std.string : splitLines;
 
-import ai.interaction_log : aiInteractionLogSchemaVersion;
-import ai.synthetic_dataset : makeAiSyntheticInteractionDataset,
+import vibe3d.runtime.ai_advisor.ai.interaction_log : aiInteractionLogSchemaVersion;
+import vibe3d.runtime.ai_advisor.ai.synthetic_dataset : makeAiSyntheticInteractionDataset,
     makeAiSyntheticInteractionDatasetJsonLines,
     makeAiSyntheticInteractionDatasetJsonl;
 

@@ -49,13 +49,13 @@ import vibe3d.mesh.ops.mesh_edge_slice : addEdgePoint;
 import std.format : format;
 import std.math   : abs;
 
-import command;
+import vibe3d.editing.commands.runtime.command;
 import vibe3d.editing.contracts.editmode;
-import math : Vec3;
+import vibe3d.util.math.math : Vec3;
 import vibe3d.mesh.core.mesh;
 import vibe3d.viewport.camera.view;
 
-import commands.mesh.split_edge : MeshSplitEdge;
+import vibe3d.editing.commands.editor.commands.mesh.split_edge : MeshSplitEdge;
 
 // ---------------------------------------------------------------------------
 // The stand.

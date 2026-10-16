@@ -5,40 +5,40 @@ module tests.unit.headless_tool_pairing_test;
 // old four-spelling channel is gone; the registry blocks prove population,
 // command-negative exceptions, invocation-time lookup, and concrete products.
 
-import command : Command;
-import command_history : CommandHistory;
-import commands.tool.headless : ToolHeadlessCommand;
-import commands.layer.xform_edit : LayerXformEdit;
-import commands.mesh.morph_edit : MeshMorphEdit;
-import commands.mesh.session_edit : MeshSessionEdit;
-import commands.mesh.vertex_edit : MeshVertexEdit;
+import vibe3d.editing.commands.runtime.command : Command;
+import vibe3d.editing.commands.runtime.command_history : CommandHistory;
+import vibe3d.editing.tools.interactive.commands.tool.headless : ToolHeadlessCommand;
+import vibe3d.editing.commands.editor.commands.layer.xform_edit : LayerXformEdit;
+import vibe3d.editing.commands.editor.commands.mesh.morph_edit : MeshMorphEdit;
+import vibe3d.editing.commands.editor.commands.mesh.session_edit : MeshSessionEdit;
+import vibe3d.editing.commands.editor.commands.mesh.vertex_edit : MeshVertexEdit;
 import vibe3d.documents.model.document : Document, Layer;
 import vibe3d.editing.contracts.editmode : EditMode;
-import editor_app : EditorApp;
+import vibe3d.apps.desktop.editor_app : EditorApp;
 import vibe3d.mesh.core.mesh : Mesh, makeCube;
-import mesh_gpu : GpuMesh;
+import vibe3d.viewport.gpu.mesh_gpu : GpuMesh;
 import vibe3d.editing.params.params : Param;
-import pipe_gizmo_host : PipeGizmoHost;
-import registration : registerTools;
-import registry : Registry, ToolFactory;
+import vibe3d.editing.tools.interactive.pipe_gizmo_host : PipeGizmoHost;
+import vibe3d.apps.desktop.registration : registerTools;
+import vibe3d.editing.tools.interactive.registry : Registry, ToolFactory;
 import vibe3d.editing.contracts.seltype : SelMode;
-import session_owner : Session;
+import vibe3d.runtime.application_core.session_owner : Session;
 import tests.unit.census_symbols : balancedSpan, blankNonCode, countOccurrences,
     registrationFamilyBytes;
-import tool : Tool;
-import tools.alignment.mirror : MirrorTool;
-import tools.alignment.radial_sweep_tool : RadialSweepTool;
-import tools.create.arc : ArcTool;
-import tools.create.box : BoxTool;
-import tools.create.capsule : CapsuleTool;
-import tools.create.cone : ConeTool;
-import tools.create.cylinder : CylinderTool;
-import tools.create.sphere : SphereTool;
-import tools.create.torus : TorusTool;
-import tools.create.tube : TubeTool;
-import tools.edit.bridge_tool : BridgeTool;
-import tools.edit.tack : TackTool;
-import tools.edit.topology_pen.defs : TopoPenFactories;
+import vibe3d.editing.tools.interactive.tool : Tool;
+import vibe3d.editing.tools.interactive.tools.alignment.mirror : MirrorTool;
+import vibe3d.editing.tools.interactive.tools.alignment.radial_sweep_tool : RadialSweepTool;
+import vibe3d.editing.tools.interactive.tools.create.arc : ArcTool;
+import vibe3d.editing.tools.interactive.tools.create.box : BoxTool;
+import vibe3d.editing.tools.interactive.tools.create.capsule : CapsuleTool;
+import vibe3d.editing.tools.interactive.tools.create.cone : ConeTool;
+import vibe3d.editing.tools.interactive.tools.create.cylinder : CylinderTool;
+import vibe3d.editing.tools.interactive.tools.create.sphere : SphereTool;
+import vibe3d.editing.tools.interactive.tools.create.torus : TorusTool;
+import vibe3d.editing.tools.interactive.tools.create.tube : TubeTool;
+import vibe3d.editing.tools.interactive.tools.edit.bridge_tool : BridgeTool;
+import vibe3d.editing.tools.interactive.tools.edit.tack : TackTool;
+import vibe3d.editing.tools.interactive.tools.edit.topology_pen.defs : TopoPenFactories;
 import vibe3d.viewport.camera.view : View;
 
 import std.algorithm : map, sort;
@@ -387,9 +387,9 @@ unittest {
 }
 
 unittest { // K3 a second production family retains the default wrapper contract.
-    import command : g_editTargetResolver, kNoEditTargetReason;
-    import command_executor : CommandExecutor;
-    import command_history : RecordMode;
+    import vibe3d.editing.commands.runtime.command : g_editTargetResolver, kNoEditTargetReason;
+    import vibe3d.editing.commands.runtime.command_executor : CommandExecutor;
+    import vibe3d.editing.commands.runtime.command_history : RecordMode;
     auto old = g_editTargetResolver;
     scope(exit) g_editTargetResolver = old;
     auto r = makeRig();

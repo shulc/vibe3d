@@ -22,10 +22,10 @@ import std.conv      : to;
 import std.format    : format;
 import std.string    : strip;
 import std.stdio     : writeln, writefln;
-import buttonset     : loadButtons, loadStatusLine, Panel, Group, Button,
+import vibe3d.ui.editor.buttonset     : loadButtons, loadStatusLine, Panel, Group, Button,
                        Action, ActionKind, PopupItemKind, allButtons;
 import vibe3d.editing.params.argstring     : parseArgstring;
-import ui.mode_popup : dynamicModePopupItems;
+import vibe3d.ui.editor.ui.mode_popup : dynamicModePopupItems;
 
 void main() {}
 
@@ -167,7 +167,7 @@ unittest {
         // skips them. Mirror that here (this test loads raw YAML, before app.d's
         // runtime disabling pass runs).
         {
-            import ai.copilot_gate : kCopilotEnabled;
+            import vibe3d.runtime.ai_advisor.ai.copilot_gate : kCopilotEnabled;
             bool aiSwitchLive = false;
             version (WithAI) { static if (kCopilotEnabled) aiSwitchLive = true; }
             if (!aiSwitchLive && btn.action.kind == ActionKind.command

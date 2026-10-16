@@ -7,7 +7,7 @@ module tests.unit.surface_pack_test;
 import std.format : format;
 
 import vibe3d.mesh.core.mesh   : Surface;
-import shader : packSurfaceSlots, LIT_MAX_MATS;
+import vibe3d.viewport.gpu.shader : packSurfaceSlots, LIT_MAX_MATS;
 
 unittest {
     float[4 * LIT_MAX_MATS] base = -1, params = -1, flags = -1;

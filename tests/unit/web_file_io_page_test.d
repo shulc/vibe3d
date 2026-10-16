@@ -16,16 +16,16 @@ import std.path : buildPath, dirName;
 import std.process : thisProcessID;
 import std.string : indexOf, lastIndexOf, strip;
 
-import command : Command;
-import command_history : RecordMode;
-import commands.file.load : FileLoad;
+import vibe3d.editing.commands.runtime.command : Command;
+import vibe3d.editing.commands.runtime.command_history : RecordMode;
+import vibe3d.apps.desktop.commands.file.load : FileLoad;
 import vibe3d.documents.model.document : Document;
 import vibe3d.editing.contracts.editmode : EditMode;
-import io.browser_pick_resume;
-import io.formats : FilterSpec;
+import vibe3d.platform.file.io.browser_pick_resume;
+import vibe3d.documents.interchange.io.formats : FilterSpec;
 import vibe3d.mesh.core.mesh : makeCube;
 import tests.unit.census_symbols : balancedSpan, blankNonCode, countOccurrences;
-import ui.discard_guard : UiRunOutcome;
+import vibe3d.ui.editor.ui.discard_guard : UiRunOutcome;
 import vibe3d.viewport.camera.view : View;
 
 private:

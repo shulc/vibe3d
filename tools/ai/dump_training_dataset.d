@@ -15,7 +15,7 @@ module dump_training_dataset;
 
 import std.stdio : writeln;
 
-import ai.training_dataset : exportAiSyntheticTrainingDatasetJsonl;
+import vibe3d.runtime.ai_advisor.ai.training_dataset : exportAiSyntheticTrainingDatasetJsonl;
 
 void main() {
     auto result = exportAiSyntheticTrainingDatasetJsonl();

@@ -8,29 +8,29 @@ import std.string : indexOf;
 import std.array : join;
 import std.format : format;
 
-import command : Command;
-import command_args : bindArgs;
-import commands.viewport.independence : ViewportIndepAxis,
+import vibe3d.editing.commands.runtime.command : Command;
+import vibe3d.editing.commands.runtime.command_args : bindArgs;
+import vibe3d.apps.desktop.commands.viewport.independence : ViewportIndepAxis,
     ViewportIndependence;
-import commands.viewport.master : ViewportMaster;
-import commands.viewport.display : ViewportBackdropStyle, ViewportPointSize,
+import vibe3d.apps.desktop.commands.viewport.master : ViewportMaster;
+import vibe3d.apps.desktop.commands.viewport.display : ViewportBackdropStyle, ViewportPointSize,
     ViewportRetopology, ViewportRetopologyPreset, ViewportShowVertices,
     ViewportCavity, ViewportCavityParams;
-import display_state : BackdropStyle;
-import display_state : DisplayStyle;
-import display_state : CavityMode;
+import vibe3d.viewport.display_policy.display_state : BackdropStyle;
+import vibe3d.viewport.display_policy.display_state : DisplayStyle;
+import vibe3d.viewport.display_policy.display_state : CavityMode;
 import vibe3d.editing.contracts.editmode : EditMode;
-import commands.viewport.display : kCavityGainMax, kCavityDistanceMin,
+import vibe3d.apps.desktop.commands.viewport.display : kCavityGainMax, kCavityDistanceMin,
     kCavityDistanceMax, kCavityAttenuationMax;
-import layout_reset_action : LayoutResetAction;
+import vibe3d.apps.desktop.layout_reset_action : LayoutResetAction;
 import vibe3d.mesh.core.mesh : makeCube;
-import prefs : Prefs, seedLayoutIniIfMissing;
+import vibe3d.apps.desktop.prefs : Prefs, seedLayoutIniIfMissing;
 import tests.unit.ui.headless_panel : openPanel;
-import ui.panels : drawViewportPropsPanel, resetViewportPropsDrawSnapshot,
+import vibe3d.ui.editor.ui.panels : drawViewportPropsPanel, resetViewportPropsDrawSnapshot,
     viewportPropsDrawSnapshot;
-import ui.viewport_props_role : ViewportCommandDispatch,
+import vibe3d.ui.editor.ui.viewport_props_role : ViewportCommandDispatch,
     ViewportPropertiesReadRole;
-import viewport : LayoutPreset, ViewportManager;
+import vibe3d.viewport.host.viewport : LayoutPreset, ViewportManager;
 import ImGui = d_imgui;
 import d_imgui.imgui_h : ImGuiConfigFlags, ImGuiKey, ImVec2;
 
@@ -784,9 +784,9 @@ unittest { // S3b: the world-cavity Distance / Attenuation / Samples sliders, Wo
 }
 
 unittest { // S4b (task 9250): the Reflection image combo — every option through the real parser, shown only under Reflection
-    import commands.viewport.display : ViewportReflectionSource;
-    import display_state : ReflectionSource;
-    import viewport_env : allReflectionSources;
+    import vibe3d.apps.desktop.commands.viewport.display : ViewportReflectionSource;
+    import vibe3d.viewport.display_policy.display_state : ReflectionSource;
+    import vibe3d.viewport.gpu.viewport_env : allReflectionSources;
     auto vpm = new ViewportManager(0, 0, 800, 600);
     vpm.applyLayout(LayoutPreset.Quad);
     vpm.activeId = 1;

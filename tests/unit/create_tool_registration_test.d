@@ -1,18 +1,18 @@
 module tests.unit.create_tool_registration_test;
 
-import command : Command;
-import commands.mesh.session_edit : MeshSessionEdit;
-import commands.tool.headless : ToolHeadlessCommand;
+import vibe3d.editing.commands.runtime.command : Command;
+import vibe3d.editing.commands.editor.commands.mesh.session_edit : MeshSessionEdit;
+import vibe3d.editing.tools.interactive.commands.tool.headless : ToolHeadlessCommand;
 import vibe3d.mesh.core.mesh : Mesh;
 import vibe3d.editing.params.params : Param;
-import registration : registerTools;
-import registry : ToolFactory;
+import vibe3d.apps.desktop.registration : registerTools;
+import vibe3d.editing.tools.interactive.registry : ToolFactory;
 import tests.unit.live_registration_rig : LiveRegistrationRig;
-import tool : Tool;
-import tools.alignment.mirror : MirrorTool;
-import tools.create.box : BoxTool;
-import tools.edit.topology_pen : TopologyPenTool;
-import tools.edit.topology_pen.defs : TopoPenFactories;
+import vibe3d.editing.tools.interactive.tool : Tool;
+import vibe3d.editing.tools.interactive.tools.alignment.mirror : MirrorTool;
+import vibe3d.editing.tools.interactive.tools.create.box : BoxTool;
+import vibe3d.editing.tools.interactive.tools.edit.topology_pen : TopologyPenTool;
+import vibe3d.editing.tools.interactive.tools.edit.topology_pen.defs : TopoPenFactories;
 
 import std.meta : AliasSeq;
 import std.traits : BaseClassesTuple, FieldNameTuple;

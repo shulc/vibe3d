@@ -7,11 +7,11 @@
 // `tests/unit/ui/command_notice_test.d` makes, for the same reason.
 module tests.unit.ui.discard_guard_test;
 
-import ui.discard_guard;
-import guarded_action_controller : GuardedActionController,
+import vibe3d.ui.editor.ui.discard_guard;
+import vibe3d.apps.desktop.guarded_action_controller : GuardedActionController,
     GuardedActionPorts, GuardObservationPorts;
-import command : Command, g_testMode;
-import command_history : RecordMode;
+import vibe3d.editing.commands.runtime.command : Command, g_testMode;
+import vibe3d.editing.commands.runtime.command_history : RecordMode;
 import vibe3d.editing.contracts.editmode : EditMode;
 import vibe3d.mesh.core.mesh : Mesh;
 import vibe3d.viewport.camera.view : View;

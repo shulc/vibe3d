@@ -1,10 +1,10 @@
 module tests.unit.mesh_ops.bridge_patch_test;
 import vibe3d.mesh.edit_replay.mesh_edit_replay : apply, revert;
 import vibe3d.mesh.core.mesh;
-import math;
+import vibe3d.util.math.math;
 import vibe3d.mesh.ops.mesh_ops.bridge;
 import vibe3d.mesh.ops.mesh_ops.bridge_patch;
-import tools.edit.bridge_tool : applyBridgeOp, BridgeParams, resolveBridgeSelection;
+import vibe3d.editing.tools.interactive.tools.edit.bridge_tool : applyBridgeOp, BridgeParams, resolveBridgeSelection;
 import vibe3d.editing.contracts.editmode : EditMode;
 import std.json;
 import std.file : readText;

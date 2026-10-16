@@ -1,0 +1,404 @@
+module vibe3d.editing.tools.interactive.tools.edit.vert_merge_tool;
+import vibe3d.viewport.display_policy.display_state : DrawPlan;
+import vibe3d.editing.tools.interactive.prepared_record_context : PreparedToolParamDoorClient,
+    PreparedNamedGpuParamDoorClient;
+
+import bindbc.sdl;
+import vibe3d.editing.pipeline.contracts.operator : VectorStack;
+
+import vibe3d.editing.tools.interactive.tool;
+import vibe3d.editing.tools.interactive.tools.topology_step;
+import vibe3d.editing.commands.runtime.command : Command;
+import vibe3d.mesh.core.mesh;
+import vibe3d.viewport.gpu.mesh_gpu : GpuMesh;
+import vibe3d.util.math.math;
+import vibe3d.util.spatial.spatial : Viewport;
+import vibe3d.editing.contracts.editmode : EditMode;
+import vibe3d.editing.params.params : Param;
+import vibe3d.editing.tools.interactive.drag : viewWorldPerPixel;
+import vibe3d.editing.tools.interactive.value_drag : ValueDrag, mergeValueDragLaw;
+import vibe3d.editing.tools.interactive.overlay_space : OverlaySpace;
+import vibe3d.platform.input.eventlog : queryMouse;
+import vibe3d.viewport.gpu.shader : Shader, LitShader;
+import vibe3d.editing.commands.runtime.command_history : CommandHistory;
+import vibe3d.mesh.snapshot.snapshot : MeshSnapshot;
+import vibe3d.viewport.gpu.display_sync : refreshDisplay;
+import vibe3d.util.profiling.perf_probe : g_perf, Cat;
+import vibe3d.editing.tools.interactive.prepared_record_context : PreparedRecordContext, PreparedToolDoorClient,
+    PreparedSimpleToolDoorClient;
+import vibe3d.editing.contracts.prepared_tool_effect : PreparedDeactivateEffect, PreparedDeactivateKind;
+import vibe3d.editing.contracts.prepared_tool_effect : PreparedSessionActivateEffect, PreparedActivateKind;
+import vibe3d.editing.tools.interactive.prepared_vertex_merge_activation : PreparedVertexMergeActivationOwner;
+import vibe3d.editing.tools.interactive.prepared_param_update : PreparedParamUpdateOwner,
+    PreparedParamUpdateProducer, PreparedStateParamImage;
+import vibe3d.editing.contracts.prepared_tool_effect : PreparedVertexMergeParamEffect,
+    PreparedVertexMergeParamKind;
+import vibe3d.documents.model.document : Layer;
+import vibe3d.viewport.gpu.mesh_gpu : GpuUploadOwner;
+import core.stdc.string : memcmp;
+
+struct VertexMergeParamProjection {
+    bool interactive, active, built;
+    float dist;
+    bool opEquals(const VertexMergeParamProjection other) const nothrow @nogc {
+        return interactive == other.interactive && active == other.active &&
+            built == other.built &&
+            memcmp(&dist, &other.dist, float.sizeof) == 0;
+    }
+}
+
+alias PreparedVertexMergeParamImage = PreparedStateParamImage!(VertexMergeParamProjection, PreparedVertexMergeParamKind);
+
+struct PreparedVertexMergeActivationImage {
+    MeshSnapshot before;
+    bool valid;
+    void clear() nothrow @nogc {
+        before = MeshSnapshot.init;
+        valid = false;
+    }
+}
+
+// ---------------------------------------------------------------------------
+// VertexMergeTool — interactive Vertex Merge (factory id `vert.merge`,
+// task 0360 promotion of the one-shot `vert.merge` command).
+//
+// Grounded in the captured toolcard (private spec tree — not reproduced
+// here beyond the geometry/behavior facts baked into
+// mesh.weldVerticesByMask, source/mesh.d — see that kernel's doc-comment
+// for the full captured-law writeup):
+//   - ONE attribute exposed on the interactive tool: `dist` (Distance,
+//     world units, default 0.001 — bit-exact match to the pre-existing
+//     one-shot command's own default, and to the reference's own live-
+//     confirmed default). NO drawn gizmo/handle at idle/hover/drag — a
+//     plain click+drag ANYWHERE over the viewport hauls the threshold
+//     directly (the SAME undecorated "numeric haul" family as
+//     mesh.polyInsetTool): horizontal, press-relative, gain 0.05·P —
+//     `value_drag.d`, measured law §26, task 7122.
+//   - Threshold law: welds any two (or, transitively, more) SELECTED
+//     vertices whose distance apart is <= dist (inclusive boundary,
+//     confirmed at the exact grid-edge-length boundary of a captured
+//     test mesh). mesh.weldVerticesByMask's own boundary check was fixed
+//     to `<=` (from a strict `<`) to match — see its doc-comment for the
+//     parity evidence and the still-open transitive/connected-component
+//     clustering caveat this port did NOT fully resolve.
+//   - The one-shot command's `range` auto/fixed toggle and the `keep`/
+//     `morph` attributes are COMMAND-only in the reference (the captured
+//     toolcard confirms them absent from the interactive tool's own
+//     panel — only Distance/Keep/Morph appear there, and even Keep/Morph
+//     have no vibe3d counterpart honored yet). This tool deliberately
+//     does NOT expose `range`; it always runs the reference's "always a
+//     plain Distance field" mode by calling `weldVerticesByMask` directly
+//     rather than routing through the one-shot MeshVertMerge command
+//     (which keeps its own `range`/`keep`/`morph` params for the
+//     one-shot/menu path, untouched by this tool).
+//
+// A generic viewport haul records a completed topology image in ToolSession.
+// The next haul starts on the welded mesh and may change only the distance.
+// ---------------------------------------------------------------------------
+class VertexMergeTool : Tool, PreparedToolDoorClient, PreparedToolParamDoorClient,
+        TopologyStepClient {
+    // Completed hauls already belong to ToolSession history. A recording UI
+    // command closes the active operation and leaves the tool armed.
+    override ToolSessionPolicy sessionPolicy() const nothrow @nogc {
+        static immutable ToolSessionPolicy policy = {
+            activationRow: true, commandClose: CommandClose.uiDoor,
+            sessionSteps: true, historyTopologySteps: true,
+            opensAt: OpensAt.firstPress,
+            imageAttrs: ["dist"], haulAttrs: ["dist"],
+            // captured: the tool's activation resets these (topology-redo S6r)
+            activationResetAttrs: ["dist"]
+        };
+        return policy;
+    }
+
+    mixin PreparedNamedGpuParamDoorClient;
+    mixin PreparedSimpleToolDoorClient!Layer;
+private:
+    Mesh* delegate() nothrow @nogc meshSrc_;
+    @property Mesh* mesh() const { return meshSrc_(); }
+    GpuMesh*         gpu;
+    EditMode*        editMode;
+    LitShader        litShader;
+
+    // Reference default (task 0360 toolcard: live-confirmed bit-exact
+    // 1mm), matching vibe3d's pre-existing one-shot command default
+    // (dist_ = 0.001f).
+    float dist_ = 0.001f;
+
+    bool         active;
+    bool         built;
+    MeshSnapshot before;
+
+    // Haul drag state. No drawn handle to hit-test — any LMB press
+    // (outside camera-nav modifiers, with a live vertex selection) begins
+    // the haul directly. The value law is the shared press-relative
+    // horizontal drag (`value_drag`); its gain is frozen at the
+    // press.
+    bool      dragging;
+    ValueDrag valueDrag_;
+
+public:
+    this(Mesh* delegate() nothrow @nogc meshSrc, GpuMesh* gpu,
+            EditMode* editMode, LitShader litShader) {
+        this.meshSrc_  = meshSrc;
+        this.gpu       = gpu;
+        this.editMode  = editMode;
+        this.litShader = litShader;
+    }
+
+    override string name() const { return "Vertex Merge"; }
+
+    override EditMode[] supportedModes() const { return [EditMode.Vertices]; }
+
+    override Param[] params() {
+        return [
+            Param.float_("dist", "Distance", &dist_, 0.001f).fmt("%.4f"),
+        ];
+    }
+
+    override void activate() {
+        active = true;
+        reinitSession();
+    }
+
+    final PreparedVertexMergeActivationImage buildPreparedActivation(
+            out Mesh* source) {
+        PreparedVertexMergeActivationImage image;
+        source = mesh;
+        if (source is null) return image;
+        image.before = MeshSnapshot.capture(*source);
+        image.valid = true;
+        return image;
+    }
+    final Mesh* preparedActivationMesh() nothrow @nogc { return meshSrc_(); }
+    final void installPreparedActivation(
+            ref PreparedVertexMergeActivationImage image) nothrow @nogc {
+        if (!image.valid) return;
+        active = true; built = false; dragging = false;
+        image.before.moveInto(before);
+        image.valid = false;
+    }
+    final PreparedSessionActivateEffect prepareActivate(
+            PreparedRecordContext context) {
+        if (context is null) return PreparedSessionActivateEffect(
+            preparedToolStateOwner, PreparedActivateKind.VertexMerge, false);
+        scope(failure) context.discard();
+        auto owner = PreparedVertexMergeActivationOwner.prepare(this);
+        bool ok = owner !is null && context.prepareVertexMergeActivation(owner) &&
+            context.markNoHistoryInstall();
+        if (!ok) context.discard();
+        return PreparedSessionActivateEffect(preparedToolStateOwner,
+            PreparedActivateKind.VertexMerge, ok);
+    }
+    version(unittest) final auto preparedOwnerForTest() const nothrow @nogc {
+        return preparedToolStateOwner;
+    }
+    version(unittest) final void seedPreparedActivationForTest(
+            ref Mesh oldMesh) {
+        active = false; built = true; dragging = true; dist_ = 7.0f;
+        valueDrag_.pressX = 11; valueDrag_.lastX = 12;
+        valueDrag_.pressValue = 13; valueDrag_.law.gain = 14;
+        cachedVp.view[0] = 15;
+        before = MeshSnapshot.capture(oldMesh);
+    }
+    version(unittest) final bool preparedActivationDirtyForTest() const
+            nothrow @nogc {
+        return !active && built && dragging && dist_ == 7.0f &&
+            valueDrag_.pressX == 11 && valueDrag_.lastX == 12 &&
+            valueDrag_.pressValue == 13 && valueDrag_.law.gain == 14 &&
+            cachedVp.view[0] == 15;
+    }
+    version(unittest) final bool preparedActivationForTest(size_t count,
+            Vec3 first, const Vec3* livePtr) const nothrow @nogc {
+        return active && !built && !dragging && dist_ == 7.0f &&
+            before.filled && before.vertices.length == count && count != 0 &&
+            before.vertices[0] == first && before.vertices.ptr !is livePtr &&
+            valueDrag_.pressX == 11 && valueDrag_.lastX == 12 &&
+            valueDrag_.pressValue == 13 && valueDrag_.law.gain == 14 &&
+            cachedVp.view[0] == 15;
+    }
+
+    private void reinitSession() {
+        built    = false;
+        dragging = false;
+        before   = MeshSnapshot.capture(*mesh);
+    }
+
+    override void deactivate() {
+        active   = false;
+        built    = false;
+        dragging = false;
+    }
+
+    public override bool hasUncommittedEdit() const {
+        return active && dragging && built;
+    }
+
+    public override void cancelUncommittedEdit() {
+        cancelLiveEdit();
+    }
+
+    public override void resyncSession() {
+        if (!active) return;
+        reinitSession();
+    }
+
+    mixin SessionCommitHooks;
+    mixin TopologyStepClientBody!("Merge Vertices", before);
+    override void rebaseTopologyStep(MeshSnapshot basis) {
+        before = basis;
+        built = !before.matches(*mesh);
+        dragging = false;
+        refreshCaches();
+    }
+
+    override void onParamChanged(string pname) {
+        if (interactiveParamEdit) rebuildPreview();
+    }
+    final bool ownsPreparedLayer(Layer layer) const {
+        return layer !is null && &layer.meshRef() is mesh;
+    }
+    private VertexMergeParamProjection paramProjection() const nothrow @nogc {
+        return VertexMergeParamProjection(interactiveParamEdit, active, built,
+            dist_);
+    }
+    final PreparedVertexMergeParamImage buildPreparedParamUpdate(string, ref const Mesh live) {
+        return PreparedVertexMergeParamImage.prepare(paramProjection(), live);
+    }
+    final bool preparedParamUpdateMatches(in PreparedVertexMergeParamImage image,
+            ref const Mesh live) const nothrow @nogc {
+        return image.matches(paramProjection(), live);
+    }
+    final void installPreparedParamUpdate(
+            ref PreparedVertexMergeParamImage image) nothrow @nogc {
+        image.clear();
+    }
+    mixin PreparedParamUpdateProducer!(PreparedParamUpdateOwner!(VertexMergeTool,
+        PreparedVertexMergeParamImage, PreparedVertexMergeParamKind), PreparedVertexMergeParamEffect);
+    version(unittest) final void seedPreparedParamForTest(ref Mesh live,
+            bool interactive = true) {
+        interactiveParamEdit = interactive; active = true; built = false;
+        dist_ = 3.0f; before = MeshSnapshot.capture(live);
+    }
+    version(unittest) final void mutatePreparedParamForTest(float value)
+            nothrow @nogc { dist_ = value; }
+    version(unittest) final bool preparedParamBuiltForTest() const nothrow @nogc {
+        return built;
+    }
+    override void evaluate() {}
+
+    // Headless apply (tool.doApply) — MUST NOT snapshot; ToolDoApplyCommand
+    // wraps it with undo.
+    override bool applyHeadless() {
+        if (*editMode != EditMode.Vertices) return false;
+        if (built && before.filled) {
+            before.restore(*mesh);
+            built = false;
+        }
+        if (mesh.vertices.length == 0) return false;
+        if (operation(*mesh) == 0) return false;
+        gpu.upload(*mesh);
+        return true;
+    }
+
+    override bool onMouseButtonDown(ref const SDL_MouseButtonEvent e, ref VectorStack vts) {
+        if (!active) return false;
+        if (e.button == SDL_BUTTON_RIGHT) { closeOwnOperation(false); return true; }
+        if (e.button != SDL_BUTTON_LEFT)  return false;
+        SDL_Keymod mods = SDL_GetModState();
+        if (mods & (KMOD_ALT | KMOD_SHIFT)) return false;   // reserved for camera nav
+        if (*editMode != EditMode.Vertices) return false;
+        if (!mesh.hasAnySelectedVertices()) return false;
+
+        // No drawn handle to hit-test (task 0360 toolcard: confirmed no
+        // gizmo graphic at idle/hover/drag) — any qualifying click begins
+        // the generic haul directly.
+        sessionStepBegins();
+        dragging = true;
+        // The gain is the VIEW's pixel size (§26: no anchor term), converted
+        // into the LOCAL units the merge threshold means (task 0645) by the
+        // declared mean — a threshold has no direction.
+        const auto os = OverlaySpace.ofPrimary();
+        valueDrag_.press(e.x, dist_,
+            mergeValueDragLaw(viewWorldPerPixel(cachedVp), os.meanWorldPerLocal()));
+        return true;
+    }
+
+    override bool onMouseButtonUp(ref const SDL_MouseButtonEvent e, ref VectorStack vts) {
+        if (!active || !dragging) return false;
+        if (e.button != SDL_BUTTON_LEFT) return false;
+        dragging = false;
+        // §26: the value kept after release is max(0, last). No rebuild: a
+        // negative value already previewed as zero (`kernelEpsSq`).
+        dist_ = cast(float) valueDrag_.release();
+        sessionStepEnds();
+        return true;
+    }
+
+    override bool onMouseMotion(ref const SDL_MouseMotionEvent e, ref VectorStack vts) {
+        if (!active || !dragging) return false;
+        // §26: `dist = dist_press + 0.05·P·Δx`, Δx the HORIZONTAL
+        // offset from the press pixel; vertical travel changes nothing, and
+        // the value is signed while the button is held.
+        dist_ = cast(float) valueDrag_.motion(e.x);
+        rebuildPreview();
+        return true;
+    }
+
+    // No drawn gizmo/handle (task 0360 toolcard: confirmed absent at idle/
+    // hover/drag in every captured screenshot) — intentionally empty.
+    override void draw(const ref Shader shader, const ref Viewport vp, ref VectorStack vts,
+                       const ref DrawPlan plan, bool visualOnly = false) {
+        cachedVp = vp;
+    }
+
+private:
+    // Revert to the pre-merge cage + selection, then re-run the kernel from
+    // the current `dist_`. Per-tick re-evaluate: WRITE the param + RE-RUN,
+    // never incrementally mutate the already-welded mesh.
+    void rebuildPreview() {
+        if (!active) return;
+        if (previewGated()) return;
+        // Perf (task 1370) — AFTER the guard(s) above, never on the first
+        // line: an early-out must record no sample, or `count` tallies
+        // refusals as work. See Cat.toolPreview for the decomposition.
+        auto zPreview = g_perf.scope_(Cat.toolPreview);
+        before.restore(*mesh);
+        built = operation(*mesh) != 0;
+        refreshCaches();
+    }
+
+    // The one operation: preview and scripted apply (task
+    // 9433). average:true — the survivor sits at the per-cluster centroid,
+    // matching the vert.merge command (source/commands/mesh/vert_merge.d).
+    // No selection welds nothing (an all-false mask joins no cluster).
+    size_t operation(ref Mesh target) {
+        return target.weldVerticesByMask(target.selectedVertices, kernelEpsSq(), true);
+    }
+
+    final PreparedDeactivateEffect prepareDeactivate(PreparedRecordContext c) {
+        if (c is null) return PreparedDeactivateEffect(
+            preparedToolStateOwner, PreparedDeactivateKind.VertexMerge, false, false);
+        const accepted = c.markNoHistoryInstall();
+        return PreparedDeactivateEffect(preparedToolStateOwner,
+            PreparedDeactivateKind.VertexMerge, false, accepted);
+    }
+
+    // The threshold the weld kernel runs with: a negative drag value (signed
+    // mid-drag, §26) welds what a zero threshold welds, never |dist|.
+    double kernelEpsSq() const nothrow @nogc {
+        const double d = dist_ > 0 ? cast(double) dist_ : 0.0;
+        return d * d;
+    }
+
+    void cancelLiveEdit() {
+        if (built && before.filled) before.restore(*mesh);
+        built    = false;
+        dragging = false;
+        refreshCaches();
+    }
+
+    void refreshCaches() {
+        refreshDisplay(mesh, gpu);
+    }
+}

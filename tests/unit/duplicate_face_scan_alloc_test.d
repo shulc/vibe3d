@@ -48,7 +48,7 @@
 module tests.unit.duplicate_face_scan_alloc_test;
 
 import core.memory : GC;
-import math : Vec3;
+import vibe3d.util.math.math : Vec3;
 import vibe3d.mesh.core.mesh;
 import vibe3d.mesh.edit_log.mesh_edit_delta : MeshEditScope;
 

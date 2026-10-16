@@ -33,7 +33,7 @@ unittest {
 // Owner selection is public viewport behavior; the eventlog module retains
 // the private replay-copy assertions (task 10790).
 unittest {
-    import viewport : ViewportManager, LayoutPreset;
+    import vibe3d.viewport.host.viewport : ViewportManager, LayoutPreset;
     import vibe3d.viewport.camera.view : ProjKind;
     import vibe3d.platform.input.eventlog : EventLogger, parseEventLog;
     import std.file : tempDir, remove;

@@ -180,27 +180,27 @@ private struct FileCount
 private FileCount[] scanSourceTree(string root)
 {
     import tests.unit.census_symbols : wave19MathPhysicalPath;
-    const sourceDir = buildPath(root, "source");
+    const sourceDir = wave19MathPhysicalPath(buildPath(root, "source"), root);
     if (!isDir(sourceDir)) return [];
 
     auto found = appender!(FileCount[]);
     foreach (scanSourceRoot; [sourceDir, buildPath(root, "packages/command-runtime/source"), buildPath(root, "packages/application-core/source"), buildPath(root, "packages/camera-model/source"), buildPath(root, "packages/document-channels/source"), buildPath(root, "packages/image-codec/source"), buildPath(root, "packages/document-io/source"), buildPath(root, "packages/document-model/source"), buildPath(root, "packages/param-schema/source"), buildPath(root, "packages/pipe-runtime/source"), buildPath(root, "packages/mesh-ops/source"), buildPath(root, "packages/interchange/source"), buildPath(root, "packages/interaction-query/source"), buildPath(root, "packages/pipe-evaluation/source"), buildPath(root, "packages/tool-state/source"), buildPath(root, "packages/transform-ops/source"), buildPath(root, "packages/creation-ops/source"), buildPath(root, "packages/alignment-ops/source"), buildPath(root, "packages/input-events/source"), buildPath(root, "packages/display-policy/source"), buildPath(root, "packages/viewport-gpu/source"), buildPath(root, "packages/subpatch-preview/source"), buildPath(root, "packages/edit-contracts/source"), buildPath(root, "packages/mesh-change/source"), buildPath(root, "packages/mesh-contracts/source"), buildPath(root, "packages/mesh-edit-log/source"), buildPath(root, "packages/mesh-edit-replay/source"), buildPath(root, "packages/mesh-snapshot/source"), buildPath(root, "packages/mesh-topology/source"), buildPath(root, "packages/mesh/source"), buildPath(root, "packages/profiling/source"), buildPath(root, "packages/spatial/source"), buildPath(root, "util/log/source"), buildPath(root, "util/math/source"), buildPath(root, "util/parallel/source"), buildPath(root, "util/plane-bytes/source"), buildPath(root, "util/screen-buckets/source"), buildPath(root, "packages/pipe-contracts/source"), buildPath(root, "packages/mesh-preview/source"), buildPath(root, "util/json-number/source")]
-        ~ (exists(buildPath(root, "packages/selection-model/source")) ? [buildPath(root, "packages/selection-model/source")] : [])
-        ~ (exists(buildPath(root, "packages/scene-query/source")) ? [buildPath(root, "packages/scene-query/source")] : [])
-        ~ (exists(buildPath(root, "packages/editor-commands/source")) ? [buildPath(root, "packages/editor-commands/source")] : [])
-        ~ (exists(buildPath(root, "packages/interactive-tools/source")) ? [buildPath(root, "packages/interactive-tools/source")] : [])
-        ~ (exists(buildPath(root, "packages/viewport-host/source")) ? [buildPath(root, "packages/viewport-host/source")] : [])
+        ~ (exists(wave19MathPhysicalPath(buildPath(root, "packages/selection-model/source"), root)) ? [buildPath(root, "packages/selection-model/source")] : [])
+        ~ (exists(wave19MathPhysicalPath(buildPath(root, "packages/scene-query/source"), root)) ? [buildPath(root, "packages/scene-query/source")] : [])
+        ~ (exists(wave19MathPhysicalPath(buildPath(root, "packages/editor-commands/source"), root)) ? [buildPath(root, "packages/editor-commands/source")] : [])
+        ~ (exists(wave19MathPhysicalPath(buildPath(root, "packages/interactive-tools/source"), root)) ? [buildPath(root, "packages/interactive-tools/source")] : [])
+        ~ (exists(wave19MathPhysicalPath(buildPath(root, "packages/viewport-host/source"), root)) ? [buildPath(root, "packages/viewport-host/source")] : [])
         ~ (exists(wave19MathPhysicalPath(buildPath(root, "packages/interaction-data/source"), root)) ? [buildPath(root, "packages/interaction-data/source")] : [])
-        ~ (exists(buildPath(root, "packages/http-runtime/source")) ? [buildPath(root, "packages/http-runtime/source")] : [])
-        ~ (exists(buildPath(root, "packages/ai-advisor/source")) ? [buildPath(root, "packages/ai-advisor/source")] : [])
-        ~ (exists(buildPath(root, "packages/ai3d-runtime/source")) ? [buildPath(root, "packages/ai3d-runtime/source")] : [])
-        ~ (exists(buildPath(root, "packages/remesh-runtime/source")) ? [buildPath(root, "packages/remesh-runtime/source")] : [])
-        ~ (exists(buildPath(root, "packages/platform-file/source")) ? [buildPath(root, "packages/platform-file/source")] : [])
-        ~ (exists(buildPath(root, "packages/document-actions/source")) ? [buildPath(root, "packages/document-actions/source")] : [])
+        ~ (exists(wave19MathPhysicalPath(buildPath(root, "packages/http-runtime/source"), root)) ? [buildPath(root, "packages/http-runtime/source")] : [])
+        ~ (exists(wave19MathPhysicalPath(buildPath(root, "packages/ai-advisor/source"), root)) ? [buildPath(root, "packages/ai-advisor/source")] : [])
+        ~ (exists(wave19MathPhysicalPath(buildPath(root, "packages/ai3d-runtime/source"), root)) ? [buildPath(root, "packages/ai3d-runtime/source")] : [])
+        ~ (exists(wave19MathPhysicalPath(buildPath(root, "packages/remesh-runtime/source"), root)) ? [buildPath(root, "packages/remesh-runtime/source")] : [])
+        ~ (exists(wave19MathPhysicalPath(buildPath(root, "packages/platform-file/source"), root)) ? [buildPath(root, "packages/platform-file/source")] : [])
+        ~ (exists(wave19MathPhysicalPath(buildPath(root, "packages/document-actions/source"), root)) ? [buildPath(root, "packages/document-actions/source")] : [])
         ~ (exists(wave19MathPhysicalPath(buildPath(root, "packages/render-model/source"), root)) ? [buildPath(root, "packages/render-model/source")] : [])
-        ~ (exists(buildPath(root, "packages/render-backends/source")) ? [buildPath(root, "packages/render-backends/source")] : [])
-        ~ (exists(buildPath(root, "packages/forms-model/source")) ? [buildPath(root, "packages/forms-model/source")] : [])
-        ~ (exists(buildPath(root, "packages/editor-ui/source")) ? [buildPath(root, "packages/editor-ui/source")] : []))
+        ~ (exists(wave19MathPhysicalPath(buildPath(root, "packages/render-backends/source"), root)) ? [buildPath(root, "packages/render-backends/source")] : [])
+        ~ (exists(wave19MathPhysicalPath(buildPath(root, "packages/forms-model/source"), root)) ? [buildPath(root, "packages/forms-model/source")] : [])
+        ~ (exists(wave19MathPhysicalPath(buildPath(root, "packages/editor-ui/source"), root)) ? [buildPath(root, "packages/editor-ui/source")] : []))
 
     foreach (entry; dirEntries(wave19MathPhysicalPath(scanSourceRoot, root), SpanMode.depth))
     {

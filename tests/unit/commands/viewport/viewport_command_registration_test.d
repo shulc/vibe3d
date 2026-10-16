@@ -18,31 +18,31 @@ import std.path : buildNormalizedPath, buildPath, dirName;
 import std.regex : ctRegex, matchAll, replaceAll;
 import std.string : indexOf;
 
-import application_command_binding : CommandInvocationContext,
+import vibe3d.apps.desktop.application_command_binding : CommandInvocationContext,
     CommandInvocationOutcome;
-import command : CmdFlags, Command, CommandOrigin;
-import commands.viewport.display : ViewportBackdropStyle, ViewportDisplayStyle,
+import vibe3d.editing.commands.runtime.command : CmdFlags, Command, CommandOrigin;
+import vibe3d.apps.desktop.commands.viewport.display : ViewportBackdropStyle, ViewportDisplayStyle,
     ViewportPointSize, ViewportRetopology, ViewportRetopologyPreset,
     ViewportShowVertices, ViewportSmooth, ViewportWireAlpha, ViewportWireOverlay,
     ViewportCavity, ViewportCavityParams, ViewportCompositeTestGain,
     ViewportReflectionSource;
-import commands.viewport.fit : Fit;
-import commands.viewport.fit_selected : FitSelected;
-import commands.viewport.grid_steps : ViewportGridSteps;
-import commands.viewport.independence : ViewportIndependence;
-import commands.viewport.layout_preset : ViewportLayoutPreset;
-import commands.viewport.master : ViewportMaster;
-import commands.viewport.view_preset : ViewportViewPreset;
-import display_state : DisplayStyle;
+import vibe3d.apps.desktop.commands.viewport.fit : Fit;
+import vibe3d.apps.desktop.commands.viewport.fit_selected : FitSelected;
+import vibe3d.apps.desktop.commands.viewport.grid_steps : ViewportGridSteps;
+import vibe3d.apps.desktop.commands.viewport.independence : ViewportIndependence;
+import vibe3d.apps.desktop.commands.viewport.layout_preset : ViewportLayoutPreset;
+import vibe3d.apps.desktop.commands.viewport.master : ViewportMaster;
+import vibe3d.apps.desktop.commands.viewport.view_preset : ViewportViewPreset;
+import vibe3d.viewport.display_policy.display_state : DisplayStyle;
 import vibe3d.editing.contracts.editmode : EditMode;
-import live_registration_roles : LiveSessionRole, LiveView, LiveViewModeRole;
-import math : Vec3;
-import prefs : g_prefs;
+import vibe3d.runtime.application_core.live_registration_roles : LiveSessionRole, LiveView, LiveViewModeRole;
+import vibe3d.util.math.math : Vec3;
+import vibe3d.apps.desktop.prefs : g_prefs;
 import tests.unit.census_symbols : blankNonCode, blankUnittestBodies, registrationFamilyBytes;
 import tests.unit.live_registration_rig : LiveRegistrationRig;
 import vibe3d.viewport.camera.view : View;
-import viewport : LayoutPreset, ViewportManager;
-import viewport_command_registration : registerViewportCommands;
+import vibe3d.viewport.host.viewport : LayoutPreset, ViewportManager;
+import vibe3d.apps.desktop.viewport_command_registration : registerViewportCommands;
 
 private enum repoRoot = buildNormalizedPath(dirName(__FILE_FULL_PATH__),
                                              "..", "..", "..", "..");
@@ -500,7 +500,7 @@ unittest { // U4: only a writer of a template field claims the template
     // the three writers of `T = {active.style, active.wire, active.wireAlpha}`
     // set `displayUserSet` and its prefs mirror (plan §10.13), and every one
     // mirrors the cell's non-template fields into prefs (task 8620).
-    import prefs : ViewportCellDisplay;
+    import vibe3d.apps.desktop.prefs : ViewportCellDisplay;
     const prefsBefore = g_prefs.viewportDisplay;
     scope(exit) g_prefs.viewportDisplay = prefsBefore;
 
@@ -597,7 +597,7 @@ unittest { // U5: the dot switch and size reach the addressed cell; size is clam
 }
 
 unittest { // U6: the retopology preset writes exactly its five atoms, in one cell
-    import display_state : BackdropStyle;
+    import vibe3d.viewport.display_policy.display_state : BackdropStyle;
     auto fixture = new Fixture;
     fixture.registerViewport();
     const prefsBefore = g_prefs.viewportDisplay;
@@ -639,7 +639,7 @@ unittest { // U6: the retopology preset writes exactly its five atoms, in one ce
 }
 
 unittest { // U7: the cavity commands (task 9190) reach exactly the addressed cell; out-of-range is REFUSED, writes nothing, records no history
-    import display_state : CavityMode, CavityState, MAX_CAVITY_SAMPLES;
+    import vibe3d.viewport.display_policy.display_state : CavityMode, CavityState, MAX_CAVITY_SAMPLES;
     auto fixture = new Fixture;
     fixture.registerViewport();
     const prefsBefore = g_prefs.viewportDisplay;

@@ -30,7 +30,7 @@ import std.format    : format;
 import core.thread   : Thread;
 import core.time     : dur;
 
-import math : Vec3, transformPoint, lookAt, perspectiveMatrix, rayPlaneIntersect, closestPointOnSegmentToRay, dot, cross, normalize;
+import vibe3d.util.math.math : Vec3, transformPoint, lookAt, perspectiveMatrix, rayPlaneIntersect, closestPointOnSegmentToRay, dot, cross, normalize;
 import vibe3d.util.spatial.spatial : Viewport, projectToWindow, projectToWindowFull, ModelSpace, screenPointToRay;
 import vibe3d.documents.model.document : ItemXform;
 

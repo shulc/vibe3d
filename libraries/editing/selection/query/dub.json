@@ -1,0 +1,286 @@
+{
+  "name": "interaction-query",
+  "description": "Geometry interaction queries",
+  "license": "MIT",
+  "targetType": "staticLibrary",
+  "sourcePaths": [
+    "source"
+  ],
+  "dependencies": {
+    "d-bvh": {
+      "version": "e1a8f41501f94a28dbac99efbea850ed098fa728",
+      "repository": "git+https://github.com/shulc/D-BVH.git"
+    },
+    "vibe3d:mesh": {
+      "path": "../../../.."
+    },
+    "vibe3d:math": {
+      "path": "../../../.."
+    },
+    "vibe3d:spatial": {
+      "path": "../../../.."
+    },
+    "vibe3d:profiling": {
+      "path": "../../../.."
+    },
+    "vibe3d:edit-contracts": {
+      "path": "../../../.."
+    },
+    "vibe3d:mesh-change": {
+      "path": "../../../.."
+    },
+    "vibe3d:screen-buckets": {
+      "path": "../../../.."
+    },
+    "vibe3d:pipe-contracts": {
+      "path": "../../../.."
+    },
+    "vibe3d:mesh-preview": {
+      "path": "../../../.."
+    }
+  },
+  "toolchainRequirements": {
+    "dmd": ">=2.111.0",
+    "ldc": ">=1.41.0"
+  },
+  "buildTypes": {
+    "profile-fp": {
+      "buildOptions": [
+        "debugMode",
+        "debugInfo",
+        "optimize"
+      ],
+      "dflags-dmd": [
+        "-gs"
+      ],
+      "dflags-ldc": [
+        "--frame-pointer=all"
+      ]
+    },
+    "perf": {
+      "buildOptions": [
+        "releaseMode",
+        "optimize",
+        "inline"
+      ],
+      "versions": [
+        "PerfProbe"
+      ]
+    },
+    "perf-count": {
+      "buildOptions": [
+        "debugMode",
+        "debugInfo"
+      ],
+      "versions": [
+        "PerfProbe"
+      ]
+    },
+    "perf-unit": {
+      "buildOptions": [
+        "debugMode",
+        "debugInfo",
+        "unittests"
+      ],
+      "versions": [
+        "PerfProbe"
+      ]
+    },
+    "check": {
+      "buildOptions": [
+        "debugMode",
+        "debugInfo"
+      ],
+      "dflags-ldc": [
+        "--boundscheck=on",
+        "--checkaction=C",
+        "--frame-pointer=all"
+      ],
+      "versions": [
+        "SanitizerSelfTest"
+      ]
+    },
+    "check-unit": {
+      "buildOptions": [
+        "debugMode",
+        "debugInfo",
+        "unittests"
+      ],
+      "dflags-ldc": [
+        "--boundscheck=on",
+        "--frame-pointer=all"
+      ],
+      "versions": [
+        "SanitizerSelfTest"
+      ]
+    },
+    "check-release": {
+      "buildOptions": [
+        "releaseMode",
+        "optimize",
+        "inline",
+        "debugInfo"
+      ],
+      "dflags-ldc": [
+        "--boundscheck=on",
+        "--frame-pointer=all"
+      ],
+      "versions": [
+        "SanitizerSelfTest"
+      ]
+    },
+    "sanitize": {
+      "buildOptions": [
+        "debugMode",
+        "debugInfo"
+      ],
+      "dflags-ldc": [
+        "--fsanitize=address",
+        "--fsanitize-address-use-after-return=never",
+        "--checkaction=C",
+        "--frame-pointer=all"
+      ],
+      "versions": [
+        "SanitizerSelfTest"
+      ]
+    },
+    "sanitize-unit": {
+      "buildOptions": [
+        "debugMode",
+        "debugInfo",
+        "unittests"
+      ],
+      "dflags-ldc": [
+        "--fsanitize=address",
+        "--fsanitize-address-use-after-return=never",
+        "--frame-pointer=all"
+      ],
+      "versions": [
+        "SanitizerSelfTest"
+      ]
+    },
+    "tsan": {
+      "buildOptions": [
+        "debugMode",
+        "debugInfo"
+      ],
+      "dflags-ldc": [
+        "--fsanitize=thread",
+        "--enable-asserts=false",
+        "--frame-pointer=all"
+      ],
+      "versions": [
+        "SanitizerSelfTest",
+        "SanitizerThreadPreinit"
+      ]
+    }
+  },
+  "configurations": [
+    {
+      "name": "modeling",
+      "versions": [
+        "WithAI"
+      ],
+      "subConfigurations": {
+        "vibe3d:mesh": "modeling",
+        "vibe3d:math": "modeling",
+        "vibe3d:spatial": "modeling",
+        "vibe3d:profiling": "modeling",
+        "vibe3d:edit-contracts": "modeling",
+        "vibe3d:mesh-change": "modeling",
+        "vibe3d:screen-buckets": "modeling",
+        "vibe3d:pipe-contracts": "modeling",
+        "vibe3d:mesh-preview": "modeling"
+      }
+    },
+    {
+      "name": "modeling-noai",
+      "versions": [],
+      "subConfigurations": {
+        "vibe3d:mesh": "modeling-noai",
+        "vibe3d:math": "modeling-noai",
+        "vibe3d:spatial": "modeling-noai",
+        "vibe3d:profiling": "modeling-noai",
+        "vibe3d:edit-contracts": "modeling-noai",
+        "vibe3d:mesh-change": "modeling-noai",
+        "vibe3d:screen-buckets": "modeling-noai",
+        "vibe3d:pipe-contracts": "modeling-noai",
+        "vibe3d:mesh-preview": "modeling-noai"
+      }
+    },
+    {
+      "name": "with-render",
+      "versions": [
+        "WithRender",
+        "WithAI"
+      ],
+      "subConfigurations": {
+        "vibe3d:mesh": "with-render",
+        "vibe3d:math": "with-render",
+        "vibe3d:spatial": "with-render",
+        "vibe3d:profiling": "with-render",
+        "vibe3d:edit-contracts": "with-render",
+        "vibe3d:mesh-change": "with-render",
+        "vibe3d:screen-buckets": "with-render",
+        "vibe3d:pipe-contracts": "with-render",
+        "vibe3d:mesh-preview": "with-render"
+      }
+    },
+    {
+      "name": "web",
+      "versions": [
+        "web"
+      ],
+      "subConfigurations": {
+        "vibe3d:mesh": "web",
+        "vibe3d:math": "web",
+        "vibe3d:spatial": "web",
+        "vibe3d:profiling": "web",
+        "vibe3d:edit-contracts": "web",
+        "vibe3d:mesh-change": "web",
+        "vibe3d:screen-buckets": "web",
+        "vibe3d:pipe-contracts": "web",
+        "vibe3d:mesh-preview": "web"
+      }
+    },
+    {
+      "name": "root-tests",
+      "versions": [
+        "WithAI"
+      ],
+      "subConfigurations": {
+        "vibe3d:mesh": "root-tests",
+        "vibe3d:math": "root-tests",
+        "vibe3d:spatial": "root-tests",
+        "vibe3d:profiling": "root-tests",
+        "vibe3d:edit-contracts": "root-tests",
+        "vibe3d:mesh-change": "root-tests",
+        "vibe3d:screen-buckets": "root-tests",
+        "vibe3d:pipe-contracts": "root-tests",
+        "vibe3d:mesh-preview": "root-tests"
+      },
+      "targetType": "sourceLibrary"
+    },
+    {
+      "name": "isolated-tests",
+      "versions": [],
+      "subConfigurations": {
+        "vibe3d:mesh": "isolated-tests",
+        "vibe3d:math": "isolated-tests",
+        "vibe3d:spatial": "isolated-tests",
+        "vibe3d:profiling": "isolated-tests",
+        "vibe3d:edit-contracts": "isolated-tests",
+        "vibe3d:mesh-change": "isolated-tests",
+        "vibe3d:screen-buckets": "isolated-tests",
+        "vibe3d:pipe-contracts": "isolated-tests",
+        "vibe3d:mesh-preview": "isolated-tests"
+      },
+      "targetType": "sourceLibrary"
+    }
+  ],
+  "targetName": "vibe3d-interaction-query",
+  "targetPath": ".",
+  "importPaths": [
+    "source"
+  ]
+}

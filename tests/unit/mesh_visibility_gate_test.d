@@ -18,7 +18,7 @@
 // and it does not care which file the mixin instantiating it lives in.
 module tests.unit.mesh_visibility_gate_test;
 
-import mesh_visibility;
+import vibe3d.editing.selection.query.mesh_visibility;
 import tests.unit.mesh_by_value_gate;
 
-mixin MeshByValueGate!(mesh_visibility);
+mixin MeshByValueGate!(vibe3d.editing.selection.query.mesh_visibility);

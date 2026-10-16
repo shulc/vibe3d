@@ -54,13 +54,13 @@ import std.format : format;
 import vibe3d.mesh.core.mesh;
 import vibe3d.viewport.camera.view;
 import vibe3d.editing.contracts.editmode;
-import command;
+import vibe3d.editing.commands.runtime.command;
 import vibe3d.mesh.change.change_bus : changeBus;
 
 import tests.unit.fixtures : makeTaggedGridFull;
-import commands.mesh.subdivide          : Subdivide;
-import commands.mesh.subdivide_faceted  : SubdivideFaceted;
-import commands.mesh.edge_crease        : EdgeCreaseSet, EdgeCreaseClear;
+import vibe3d.editing.commands.editor.commands.mesh.subdivide          : Subdivide;
+import vibe3d.editing.commands.editor.commands.mesh.subdivide_faceted  : SubdivideFaceted;
+import vibe3d.editing.commands.editor.commands.mesh.edge_crease        : EdgeCreaseSet, EdgeCreaseClear;
 import tests.unit.undo_parity_l0_test   : setS, setF;
 
 private Mesh* stand()

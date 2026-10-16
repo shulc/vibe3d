@@ -41,12 +41,12 @@ import std.format  : format;
 import std.process : thisProcessID;
 import std.conv    : to;
 
-import math            : Vec3;
+import vibe3d.util.math.math            : Vec3;
 import vibe3d.mesh.core.mesh            : Mesh, kUvMapName;
 import vibe3d.documents.model.document        : Document;
-import io.scene_ir     : ImportedScene, flattenToMesh, toLayers;
-import io.scene_import : importViaAssimp;
-import io.assimp_runtime : initAssimp, isAssimpAvailable;
+import vibe3d.documents.interchange.io.scene_ir     : ImportedScene, flattenToMesh, toLayers;
+import vibe3d.documents.interchange.io.scene_import : importViaAssimp;
+import vibe3d.documents.interchange.io.assimp_runtime : initAssimp, isAssimpAvailable;
 
 void main() {}
 

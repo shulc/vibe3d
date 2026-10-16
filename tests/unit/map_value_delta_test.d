@@ -24,10 +24,10 @@ import std.algorithm.searching : canFind;
 import std.format : format;
 
 import vibe3d.mesh.core.mesh;
-import math : Vec3;
+import vibe3d.util.math.math : Vec3;
 import vibe3d.mesh.edit_log.mesh_edit_delta;
 import vibe3d.mesh.change.change_bus : changeBus;
-import http_json : meshPlanesJson;
+import vibe3d.runtime.application_core.http_json : meshPlanesJson;
 import tests.unit.fixtures : makeTaggedGridMaps;
 
 // ---------------------------------------------------------------------------

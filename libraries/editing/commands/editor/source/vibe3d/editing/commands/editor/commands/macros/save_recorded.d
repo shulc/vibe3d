@@ -1,0 +1,41 @@
+module vibe3d.editing.commands.editor.commands.macros.save_recorded;
+
+import vibe3d.editing.commands.runtime.command;
+import vibe3d.mesh.core.mesh;
+import vibe3d.viewport.camera.view;
+import vibe3d.editing.contracts.editmode;
+import vibe3d.editing.params.params : Param;
+import vibe3d.editing.commands.editor.macro_recorder : MacroRecorder;
+
+/// `macro.saveRecorded path:S` — write the recorder's captured
+/// buffer to a `.lxm`-style macro file. Phase 7 of the history-panel
+/// design doc (Save button in the History panel's recorder strip).
+///
+/// Stops the recorder as a side effect, finalizing the session. Empty
+/// buffer is allowed — produces a header-only file.
+class MacroSaveRecorded : Command {
+    private MacroRecorder recorder;
+    private string path_;
+
+    this(Mesh* mesh, ref View view, EditMode editMode,
+         MacroRecorder recorder) {
+        super(mesh, view, editMode);
+        this.recorder = recorder;
+    }
+
+    override string name()  const { return "macro.saveRecorded"; }
+    override string label() const { return "Save Recorded Macro"; }
+    override CmdFlags cmdFlags() const { return CmdFlags.SideEffect; }
+
+    override Param[] params() {
+        return [Param.string_("path", "Path", &path_, "")];
+    }
+
+    protected override bool applyImpl() {
+        if (recorder is null) return false;
+        if (path_.length == 0) return false;
+        if (!recorder.saveAs(path_)) return false;
+        recorder.stop();
+        return true;
+    }
+}

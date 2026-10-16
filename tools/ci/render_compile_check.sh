@@ -135,8 +135,8 @@ mapfile -t SOURCES < <(
 import json, sys
 d = json.load(sys.stdin)
 from pathlib import Path
-owners = {"vibe3d-render-model": ["source/render/backend.d", "source/render/scene.d"],
-          "vibe3d-render-backends": ["source/render/backend_bridge.d", "source/render/cycles_backend.d", "source/render/render_diff.d", "source/render/rpr_backend.d"]}
+owners = {"vibe3d:render-model": ["source/vibe3d/render/model/render/backend.d", "source/vibe3d/render/model/render/scene.d"],
+          "vibe3d:render-backends": ["source/vibe3d/render/backends/render/backend_bridge.d", "source/vibe3d/render/backends/render/cycles_backend.d", "source/vibe3d/render/backends/render/render_diff.d", "source/vibe3d/render/backends/render/rpr_backend.d"]}
 selected = [p for p in d["packages"] if p.get("active") and (p["name"] == d["rootPackage"] or p["name"] in owners)]
 assert set(owners) <= {p["name"] for p in selected}, "render_compile_check: active internal render owners missing"
 sources = []

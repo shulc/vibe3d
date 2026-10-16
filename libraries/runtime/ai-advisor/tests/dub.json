@@ -1,0 +1,203 @@
+{
+  "name": "vibe3d-ai-advisor-tests",
+  "targetType": "executable",
+  "sourcePaths": [],
+  "sourceFiles": [
+    "../source/vibe3d/runtime/ai_advisor/ai/analysis.d",
+    "../source/vibe3d/runtime/ai_advisor/ai/copilot_gate.d",
+    "../source/vibe3d/runtime/ai_advisor/ai/element_candidates.d",
+    "../source/vibe3d/runtime/ai_advisor/ai/exploration.d",
+    "../source/vibe3d/runtime/ai_advisor/ai/interaction_log.d",
+    "../source/vibe3d/runtime/ai_advisor/ai/interaction_log_writer.d",
+    "../source/vibe3d/runtime/ai_advisor/ai/mode_candidates.d",
+    "../source/vibe3d/runtime/ai_advisor/ai/model_adapter.d",
+    "../source/vibe3d/runtime/ai_advisor/ai/offline_evaluator.d",
+    "../source/vibe3d/runtime/ai_advisor/ai/onnx_backend.d",
+    "../source/vibe3d/runtime/ai_advisor/ai/ranker_schema.d",
+    "../source/vibe3d/runtime/ai_advisor/ai/state.d",
+    "../source/vibe3d/runtime/ai_advisor/ai/support_loop_candidates.d",
+    "../source/vibe3d/runtime/ai_advisor/ai/synthetic_dataset.d",
+    "../source/vibe3d/runtime/ai_advisor/ai/training_dataset.d",
+    "source/vibe3d/runtime/ai_advisor/tests/unit/ai/analysis_test.d",
+    "source/vibe3d/runtime/ai_advisor/tests/unit/ai/element_candidates_test.d",
+    "source/vibe3d/runtime/ai_advisor/tests/unit/ai/exploration_source_public_test.d",
+    "source/vibe3d/runtime/ai_advisor/tests/unit/ai/exploration_test.d",
+    "source/vibe3d/runtime/ai_advisor/tests/unit/ai/interaction_log_test.d",
+    "source/vibe3d/runtime/ai_advisor/tests/unit/ai/interaction_log_writer_test.d",
+    "source/vibe3d/runtime/ai_advisor/tests/unit/ai/mode_candidates_test.d",
+    "source/vibe3d/runtime/ai_advisor/tests/unit/ai/model_adapter_test.d",
+    "source/vibe3d/runtime/ai_advisor/tests/unit/ai/ranker_schema_test.d",
+    "source/vibe3d/runtime/ai_advisor/tests/unit/ai/support_loop_candidates_test.d",
+    "source/vibe3d/runtime/ai_advisor/tests/unit/ai/training_dataset_test.d"
+  ],
+  "importPaths": [
+    "source",
+    "../source"
+  ],
+  "toolchainRequirements": {
+    "dmd": ">=2.111.0",
+    "ldc": ">=1.41.0"
+  },
+  "buildTypes": {
+    "profile-fp": {
+      "buildOptions": [
+        "debugMode",
+        "debugInfo",
+        "optimize"
+      ],
+      "dflags-dmd": [
+        "-gs"
+      ],
+      "dflags-ldc": [
+        "--frame-pointer=all"
+      ]
+    },
+    "perf": {
+      "buildOptions": [
+        "releaseMode",
+        "optimize",
+        "inline"
+      ],
+      "versions": [
+        "PerfProbe"
+      ]
+    },
+    "perf-count": {
+      "buildOptions": [
+        "debugMode",
+        "debugInfo"
+      ],
+      "versions": [
+        "PerfProbe"
+      ]
+    },
+    "perf-unit": {
+      "buildOptions": [
+        "unittests",
+        "debugMode",
+        "debugInfo"
+      ],
+      "versions": [
+        "PerfProbe"
+      ]
+    },
+    "check": {
+      "buildOptions": [
+        "debugMode",
+        "debugInfo"
+      ],
+      "dflags-ldc": [
+        "--boundscheck=on",
+        "--checkaction=C",
+        "--frame-pointer=all"
+      ],
+      "versions": [
+        "SanitizerSelfTest"
+      ]
+    },
+    "check-unit": {
+      "buildOptions": [
+        "unittests",
+        "debugMode",
+        "debugInfo"
+      ],
+      "dflags-ldc": [
+        "--boundscheck=on",
+        "--frame-pointer=all"
+      ],
+      "versions": [
+        "SanitizerSelfTest"
+      ]
+    },
+    "check-release": {
+      "buildOptions": [
+        "releaseMode",
+        "optimize",
+        "inline",
+        "debugInfo"
+      ],
+      "dflags-ldc": [
+        "--boundscheck=on",
+        "--frame-pointer=all"
+      ],
+      "versions": [
+        "SanitizerSelfTest"
+      ]
+    },
+    "sanitize": {
+      "buildOptions": [
+        "debugMode",
+        "debugInfo"
+      ],
+      "dflags-ldc": [
+        "--fsanitize=address",
+        "--fsanitize-address-use-after-return=never",
+        "--checkaction=C",
+        "--frame-pointer=all"
+      ],
+      "versions": [
+        "SanitizerSelfTest"
+      ]
+    },
+    "sanitize-unit": {
+      "buildOptions": [
+        "unittests",
+        "debugMode",
+        "debugInfo"
+      ],
+      "dflags-ldc": [
+        "--fsanitize=address",
+        "--fsanitize-address-use-after-return=never",
+        "--frame-pointer=all"
+      ],
+      "versions": [
+        "SanitizerSelfTest"
+      ]
+    },
+    "tsan": {
+      "buildOptions": [
+        "debugMode",
+        "debugInfo"
+      ],
+      "dflags-ldc": [
+        "--fsanitize=thread",
+        "--enable-asserts=false",
+        "--frame-pointer=all"
+      ],
+      "versions": [
+        "SanitizerSelfTest",
+        "SanitizerThreadPreinit"
+      ]
+    }
+  },
+  "dependencies": {
+    "vibe3d:interaction-data": {
+      "path": "../../../.."
+    },
+    "vibe3d:math": {
+      "path": "../../../.."
+    },
+    "vibe3d:mesh": {
+      "path": "../../../.."
+    },
+    "vibe3d:mesh-ops": {
+      "path": "../../../.."
+    },
+    "vibe3d:pipe-evaluation": {
+      "path": "../../../.."
+    }
+  },
+  "dflags": [],
+  "configurations": [
+    {
+      "name": "algorithm",
+      "subConfigurations": {
+        "vibe3d:interaction-data": "isolated-tests",
+        "vibe3d:math": "isolated-tests",
+        "vibe3d:mesh": "isolated-tests",
+        "vibe3d:mesh-ops": "isolated-tests",
+        "vibe3d:pipe-evaluation": "isolated-tests"
+      }
+    }
+  ]
+}

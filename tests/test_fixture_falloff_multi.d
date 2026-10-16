@@ -29,12 +29,12 @@ import std.stdio;
 import std.json;
 import std.math : fabs, PI, sqrt;
 
-import math : Vec3, identityMatrix, lookAt, perspectiveMatrix;
+import vibe3d.util.math.math : Vec3, identityMatrix, lookAt, perspectiveMatrix;
 import vibe3d.util.spatial.spatial : Viewport, AimViewport, aimSpace, ModelSpace;
 import vibe3d.mesh.core.mesh : Mesh;
 import vibe3d.editing.pipeline.contracts.toolpipe.packets : FalloffPacket, FalloffType, SymmetryPacket;
-import tools.transform.transform : TransformTool;
-import tools.transform.xform_kernels : applyRotateIncremental, applyXformMatrix, BlendMode;
+import vibe3d.editing.tools.interactive.tools.transform.transform : TransformTool;
+import vibe3d.editing.tools.transform.tools.transform.xform_kernels : applyRotateIncremental, applyXformMatrix, BlendMode;
 import fixture_helpers : requireProvenance;
 
 void main() {}

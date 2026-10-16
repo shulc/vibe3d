@@ -140,16 +140,16 @@ unittest {
             ++transitional[info.name];
             assert(info.unitTest is null, "root selective facade has no unittest: " ~ info.name);
         }
-        if (mathMoved && ["math", "math_geometry", "math_matrix", "math_quaternion", "math_vector", "vibe3d.util.math"].canFind(info.name)) {
+        if (mathMoved && ["vibe3d.util.math"].canFind(info.name)) {
             ++transitional[info.name];
             assert(info.unitTest is null, "root math transitional module has no unittest: " ~ info.name);
         }
     }
     if (mathMoved) {
-        assert(transitional.length == 8, "root transitions6 plus selective APIs2");
+        assert(transitional.length == 3, "root final selective APIs3");
         foreach (name; ["vibe3d.mesh.core", "vibe3d.documents.model"])
             assert(transitional.get(name, 0) == 1, "root selective API exactly once: " ~ name);
-        foreach (name; ["math", "math_geometry", "math_matrix", "math_quaternion", "math_vector", "vibe3d.util.math"])
+        foreach (name; ["vibe3d.util.math"])
             assert(transitional.get(name, 0) == 1, "root math transitional exactly once: " ~ name);
     }
     foreach (name; ["vibe3d.platform.input.eventlog", "vibe3d.platform.input.held_gesture_buttons", "vibe3d.platform.input.tool_input", "vibe3d.platform.input.input_zones", "vibe3d.platform.input.input_context", "vibe3d.platform.input.shortcuts"])

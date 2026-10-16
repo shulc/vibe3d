@@ -26,7 +26,7 @@
 module tests.unit.point_size_law_test;
 
 import std.format : format;
-import viewport_scheme : kBasePointSize, kSelectedPointScale, pointSizePx,
+import vibe3d.viewport.display_policy.viewport_scheme : kBasePointSize, kSelectedPointScale, pointSizePx,
                          kOccludedSelectionAlpha;
 
 /// The shipped defaults are the measured ones.

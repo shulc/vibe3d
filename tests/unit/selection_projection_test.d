@@ -1,6 +1,6 @@
 module tests.unit.selection_projection_test;
 
-import subpatch_factories : subdivideCube;
+import vibe3d.viewport.subpatch.subpatch_factories : subdivideCube;
 import tests.unit.http_test_client : receiveUntilClosed;
 
 import core.atomic : atomicLoad, atomicOp, atomicStore;
@@ -9,9 +9,9 @@ import core.thread : Thread;
 import core.time : MonoTime, msecs, seconds;
 import vibe3d.documents.model.document : Document, Layer, beginPreparedLayerRead;
 import vibe3d.editing.contracts.editmode : EditMode;
-import http_server : HttpServer, InProcessHttpTransport;
+import vibe3d.runtime.http.http_server : HttpServer, InProcessHttpTransport;
 import vibe3d.mesh.core.mesh : makeCube;
-import selection_projection : SelectionProjectionInput,
+import vibe3d.editing.selection.model.selection_projection : SelectionProjectionInput,
     SelectionProjectionReadModel, encodeSelectionProjection;
 import vibe3d.editing.contracts.seltype : SelMode, SelType, SelTypeOrder;
 import std.algorithm : canFind;

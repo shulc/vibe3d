@@ -4,14 +4,14 @@
 module tests.unit.drag_test;
 
 import std.math : sqrt, isNaN, abs;
-import math;
+import vibe3d.util.math.math;
 import vibe3d.util.spatial.spatial : Viewport;
-import handler : MoveHandler, gizmoSize, getGizmoPixels;
+import vibe3d.editing.tools.interactive.handler : MoveHandler, gizmoSize, getGizmoPixels;
 import vibe3d.editing.pipeline.contracts.toolpipe.packets : GesturePacket, GestureTrack;
-import coord_rounding : CoordinateRounding, kFixedIncrementDefault;
+import vibe3d.editing.tools.interactive.coord_rounding : CoordinateRounding, kFixedIncrementDefault;
 import std.math : PI, sin, cos, tan, atan;
-import drag;
-import viewgrid : vectorSnap, ViewGridPrefs, viewGridSize, viewGridSubStep,
+import vibe3d.editing.tools.interactive.drag;
+import vibe3d.editing.selection.query.viewgrid : vectorSnap, ViewGridPrefs, viewGridSize, viewGridSubStep,
     viewWorldPerPixel;
 
 private Viewport capturedPerspective(Vec3 eye, float pixelSize) {

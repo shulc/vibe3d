@@ -27,31 +27,31 @@ private string rawBody(string source, string declaration) {
 unittest {
     const runner = file("run_test.d");
     const digest = rawBody(runner, "string sourceDigest()");
-    assert(digest.count("foreach (scanSourceRoot; [\"libraries/viewport/camera/source\", \"libraries/viewport/camera/tests/source\", \"packages/document-channels/source\", \"packages/document-channels/tests/source\", \"libraries/documents/image-codec/source\", \"libraries/documents/image-codec/tests/source\", \"packages/document-io/source\", \"packages/document-io/tests/source\", \"source\", \"packages/command-runtime/source\", \"packages/application-core/source\", \"libraries/documents/model/source\", \"libraries/editing/params/source\", \"packages/pipe-runtime/source\", \"libraries/mesh/ops/source\", \"packages/interchange/source\", \"packages/interaction-query/source\", \"packages/pipe-evaluation/source\", \"packages/tool-state/source\", \"packages/transform-ops/source\", \"packages/creation-ops/source\", \"packages/alignment-ops/source\", \"libraries/platform/input/source\", \"packages/display-policy/source\", \"packages/viewport-gpu/source\", \"packages/subpatch-preview/source\", \"libraries/editing/contracts/source\", \"libraries/mesh/change/source\", \"libraries/mesh/contracts/source\", \"libraries/mesh/edit-log/source\", \"libraries/mesh/edit-replay/source\", \"libraries/mesh/snapshot/source\", \"libraries/mesh/topology/source\", \"libraries/mesh/core/source\", \"libraries/util/profiling/source\", \"libraries/util/spatial/source\", \"libraries/util/log/source\", \"util/math/source\", \"libraries/util/parallel/source\", \"libraries/util/plane-bytes/source\", \"libraries/util/screen-buckets/source\", \"libraries/editing/pipeline/contracts/source\", \"libraries/mesh/preview/source\", \"libraries/util/json-number/source\", \"packages/selection-model/source\", \"packages/scene-query/source\", \"packages/editor-commands/source\"])") == 1
+    assert(digest.count("foreach (scanSourceRoot; [\"libraries/viewport/camera/source\", \"libraries/viewport/camera/tests/source\", \"libraries/documents/channels/source\", \"libraries/documents/channels/tests/source\", \"libraries/documents/image-codec/source\", \"libraries/documents/image-codec/tests/source\", \"libraries/documents/io/source\", \"libraries/documents/io/tests/source\", \"apps/desktop/source\", \"libraries/editing/commands/runtime/source\", \"libraries/runtime/application-core/source\", \"libraries/documents/model/source\", \"libraries/editing/params/source\", \"libraries/editing/pipeline/runtime/source\", \"libraries/mesh/ops/source\", \"libraries/documents/interchange/source\", \"libraries/editing/selection/query/source\", \"libraries/editing/pipeline/evaluation/source\", \"libraries/editing/tools/state/source\", \"libraries/editing/tools/transform/source\", \"libraries/editing/tools/creation/source\", \"libraries/editing/tools/alignment/source\", \"libraries/platform/input/source\", \"libraries/viewport/display-policy/source\", \"libraries/viewport/gpu/source\", \"libraries/viewport/subpatch/source\", \"libraries/editing/contracts/source\", \"libraries/mesh/change/source\", \"libraries/mesh/contracts/source\", \"libraries/mesh/edit-log/source\", \"libraries/mesh/edit-replay/source\", \"libraries/mesh/snapshot/source\", \"libraries/mesh/topology/source\", \"libraries/mesh/core/source\", \"libraries/util/profiling/source\", \"libraries/util/spatial/source\", \"libraries/util/log/source\", \"util/math/source\", \"libraries/util/parallel/source\", \"libraries/util/plane-bytes/source\", \"libraries/util/screen-buckets/source\", \"libraries/editing/pipeline/contracts/source\", \"libraries/mesh/preview/source\", \"libraries/util/json-number/source\", \"libraries/editing/selection/model/source\", \"libraries/editing/selection/scene-query/source\", \"libraries/editing/commands/editor/source\"])") == 1
         && digest.count("dirEntries(scanSourceRoot == \"util/math/source\" ? mathRoot ~ \"/source\" : scanSourceRoot, pattern, SpanMode.depth)") == 1,
         "standalone-wiring: freshness scans all forty-three production ownership roots plus four explicit test roots");
     foreach (carrier; [
-        "packages/command-runtime/tests/source/tests/unit/command_history_source_public_test.d",
-        "packages/command-runtime/tests/source/tests/unit/command_source_public_test.d",
-        "packages/command-runtime/tests/source/tests/unit/commands/mesh/session_edit_source_public_test.d",
-        "packages/command-runtime/tests/source/tests/unit/commands/select/element_source_public_test.d",
-        "packages/command-runtime/tests/source/tests/unit/record_observer_hub_source_public_test.d",
+        "libraries/editing/commands/runtime/tests/source/vibe3d/editing/commands/runtime/tests/unit/command_history_source_public_test.d",
+        "libraries/editing/commands/runtime/tests/source/vibe3d/editing/commands/runtime/tests/unit/command_source_public_test.d",
+        "libraries/editing/commands/runtime/tests/source/vibe3d/editing/commands/runtime/tests/unit/commands/mesh/session_edit_source_public_test.d",
+        "libraries/editing/commands/runtime/tests/source/vibe3d/editing/commands/runtime/tests/unit/commands/select/element_source_public_test.d",
+        "libraries/editing/commands/runtime/tests/source/vibe3d/editing/commands/runtime/tests/unit/record_observer_hub_source_public_test.d",
     ])
         assert(digest.count(carrier) == 1, "standalone-wiring: exact extracted source freshness input " ~ carrier);
     const library = rawBody(runner, "string buildProjectLib(string scratch)");
-    assert(library.count("\" --root=packages/tool-state\"") == 1,
+    assert(library.count("\" :tool-state\"") == 1,
         "standalone-wiring: suite unittest source grant tool-state");
-    assert(library.count("\" --root=packages/transform-ops\"") == 1,
+    assert(library.count("\" :transform-ops\"") == 1,
         "standalone-wiring: suite unittest source grant transform-ops");
     assert(library.count("\" :input-events\"") == 1,
         "standalone-wiring: suite unittest source grant input-events");
-    assert(library.count("\" --root=packages/display-policy\"") == 1,
+    assert(library.count("\" :display-policy\"") == 1,
         "standalone-wiring: suite unittest source grant display-policy");
-    assert(library.count("\" --root=packages/viewport-gpu\"") == 1,
+    assert(library.count("\" :viewport-gpu\"") == 1,
         "standalone-wiring: suite unittest source grant viewport-gpu");
-    assert(library.count("\" --root=packages/subpatch-preview\"") == 1,
+    assert(library.count("\" :subpatch-preview\"") == 1,
         "standalone-wiring: suite unittest source grant subpatch-preview");
-    assert(library.count("foreach (root; [\"\", \" :camera-model\", \" --root=packages/document-channels\", \" :image-codec\", \" --root=packages/document-io\", \" --root=packages/command-runtime\", \" --root=packages/application-core\", \" :document-model\", \" :param-schema\", \" --root=packages/pipe-runtime\", \" :json-number\", \" :pipe-contracts\", \" :mesh-preview\", \" :mesh-ops\", \" --root=packages/tool-state\", \" --root=packages/transform-ops\", \" :input-events\", \" --root=packages/display-policy\", \" --root=packages/viewport-gpu\", \" --root=packages/subpatch-preview\", \" --root=packages/selection-model\", \" --root=packages/scene-query\", \" --root=packages/editor-commands\"])") == 1
+    assert(library.count("foreach (root; [\"\", \" :camera-model\", \" :document-channels\", \" :image-codec\", \" :document-io\", \" :command-runtime\", \" :application-core\", \" :document-model\", \" :param-schema\", \" :pipe-runtime\", \" :json-number\", \" :pipe-contracts\", \" :mesh-preview\", \" :mesh-ops\", \" :tool-state\", \" :transform-ops\", \" :input-events\", \" :display-policy\", \" :viewport-gpu\", \" :subpatch-preview\", \" :selection-model\", \" :scene-query\", \" :editor-commands\"])") == 1
         && library.count(" --config=modeling --data=source-files --data-list 2>/dev/null") == 1,
         "standalone-wiring: suite selects exactly twenty-three modeling source inventories");
     const harvest = rawBody(runner, "void harvestSourceFlags()");

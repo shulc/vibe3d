@@ -45,23 +45,23 @@ module tests.unit.command_hide_derive_test;
 import std.conv    : to;
 import std.format  : format;
 
-import command;
+import vibe3d.editing.commands.runtime.command;
 import vibe3d.editing.pipeline.contracts.operator : Operator;
 import vibe3d.mesh.core.mesh;
 import vibe3d.viewport.camera.view;
 import vibe3d.editing.contracts.editmode;
 
-import commands.mesh.radial_array_     : MeshRadialArray;
-import commands.mesh.array_            : MeshArray;
-import commands.mesh.spikey            : MeshSpikey;
-import commands.mesh.clone_            : MeshClone;
-import commands.mesh.duplicate_        : MeshDuplicate;
-import commands.mesh.vertex_split      : MeshVertexSplit;
-import commands.mesh.axis_slice        : MeshAxisSlice;
-import commands.mesh.subdivide_faceted : SubdivideFaceted;
-import commands.mesh.detriangulate     : MeshDetriangulate;
-import commands.mesh.spin_edge         : MeshSpinEdge;
-import commands.mesh.paste_           : MeshPaste;
+import vibe3d.editing.commands.editor.commands.mesh.radial_array_     : MeshRadialArray;
+import vibe3d.editing.commands.editor.commands.mesh.array_            : MeshArray;
+import vibe3d.editing.commands.editor.commands.mesh.spikey            : MeshSpikey;
+import vibe3d.editing.commands.editor.commands.mesh.clone_            : MeshClone;
+import vibe3d.editing.commands.editor.commands.mesh.duplicate_        : MeshDuplicate;
+import vibe3d.editing.commands.editor.commands.mesh.vertex_split      : MeshVertexSplit;
+import vibe3d.editing.commands.editor.commands.mesh.axis_slice        : MeshAxisSlice;
+import vibe3d.editing.commands.editor.commands.mesh.subdivide_faceted : SubdivideFaceted;
+import vibe3d.editing.commands.editor.commands.mesh.detriangulate     : MeshDetriangulate;
+import vibe3d.editing.commands.editor.commands.mesh.spin_edge         : MeshSpinEdge;
+import vibe3d.editing.commands.editor.commands.mesh.paste_           : MeshPaste;
 
 import vibe3d.mesh.ops.geometry_clipboard : geometryClipboard, GeometryClip;
 

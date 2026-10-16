@@ -64,7 +64,7 @@
  *                 not a module still lexes; its parse-level lists are then
  *                 whatever the error-recovering parser produced)
  */
-module app;
+module vibe3d.apps.desktop.app;
 
 import dparse.ast;
 import dparse.lexer;

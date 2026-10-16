@@ -36,15 +36,15 @@
 //      numeric slot began, the header record does the same, and this compares
 //      them — the one relationship no row-model assertion can express.
 
-import command   : Command, g_testMode;
+import vibe3d.editing.commands.runtime.command   : Command, g_testMode;
 import vibe3d.documents.model.document  : Document, Layer;
 import vibe3d.editing.contracts.editmode  : EditMode;
 import vibe3d.mesh.core.mesh;
 import vibe3d.mesh.edit_log.mesh_edit_delta : MeshEditTracker, MeshEditScope;
 import vibe3d.editing.contracts.seltype   : SelType, SelMode;
-import ui.panels : drawStatisticsBody;
-import ui.stat_rows;
-import ui.stat_record : drawnStatRows, drawnStatFrame;
+import vibe3d.ui.editor.ui.panels : drawStatisticsBody;
+import vibe3d.ui.editor.ui.stat_rows;
+import vibe3d.ui.editor.ui.stat_record : drawnStatRows, drawnStatFrame;
 import tests.unit.ui.headless_panel : HeadlessPanel, openPanel;
 import tests.unit.ui.stat_dispatch  : dispatchStatAction;
 import std.algorithm : canFind;

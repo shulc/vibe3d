@@ -24,7 +24,7 @@ import std.math : fabs;
 import vibe3d.mesh.core.mesh : Mesh, makeCube;
 import vibe3d.mesh.edit_log.mesh_edit_delta : MeshEditTracker, MeshEditDelta, MeshEditScope, MeshOpEntry;
 import vibe3d.mesh.edit_replay.mesh_edit_replay : apply, revert;
-import math : Vec3;
+import vibe3d.util.math.math : Vec3;
 
 void main() {}
 

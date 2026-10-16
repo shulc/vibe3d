@@ -46,9 +46,9 @@ import std.format : format;
 import std.json   : parseJSON;
 
 import vibe3d.documents.model.document     : Layer, ItemKind;
-import forms        : Form, Row;
-import forms_render : FormsPanel, textInputPresentation;
-import layer_params : LayerPropsProvider;
+import vibe3d.ui.forms.forms        : Form, Row;
+import vibe3d.ui.editor.forms_render : FormsPanel, textInputPresentation;
+import vibe3d.documents.channels.layer_params : LayerPropsProvider;
 import vibe3d.editing.params.params       : kMixedPlaceholder;
 import tests.unit.ui.headless_panel : openPanel;
 

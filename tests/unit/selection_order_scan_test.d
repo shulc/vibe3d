@@ -64,16 +64,16 @@ module tests.unit.selection_order_scan_test;
 import std.format : format;
 
 import vibe3d.mesh.core.mesh;
-import math     : Vec3;
+import vibe3d.util.math.math     : Vec3;
 import vibe3d.viewport.camera.view;
 import vibe3d.editing.contracts.editmode;
 import vibe3d.mesh.ops.mesh_ops.bevel_vertex : bevelVerticesByMask, kBevelVertexEditScope;
-import command         : Command;
-import command_history : CommandHistory;
+import vibe3d.editing.commands.runtime.command         : Command;
+import vibe3d.editing.commands.runtime.command_history : CommandHistory;
 
-import commands.select.less    : SelectLess;
-import commands.select.more    : SelectMore;
-import commands.select.between : SelectBetween;
+import vibe3d.editing.commands.editor.commands.select.less    : SelectLess;
+import vibe3d.editing.commands.editor.commands.select.more    : SelectMore;
+import vibe3d.editing.commands.editor.commands.select.between : SelectBetween;
 
 // ---------------------------------------------------------------------------
 // The stand

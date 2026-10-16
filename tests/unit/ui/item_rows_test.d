@@ -6,7 +6,7 @@ module tests.unit.ui.item_rows_test;
 import vibe3d.documents.model.document : Document, Layer, ItemKind, kindInfo;
 import vibe3d.mesh.core.mesh     : makeCube;
 import vibe3d.editing.contracts.seltype  : SelMode;
-import ui.item_rows;
+import vibe3d.ui.editor.ui.item_rows;
 
 // ---------------------------------------------------------------------------
 // I1 — the list is the scene root plus the SCENE ITEMS, carrying the DOCUMENT
@@ -508,8 +508,8 @@ unittest {
 // button that silently does nothing — reads a different string here.
 // ---------------------------------------------------------------------------
 unittest {
-    import commands.layer.commands       : LayerAdd;
-    import commands.image_plane.commands : ImagePlaneAdd;
+    import vibe3d.runtime.document_actions.commands.layer.commands       : LayerAdd;
+    import vibe3d.runtime.document_actions.commands.image_plane.commands : ImagePlaneAdd;
     import vibe3d.viewport.camera.view     : View;
     import vibe3d.editing.contracts.editmode : EditMode;
 

@@ -42,28 +42,28 @@
 // isolation when scoring a mutation.
 module tests.unit.undo_parity_l2_test;
 
-import command;
+import vibe3d.editing.commands.runtime.command;
 import vibe3d.mesh.core.mesh;
 import vibe3d.viewport.camera.view;
 import vibe3d.editing.contracts.editmode;
-import math : Vec3;
+import vibe3d.util.math.math : Vec3;
 
 import tests.unit.fixtures            : makeTaggedGridBent, findEdge;
 import tests.unit.undo_parity_l0_test : ParityCell, runCell, compareOrCapture,
                                         setS, setI, setF, setV, setB;
 
-import commands.mesh.vertex_new      : MeshVertexNew;
-import commands.mesh.add_point       : MeshAddPoint;
-import commands.mesh.flip            : MeshFlip;
-import commands.mesh.polygon_align   : MeshAlign;
-import commands.mesh.spikey          : MeshSpikey;
-import commands.mesh.spin_edge       : MeshSpinEdge;
-import commands.mesh.split_edge      : MeshSplitEdge;
-import commands.mesh.split_face      : MeshSplitFace;
-import commands.mesh.vertex_split    : MeshVertexSplit;
-import commands.mesh.make_polygon    : MeshMakePolygon;
-import commands.mesh.fix_orientation : MeshFixOrientation;
-import commands.mesh.thicken         : MeshThicken;
+import vibe3d.editing.commands.editor.commands.mesh.vertex_new      : MeshVertexNew;
+import vibe3d.editing.commands.editor.commands.mesh.add_point       : MeshAddPoint;
+import vibe3d.editing.commands.editor.commands.mesh.flip            : MeshFlip;
+import vibe3d.editing.commands.editor.commands.mesh.polygon_align   : MeshAlign;
+import vibe3d.editing.commands.editor.commands.mesh.spikey          : MeshSpikey;
+import vibe3d.editing.commands.editor.commands.mesh.spin_edge       : MeshSpinEdge;
+import vibe3d.editing.commands.editor.commands.mesh.split_edge      : MeshSplitEdge;
+import vibe3d.editing.commands.editor.commands.mesh.split_face      : MeshSplitFace;
+import vibe3d.editing.commands.editor.commands.mesh.vertex_split    : MeshVertexSplit;
+import vibe3d.editing.commands.editor.commands.mesh.make_polygon    : MeshMakePolygon;
+import vibe3d.editing.commands.editor.commands.mesh.fix_orientation : MeshFixOrientation;
+import vibe3d.editing.commands.editor.commands.mesh.thicken         : MeshThicken;
 
 enum string kL2Family = "create_stable";
 enum string kL2Stand  = "makeTaggedGridBent(3)";

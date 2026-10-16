@@ -80,7 +80,7 @@ module tests.unit.tools.edit.edge_extend_extrude_p0a_reachability_test;
 
 import vibe3d.mesh.core.mesh;
 import vibe3d.mesh.ops.mesh_ops.extrude;
-import math : Vec3;
+import vibe3d.util.math.math : Vec3;
 import std.conv : to;
 
 // ---------------------------------------------------------------------------

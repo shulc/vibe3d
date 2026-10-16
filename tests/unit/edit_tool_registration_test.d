@@ -1,14 +1,14 @@
 module tests.unit.edit_tool_registration_test;
 
-import command : Command;
-import commands.mesh.session_edit : MeshSessionEdit;
-import commands.mesh.vertex_edit : MeshVertexEdit;
+import vibe3d.editing.commands.runtime.command : Command;
+import vibe3d.editing.commands.editor.commands.mesh.session_edit : MeshSessionEdit;
+import vibe3d.editing.commands.editor.commands.mesh.vertex_edit : MeshVertexEdit;
 import vibe3d.editing.contracts.editmode : EditMode;
 import vibe3d.mesh.core.mesh : Mesh;
-import registration : registerTools;
+import vibe3d.apps.desktop.registration : registerTools;
 import tests.unit.live_registration_rig : LiveRegistrationRig;
-import tool : Tool;
-import tools.slice.loop_slice_tool : LoopSliceTool;
+import vibe3d.editing.tools.interactive.tool : Tool;
+import vibe3d.editing.tools.interactive.tools.slice.loop_slice_tool : LoopSliceTool;
 
 import std.meta : AliasSeq;
 import std.traits : BaseClassesTuple;

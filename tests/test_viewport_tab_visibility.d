@@ -21,7 +21,7 @@
 
 import http_client : getJson, postJson;
 import http_command_helpers : commandBody;
-import buttonset : loadButtons, Panel, PanelItem, Group, Button, ActionKind;
+import vibe3d.ui.editor.buttonset : loadButtons, Panel, PanelItem, Group, Button, ActionKind;
 import std.json;
 import std.format : format;
 import std.conv : to;

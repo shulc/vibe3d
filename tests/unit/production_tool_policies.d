@@ -12,25 +12,25 @@ module tests.unit.production_tool_policies;
 /// `each` (S6r, 9270): called with every id's production-built instance.
 package(tests.unit) string[4][] productionPolicies(out size_t ids,
         void delegate(string, imported!"tool".Tool) each = null) {
-    import ai.exploration : AiExplorationController;
-    import ai.interaction_log_writer : AiInteractionLogWriter;
-    import command_history : CommandHistory;
-    import commands.layer.xform_edit : LayerXformEdit;
-    import commands.mesh.morph_edit : MeshMorphEdit;
-    import commands.mesh.vertex_edit : MeshVertexEdit;
+    import vibe3d.runtime.ai_advisor.ai.exploration : AiExplorationController;
+    import vibe3d.runtime.ai_advisor.ai.interaction_log_writer : AiInteractionLogWriter;
+    import vibe3d.editing.commands.runtime.command_history : CommandHistory;
+    import vibe3d.editing.commands.editor.commands.layer.xform_edit : LayerXformEdit;
+    import vibe3d.editing.commands.editor.commands.mesh.morph_edit : MeshMorphEdit;
+    import vibe3d.editing.commands.editor.commands.mesh.vertex_edit : MeshVertexEdit;
     import vibe3d.documents.model.document : Document, Layer;
-    import editor_app : EditorApp;
+    import vibe3d.apps.desktop.editor_app : EditorApp;
     import vibe3d.mesh.core.mesh : Mesh, makeCube;
-    import mesh_gpu : GpuMesh;
-    import pipe_gizmo_host : PipeGizmoHost;
-    import registration : registerTools;
-    import registry : Registry;
+    import vibe3d.viewport.gpu.mesh_gpu : GpuMesh;
+    import vibe3d.editing.tools.interactive.pipe_gizmo_host : PipeGizmoHost;
+    import vibe3d.apps.desktop.registration : registerTools;
+    import vibe3d.editing.tools.interactive.registry : Registry;
     import vibe3d.editing.contracts.seltype : SelMode;
-    import session_owner : Session;
-    import tool : capturedTopologyModel, firstStepCarriesActivation, opensAtArm,
+    import vibe3d.runtime.application_core.session_owner : Session;
+    import vibe3d.editing.tools.interactive.tool : capturedTopologyModel, firstStepCarriesActivation, opensAtArm,
         postmodeStartsOnPressFor;
-    import tool_presets : loadToolPresets, registerToolPresets;
-    import tools.edit.topology_pen.defs : TopoPenFactories;
+    import vibe3d.editing.tools.interactive.tool_presets : loadToolPresets, registerToolPresets;
+    import vibe3d.editing.tools.interactive.tools.edit.topology_pen.defs : TopoPenFactories;
     import vibe3d.viewport.camera.view : View;
     import std.traits : FieldNameTuple;
     static struct Rig { Registry registry; GpuMesh gpu; Session* session; Layer layer;

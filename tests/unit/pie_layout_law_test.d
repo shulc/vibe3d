@@ -1,6 +1,6 @@
 module tests.unit.pie_layout_law_test;
 
-import pie_geometry : PIE_SLOTS, pieBoxTopLeft, pieHoverAt, pieSlotDir;
+import vibe3d.ui.editor.pie_geometry : PIE_SLOTS, pieBoxTopLeft, pieHoverAt, pieSlotDir;
 import std.file : readText;
 import std.json : JSONValue, parseJSON;
 import std.math : PI, cos, lround, sin;

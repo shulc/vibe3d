@@ -1,0 +1,382 @@
+module vibe3d.documents.interchange.io.lwo_export;
+
+import lwo2;   // lwo2-writer (core config): Lwo2Object / Lwo2Layer / Lwo2Polygon
+               //   Lwo2Surface / Lwo2VertexMap / Lwo2VertexMapD / writeLwo2File
+
+import vibe3d.mesh.core.mesh;
+import vibe3d.documents.model.document : Document, Layer;
+import vibe3d.util.math.math     : Vec3, matrixMirrorsWinding, transformPoint;
+import vibe3d.mesh.core.mesh_selsets : selSetsAnyLive;
+import vibe3d.util.log.log : logWarn;
+
+// ---------------------------------------------------------------------------
+// LWO2 export via the lwo2-writer library.
+// ---------------------------------------------------------------------------
+// Maps the vibe3d `Mesh` onto lwo2-writer's `Lwo2Object` and serializes it with
+// `writeLwo2File`. The library emits a faithful LWO2 IFF container
+// (LAYR/TAGS/PNTS/BBOX/POLS FACE+PTCH/PTAG/SURF), so the output round-trips
+// through our own reader (`sceneFromLwo`, source/io/lwo_import.d) and through other
+// .lwo-aware DCC tools.
+//
+// Coordinates are written verbatim (no handedness flip) — same as the previous
+// hand-rolled exporter, so our own reader round-trips exactly.
+//
+// Two entry points:
+//   * exportLwo(ref const Mesh, path)          — single mesh, one LAYR 0.
+//   * exportLwoDocument(ref const Document, p)  — one LAYR per Document layer,
+//     each layer's per-item xform BAKED into its points, hidden layers exported
+//     with the LAYR hidden flag set, ONE global surface table shared by all
+//     layers. A single-VISIBLE-layer document with identity xform produces the
+//     EXACT bytes the flat single-mesh path produces (back-compat — see below).
+
+/// Serialize `mesh` to an LWO2 file at `path` (single layer, LAYR 0).
+void exportLwo(ref const Mesh mesh, string path)
+{
+    // Selection sets (task 1060) have no LWO codec — deferred, see
+    // doc/selection_sets_plan.md §Q3 (our exporter emits only TXUV; PTAG is
+    // hardcoded to SURF by the out-of-tree writer package). Warn once so the
+    // loss is a message, not a silent drop.
+    if (selSetsAnyLive(mesh))
+        try logWarn("io", "export " ~ path ~ ": selection sets are not carried by LWO and will be dropped");
+        catch (Exception) {}
+
+    Lwo2Object obj;
+
+    // Points: Vec3 → float[3], verbatim.
+    obj.points.reserve(mesh.vertices.length);
+    foreach (v; mesh.vertices)
+        obj.points ~= [v.x, v.y, v.z];
+
+    // One polygon per face. `mesh.faces[fi]` is a uint[] of point indices;
+    // surface index comes from faceMaterial (default 0 when unassigned or
+    // out of range); the PTCH/FACE kind comes from the per-face subpatch flag.
+    obj.polygons = buildPolygons(mesh);
+
+    // Surfaces: copy the per-mesh material registry. When empty, leave
+    // `obj.surfaces` empty — the writer then omits TAGS/PTAG/SURF and produces
+    // a pure PNTS+POLS file, matching the old "no surfaces" behavior.
+    obj.surfaces.reserve(mesh.surfaces.length);
+    foreach (ref s; mesh.surfaces)
+        obj.surfaces ~= toLwoSurface(s);
+
+    // --- UV: flat per-corner "uv" map -> two-tier VMAP base + VMAD overrides ---
+    buildUvMaps(mesh, obj.vmaps, obj.vmads);
+    buildMorphMaps(mesh, obj.vmaps);   // task 1069
+
+    writeLwo2File(path, obj);
+}
+
+/// Serialize `doc` to a multi-layer LWO2 file at `path`.
+///
+/// One `Lwo2Layer` per `doc.layers` entry (visible AND hidden — the user's
+/// decision is to export hidden layers, flagged off via `Lwo2Layer.hidden`).
+/// Each layer's `xform.composedMatrix()` is BAKED into its points (LWO carries
+/// no per-layer node matrix, so the bake is the faithful representation); an
+/// identity xform (the default) leaves points verbatim. The surface table is
+/// GLOBAL — surface names are deduped across ALL layers (first-seen order,
+/// matching `flattenDocument`'s policy) and each layer's per-face material index
+/// is remapped into that shared table. PTAG inside each layer references the
+/// global surface index.
+///
+/// Back-compat: a single-VISIBLE-layer document whose layer has an identity
+/// xform routes through the N=1 case of this same builder. The identity bake
+/// leaves points verbatim, the global dedup over one layer equals the per-mesh
+/// registry, and the per-layer polygon/UV emission is byte-for-byte what the
+/// flat path emits. The lib guarantees `buildLwo2(flatObj) ==
+/// buildLwo2(equivalent-single-layers0-obj)`, so the file is byte-identical.
+void exportLwoDocument(ref const Document doc, string path)
+{
+    // Selection sets (task 1060) — same warn-once as the single-mesh path
+    // above, checked across every exported layer.
+    foreach (const(Layer) l; doc.meshLayers) {
+        if (selSetsAnyLive(l.meshRef())) {
+            try logWarn("io", "export " ~ path ~ ": selection sets are not carried by LWO and will be dropped");
+            catch (Exception) {}
+            break;
+        }
+    }
+
+    Lwo2Object obj;
+
+    // --- ONE global surface table: dedup by name across ALL layers, first-seen
+    //     order (same policy as flattenDocument/flattenToMesh). `nameToIndex`
+    //     maps a surface name to its slot in the merged table; per-layer remap
+    //     tables rewrite each layer's faceMaterial into global indices. ---
+    Lwo2Surface[]  mergedSurfaces;
+    size_t[string] nameToIndex;
+
+    Lwo2Layer[] layers;
+    // Task 0615 Stage 4: interchange export has no non-mesh concept — iterate
+    // `doc.meshLayers`, not `doc.layers`, so a non-mesh layer is silently
+    // skipped rather than reaching `meshRef()`. Reserve is sized to match —
+    // `doc.layers.length` would over-reserve whenever a non-mesh layer is
+    // present (harmless, but `walkLength` over the same filtered range is
+    // exact for free).
+    import std.range : walkLength;
+    layers.reserve(doc.meshLayers.walkLength);
+
+    foreach (const(Layer) l; doc.meshLayers) {
+        const ref Mesh src = l.meshRef();
+
+        Lwo2Layer lay;
+        lay.name   = l.name;
+        lay.hidden = !l.visible;          // hidden layers are exported, flagged off
+
+        // Per-layer surface remap into the global table (value copy of the
+        // const Surface, like flattenDocument).
+        uint[] remap;
+        remap.length = src.surfaces.length;
+        foreach (si, ref s; src.surfaces) {
+            if (auto idx = s.name in nameToIndex) {
+                remap[si] = cast(uint) *idx;
+            } else {
+                const newIdx = cast(uint) mergedSurfaces.length;
+                mergedSurfaces ~= toLwoSurface(s);
+                nameToIndex[s.name] = newIdx;
+                remap[si] = newIdx;
+            }
+        }
+
+        // BAKE the per-item xform into this layer's points (column-major affine,
+        // w=1). A default ItemXform composes to identity, so points are verbatim.
+        const float[16] M = l.xform.composedMatrix();
+        lay.points.reserve(src.vertices.length);
+        foreach (v; src.vertices) {
+            const p = transformPoint(M, Vec3(v.x, v.y, v.z));
+            lay.points ~= [p.x, p.y, p.z];
+        }
+
+        // One polygon per face, layer-local indices, surface remapped global.
+        lay.polygons = buildPolygons(src, remap);
+
+        // A MIRRORING bake (det(M) < 0 — a legal item transform: an odd number
+        // of negative `scl` components; `MIN_ITEM_SCALE_MAG` clamps magnitude
+        // only, never the sign) moves the points but leaves the index order
+        // alone, so every polygon of that layer would be wound inward. Reverse
+        // each polygon's point order to compensate (task 0684 — the same rule
+        // `create_common.frameIsLeftHanded`/`reverseFaceWinding` applies to a
+        // left-handed workplane frame at the Create-tool boundary).
+        //
+        // UV needs NO reversal here, unlike the flat `flattenDocument` path:
+        // LWO's per-corner channel is a VMAD keyed by (POINT, POLYGON), not by
+        // corner ORDER, so reversing a polygon's index order leaves every
+        // (point, poly) pair — and therefore every override — addressing the
+        // same corner. `buildUvMaps` below reads the SOURCE mesh (unreversed),
+        // which is exactly what keeps that keying correct.
+        if (matrixMirrorsWinding(M))
+            reversePolygonWinding(lay.polygons);
+
+        // UV: the same two-tier VMAP+VMAD reconstruction, per layer.
+        buildUvMaps(src, lay.vmaps, lay.vmads);
+        buildMorphMaps(src, lay.vmaps);   // task 1069
+
+        layers ~= lay;
+    }
+
+    obj.surfaces = mergedSurfaces;
+    obj.layers   = layers;               // non-empty ⇒ writer emits per-layer LAYR n
+
+    writeLwo2File(path, obj);
+}
+
+// ---------------------------------------------------------------------------
+// Shared builders (single-mesh and per-layer paths share these).
+// ---------------------------------------------------------------------------
+
+/// One `Lwo2Polygon` per face of `mesh`, in face order. Surface index = the
+/// per-face material remapped through `surfaceRemap` (identity when null/empty
+/// — i.e. surface index used verbatim, the single-mesh case). Subpatch flag
+/// from the mesh's per-face subpatch state.
+private Lwo2Polygon[] buildPolygons(ref const Mesh mesh, const(uint)[] surfaceRemap = null)
+{
+    Lwo2Polygon[] polys;
+    polys.reserve(mesh.faces.length);
+    foreach (fi; 0 .. mesh.faces.length) {
+        Lwo2Polygon poly;
+        poly.indices  = mesh.faces[fi].dup;
+        const uint mat = (fi < mesh.faceMaterial.length) ? mesh.faceMaterial[fi] : 0u;
+        poly.surface  = (surfaceRemap.length && mat < surfaceRemap.length)
+                        ? surfaceRemap[mat] : mat;
+        poly.subpatch = mesh.isFaceSubpatch(fi);
+        polys ~= poly;
+    }
+    return polys;
+}
+
+/// Reverse every polygon's point order IN PLACE — the winding correction for a
+/// layer whose baked item matrix mirrors (see the call site). Separate from
+/// `buildPolygons` so the single-mesh path (which bakes nothing) is untouched.
+private void reversePolygonWinding(ref Lwo2Polygon[] polys)
+{
+    import std.algorithm.mutation : reverse;
+    foreach (ref p; polys)
+        reverse(p.indices);
+}
+
+/// Map a vibe3d `Surface` onto an `Lwo2Surface` (value copy of fields).
+private Lwo2Surface toLwoSurface(ref const Surface s)
+{
+    Lwo2Surface ls;
+    ls.name       = s.name;
+    ls.baseColor  = [s.baseColor.x, s.baseColor.y, s.baseColor.z];
+    ls.diffuse    = s.diffuseAmount;
+    ls.specular   = s.specularAmount;
+    ls.glossiness = s.glossiness;
+    ls.opacity    = s.opacity;
+    // SMAN always written (captured export law): the angle in radians when
+    // smoothing is on, 0 when off (which a reader imports as off).
+    import std.math : PI;
+    ls.smoothingAngle = s.smoothing ? cast(float)(s.smoothingAngleDeg * PI / 180.0) : 0.0f;
+    // SIDE 3 iff double-sided; a single-sided surface writes no SIDE (the
+    // reader's absent == SIDE 1, so default surfaces stay byte-identical).
+    ls.doubleSided = s.twoSided;
+    return ls;
+}
+
+// ---------------------------------------------------------------------------
+// UV: flat per-corner -> two-tier (VMAP continuous base + VMAD overrides)
+// ---------------------------------------------------------------------------
+// vibe3d's in-memory UV is a FLAT per-corner PolyVertex map ("uv"); the LWO file
+// is two-tier: a continuous VMAP gives each POINT one base (u,v), and a
+// discontinuous VMAD overrides individual CORNERS where they differ from that
+// base (the seam case). Reconstruct that here:
+//
+//   * VMAP base: for each point, the UV of its FIRST incident corner (in face,
+//     then corner order). Points with no corner (unreferenced) get no entry.
+//   * VMAD override: every corner whose UV != its point's base, keyed
+//     (point, face). The VMAD `polys[]` are in the polygon list's index space
+//     (== mesh face index here, since we emit one Lwo2Polygon per face in face
+//     order, both single-mesh and per-layer), and each VMAD references a SINGLE
+//     poly kind. So overrides are split by mesh.isFaceSubpatch into UP TO TWO
+//     VMAD entries: one whose polys[] are all FACE (non-subpatch), one all PTCH.
+//
+// No "uv" map (or it is not the expected PolyVertex/dim-2 shape) ⇒ `vmaps` /
+// `vmads` stay untouched and the writer emits a UV-less layer (unchanged output).
+//
+// The map type/name written is "TXUV" / "uv" — matching what the importer keys
+// on (it consumes only TXUV maps and seeds the `"uv"` PolyVertex map from them).
+//
+// Fills the caller's `vmaps`/`vmads` (the flat object's, or a layer's) so the
+// single-mesh and per-layer paths share ONE implementation.
+/// Emit one SPARSE VMAP per morph map (task 1069). The sibling of
+/// `buildUvMaps` below, and much simpler because the morph domain is per-POINT:
+/// there is no corner bookkeeping and no VMAD half.
+///
+/// Only PRESENT entries are listed, which is the whole point — a dense
+/// emission would collapse "this vertex has no entry" into "its entry is
+/// zero", and for the absolute kind those are different POSITIONS.
+///
+/// The library's own invariant is `values.length == points.length * dimension`
+/// and it is an `assert`, so it is COMPILED OUT under `-release`. The loop
+/// below satisfies it by construction — three floats appended for every point
+/// appended, in the same iteration — rather than leaning on the assert as a
+/// runtime check.
+private void buildMorphMaps(ref const Mesh mesh, ref Lwo2VertexMap[] vmaps) {
+    import vibe3d.documents.interchange.io.lwo_import : kMorphRelativeTag, kMorphAbsoluteTag;
+    foreach (ref map; mesh.meshMaps) {
+        if (!isMorphKind(map.kind)) continue;
+        if (map.domain != MapDomain.Point || map.dim != 3) continue;
+        Lwo2VertexMap vmap;
+        vmap.type      = (map.kind == MapKind.morphAbsolute)
+                       ? kMorphAbsoluteTag : kMorphRelativeTag;
+        vmap.name      = map.name;
+        vmap.dimension = 3;
+        const size_t n = map.data.length / 3;
+        foreach (uint pt; 0 .. cast(uint) n) {
+            if (pt >= mesh.vertices.length) break;   // defensive
+            if (!map.isPresent(pt)) continue;
+            vmap.points ~= pt;
+            vmap.values ~= map.data[pt * 3];
+            vmap.values ~= map.data[pt * 3 + 1];
+            vmap.values ~= map.data[pt * 3 + 2];
+        }
+        if (vmap.points.length == 0) continue;       // an empty map emits nothing
+        assert(vmap.values.length == vmap.points.length * 3,
+            "morph VMAP: values/points/dimension invariant broken");
+        vmaps ~= vmap;
+    }
+}
+
+private void buildUvMaps(ref const Mesh mesh,
+                         ref Lwo2VertexMap[]  vmaps,
+                         ref Lwo2VertexMapD[] vmads)
+{
+    const(MeshMap)* uvMap = mesh.meshMap(kUvMapName);
+    if (uvMap is null
+        || uvMap.domain != MapDomain.PolyVertex
+        || uvMap.dim != 2)
+        return;                       // no usable UV ⇒ leave vmaps/vmads as-is
+
+    const float[] uv = uvMap.data;
+
+    // Pass 1: per-point base = the UV of its first incident corner. `hasBase`
+    // marks which points were actually referenced by a corner.
+    float[2][] base;
+    bool[]     hasBase;
+    base.length    = mesh.vertices.length;
+    hasBase.length = mesh.vertices.length;
+    foreach (uint fi; 0 .. cast(uint) mesh.faces.length) {
+        const face = mesh.faces[fi];
+        foreach (uint c; 0 .. cast(uint) face.length) {
+            const uint point = face[c];
+            if (point >= hasBase.length) continue;   // defensive
+            if (hasBase[point]) continue;            // first incident corner wins
+            const size_t loop = mesh.faceCornerLoop(fi, c);
+            if (loop == size_t.max || loop * 2 + 2 > uv.length) continue;
+            base[point]    = [uv[loop * 2], uv[loop * 2 + 1]];
+            hasBase[point] = true;
+        }
+    }
+
+    // Emit the continuous VMAP base (one entry per referenced point).
+    Lwo2VertexMap vmap;
+    vmap.type      = "TXUV";
+    vmap.name      = "uv";
+    vmap.dimension = 2;
+    foreach (uint pt; 0 .. cast(uint) mesh.vertices.length) {
+        if (!hasBase[pt]) continue;
+        vmap.points ~= pt;
+        vmap.values ~= base[pt][0];
+        vmap.values ~= base[pt][1];
+    }
+    if (vmap.points.length == 0)
+        return;                       // no referenced points ⇒ nothing to emit
+
+    vmaps ~= vmap;
+
+    // Pass 2: per-corner overrides where the corner UV differs from its point's
+    // base, split by face kind (FACE vs PTCH) so each VMAD references one kind —
+    // the lib's single-kind constraint. polys[] are mesh face indices, which are
+    // polygon-list indices (one Lwo2Polygon per face, face order).
+    Lwo2VertexMapD faceVmad, ptchVmad;
+    faceVmad.type = ptchVmad.type = "TXUV";
+    faceVmad.name = ptchVmad.name = "uv";
+    faceVmad.dimension = ptchVmad.dimension = 2;
+
+    enum float EPS = 1e-6f;
+    foreach (uint fi; 0 .. cast(uint) mesh.faces.length) {
+        const face = mesh.faces[fi];
+        const bool sub = mesh.isFaceSubpatch(fi);
+        foreach (uint c; 0 .. cast(uint) face.length) {
+            const uint point = face[c];
+            if (point >= hasBase.length || !hasBase[point]) continue;
+            const size_t loop = mesh.faceCornerLoop(fi, c);
+            if (loop == size_t.max || loop * 2 + 2 > uv.length) continue;
+            const float cu = uv[loop * 2];
+            const float cv = uv[loop * 2 + 1];
+            if (fabsf(cu - base[point][0]) <= EPS
+                && fabsf(cv - base[point][1]) <= EPS)
+                continue;             // corner agrees with base ⇒ no override
+            auto vmad = sub ? &ptchVmad : &faceVmad;
+            vmad.points ~= point;
+            vmad.polys  ~= fi;
+            vmad.values ~= cu;
+            vmad.values ~= cv;
+        }
+    }
+
+    if (faceVmad.points.length) vmads ~= faceVmad;
+    if (ptchVmad.points.length) vmads ~= ptchVmad;
+}
+
+private float fabsf(float x) { return x < 0 ? -x : x; }

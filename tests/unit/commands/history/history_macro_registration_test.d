@@ -8,21 +8,21 @@ import std.json : parseJSON;
 import std.path : buildNormalizedPath, buildPath, dirName;
 import std.string : indexOf;
 
-import command : CmdFlags, Command;
-import command_history : CommandHistory, HistoryFlags;
-import commands.macros.save_recorded : MacroSaveRecorded;
-import edit_session : EditSession;
-import tool : ToolSessionPolicy;
+import vibe3d.editing.commands.runtime.command : CmdFlags, Command;
+import vibe3d.editing.commands.runtime.command_history : CommandHistory, HistoryFlags;
+import vibe3d.editing.commands.editor.commands.macros.save_recorded : MacroSaveRecorded;
+import vibe3d.editing.tools.interactive.edit_session : EditSession;
+import vibe3d.editing.tools.interactive.tool : ToolSessionPolicy;
 import vibe3d.editing.contracts.editmode : EditMode;
-import history_macro_registration : registerHistoryCommands;
-import live_registration_roles : LiveSessionRole, LiveView, LiveViewModeRole;
-import macro_recorder : MacroRecorder;
+import vibe3d.apps.desktop.history_macro_registration : registerHistoryCommands;
+import vibe3d.runtime.application_core.live_registration_roles : LiveSessionRole, LiveView, LiveViewModeRole;
+import vibe3d.editing.commands.editor.macro_recorder : MacroRecorder;
 import vibe3d.mesh.core.mesh : Mesh, makeCube;
 import vibe3d.editing.params.params : Param, injectParamsInto;
-import registry : Registry;
-import session_owner : Session;
-import tool : Tool;
-import ui.history_panel : HistoryPanelActions, HistoryPanelController,
+import vibe3d.editing.tools.interactive.registry : Registry;
+import vibe3d.runtime.application_core.session_owner : Session;
+import vibe3d.editing.tools.interactive.tool : Tool;
+import vibe3d.ui.editor.ui.history_panel : HistoryPanelActions, HistoryPanelController,
     HistoryPanelState, bindHistoryPanelActions;
 import vibe3d.viewport.camera.view : View;
 
@@ -308,7 +308,7 @@ unittest { // production wiring, scope fences, and the single panel owner
 
 
 unittest { // Independent registered snapshot delegate sees the actual carrier.
-    import tests.unit.command_history_test : ResidualRig;
+    import vibe3d.editing.tools.interactive.tests.unit.command_history_test : ResidualRig;
     auto h = new RegistrationHarness();
     foreach (id; ["probe.ordinary", "probe.noop"]) {
         Command delegate() factory(string copy) {

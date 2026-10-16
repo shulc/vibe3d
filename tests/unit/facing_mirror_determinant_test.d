@@ -56,7 +56,7 @@ module tests.unit.facing_mirror_determinant_test;
 
 import std.format : format;
 
-import math : Vec3, transformPoint, frontFacingLocal;
+import vibe3d.util.math.math : Vec3, transformPoint, frontFacingLocal;
 import vibe3d.util.spatial.spatial : ModelSpace;
 import vibe3d.util.spatial.item_xform : ItemXform;
 

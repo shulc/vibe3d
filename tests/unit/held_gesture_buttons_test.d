@@ -137,10 +137,10 @@ unittest { // u5: the history chokepoint refuses while a button is held
     // Every non-key door (panel Undo/Redo, History rows) reaches the same
     // EditSession.navigate as the keyboard; a left click on the panel during
     // a middle-button drag must not cancel the live edit under the drag.
-    import command_history : CommandHistory;
-    import command : Command;
-    import edit_session : EditSession;
-    import tool : Tool;
+    import vibe3d.editing.commands.runtime.command_history : CommandHistory;
+    import vibe3d.editing.commands.runtime.command : Command;
+    import vibe3d.editing.tools.interactive.edit_session : EditSession;
+    import vibe3d.editing.tools.interactive.tool : Tool;
     final class LiveEditTool : Tool {
         size_t cancels;
         override bool hasUncommittedEdit() const { return cancels == 0; }

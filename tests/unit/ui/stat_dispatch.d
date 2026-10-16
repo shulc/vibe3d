@@ -17,7 +17,7 @@ module tests.unit.ui.stat_dispatch;
 
 import std.json : JSONValue, parseJSON;
 
-import command   : Command;
+import vibe3d.editing.commands.runtime.command   : Command;
 import vibe3d.documents.model.document  : Document;
 import vibe3d.editing.contracts.editmode  : EditMode;
 import vibe3d.mesh.core.mesh      : Mesh;
@@ -25,11 +25,11 @@ import vibe3d.editing.params.params    : injectParamsInto;
 import vibe3d.editing.contracts.seltype   : SelType;
 import vibe3d.viewport.camera.view      : View;
 
-import commands.select.by_stat : SelectByStatVertex, SelectByStatEdge,
+import vibe3d.editing.commands.editor.commands.select.by_stat : SelectByStatVertex, SelectByStatEdge,
                                  SelectByStatPolygon;
-import commands.select.by_tag  : SelectByTag;
-import commands.select.sets    : SelectSetApply;
-import commands.layer.commands : LayerSelect;
+import vibe3d.editing.commands.editor.commands.select.by_tag  : SelectByTag;
+import vibe3d.editing.commands.editor.commands.select.sets    : SelectSetApply;
+import vibe3d.runtime.document_actions.commands.layer.commands : LayerSelect;
 
 /// One dispatch's outcome — enough to assert on a refusal without a throw.
 struct DispatchResult {

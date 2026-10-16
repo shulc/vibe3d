@@ -46,7 +46,7 @@ import std.conv      : to;
 import std.format    : format;
 
 import vibe3d.mesh.core.mesh;
-import math;
+import vibe3d.util.math.math;
 import vibe3d.mesh.ops.mesh_ops.cleanup;
 
 // TASK 1903 Stage E1 — `unifyFaces` is a free function over

@@ -1,0 +1,290 @@
+module vibe3d.editing.tools.interactive.prepared_tool_transition;
+
+// Unified P1.0c tool-arm transaction. Every fallible operation finishes while
+// the candidate is unpublished. The live suffix below is statically nothrow.
+import vibe3d.editing.commands.runtime.command_history : CommandHistory;
+import vibe3d.editing.tools.interactive.commands.tool.lifecycle : ToolActivationCommand;
+import vibe3d.documents.model.document : Layer, beginPreparedLayerRead;
+import vibe3d.mesh.core.mesh : Mesh;
+import vibe3d.editing.pipeline.contracts.operator : VectorStack;
+import vibe3d.editing.params.params : injectPreparedParamsInto;
+import vibe3d.editing.tools.interactive.pipe_gizmo_host : PipeGizmoHost;
+import vibe3d.editing.tools.interactive.prepared_record_context : PreparedRecordContext, PreparedToolDoorClient,
+    PreparedToolParamDoorClient, PreparedToolPoseDoorClient;
+import vibe3d.editing.commands.runtime.record_observer_hub : RecordObserverHub;
+import vibe3d.editing.tools.interactive.registry : PreparedPipeAttrs, ToolFactory;
+import std.json : JSONType, JSONValue;
+import vibe3d.editing.tools.interactive.tool : Tool, firstStepCarriesActivation;
+import vibe3d.viewport.camera.view : View;
+import vibe3d.editing.contracts.editmode : EditMode;
+import vibe3d.editing.tools.interactive.tool_presets : prepareStickyToolDefaults;
+import vibe3d.editing.tools.interactive.tool_attr_bounds : applyToolAttrBound;
+import vibe3d.editing.pipeline.evaluation.toolpipe.attr_cache : DroppedNodes, NodeAttrs, PipelineAttrCache,
+    captureDroppedNodes, kToolNode;
+import vibe3d.editing.pipeline.runtime.toolpipe.pipeline : Pipeline;
+import vibe3d.editing.commands.runtime.tool_activation_ownership : ArmDoor, PipeArmScope;
+
+/// Actual candidate lifetime owner. Tool references do not enter the prepared
+/// effect algebra; the transaction exchanges them only through this owner.
+struct PreparedCandidateOwner {
+private:
+    Tool candidate_;
+    Tool retainedOld_;
+public:
+    @disable this(this);
+
+    void prepareFrom(ToolFactory factory, Tool retainedOld) {
+        auto next = factory();
+        prepare(next, retainedOld);
+    }
+
+    void prepare(Tool candidate, Tool retainedOld) {
+        discardCandidate();
+        candidate_ = candidate;
+        retainedOld_ = retainedOld;
+    }
+
+    Tool preparedCandidate() nothrow @nogc { return candidate_; }
+
+    void discardCandidate() nothrow {
+        if (candidate_ !is null) destroy(candidate_);
+        candidate_ = null;
+    }
+
+    void publish(ref Tool active) nothrow {
+        active = candidate_;
+        candidate_ = null;
+    }
+
+    void disposeRetained() nothrow {
+        if (retainedOld_ !is null) destroy(retainedOld_);
+        retainedOld_ = null;
+    }
+}
+
+/// One noncopyable value owns the complete predecessor-to-candidate boundary.
+struct PreparedArm {
+private:
+    PreparedCandidateOwner candidate_;
+    PreparedRecordContext pipe_;
+    PreparedRecordContext outgoing_;
+    PreparedRecordContext incoming_;
+    PreparedRecordContext params_;
+    PreparedRecordContext pose_;
+    // The predecessor's nodes for the per-preset attribute cache (slice M5),
+    // captured here and committed by the publication suffix.
+    DroppedNodes dropped_;
+    PipelineAttrCache* attrCache_;
+    string id_;
+    bool consumed_;
+public:
+    @disable this(this);
+    bool consumed() const pure nothrow @safe @nogc { return consumed_; }
+}
+
+private void abandon(PreparedRecordContext context) nothrow @nogc {
+    if (context is null) return;
+    context.abortValidated();
+    context.discard();
+}
+
+/// One classification for both sides of a prepared tool boundary: the tool's
+/// `sessionPolicy().activationRow` (slice M1 replaced the marker interface;
+/// the surface basis is `toolcards/undo_surfaces/`). Slice M3 removed the
+/// redundant id arm that still named the three cutting sessions: their policy
+/// declares the field, and nothing is decided by id.
+bool toolArmEmitsLifecycle(Tool candidate) nothrow @nogc {
+    return candidate !is null && candidate.sessionPolicy().activationRow;
+}
+
+/// Prepare a complete arm with zero live writes. The candidate's direct Param
+/// storage is detached; every effectful hook is routed through a typed door.
+PreparedArm prepareArm(ToolFactory factory, string id, Tool retainedOld,
+        CommandHistory history, RecordObserverHub observers, Layer layer,
+        ref Pipeline pipeline, in PreparedPipeAttrs pipeAttrs,
+        PipeGizmoHost gizmoHost, ref JSONValue namedArgs, ref VectorStack pose,
+        ulong threadIdentity, ulong contextIdentity, Mesh* mesh, ref View view,
+        EditMode editMode, string retainedOldId,
+        void delegate(string) activateById, void delegate() deactivate,
+        bool lifecycleReplay = false,
+        PipeArmScope pipeScope = PipeArmScope.presetArm,
+        PipelineAttrCache* attrCache = null,
+        ArmDoor door = ArmDoor.none,
+        ulong sessionToken = 0, ulong previousToken = 0) {
+    if (factory is null || id.length == 0 || history is null ||
+        observers is null || layer is null || gizmoHost is null)
+        throw new Exception("prepared tool arm requires complete owners");
+
+    PreparedArm result;
+    result.candidate_.prepareFrom(factory, retainedOld);
+    bool cleanupArmed = true;
+    scope(failure) {
+        abandon(result.pose_);
+        abandon(result.params_);
+        abandon(result.incoming_);
+        abandon(result.outgoing_);
+        abandon(result.pipe_);
+        if (cleanupArmed) result.candidate_.discardCandidate();
+    }
+
+    auto candidate = result.candidate_.preparedCandidate();
+    if (candidate is null)
+        throw new Exception("tool factory returned null");
+    result.id_ = id.idup;
+
+    const classifiedIncoming = toolArmEmitsLifecycle(candidate);
+    // Undoing the incoming row restores the predecessor, whichever tool it
+    // was (slice M4: the C-M4-token switch twin brings an unclassified Edge
+    // Extrude back armed; the restore recalls its values from the per-preset
+    // cache, slice M5, and the session hands it `previousToken`).
+    const string previousId = retainedOld !is null ? retainedOldId : null;
+
+    // Slice M5: this switch DROPS the predecessor, so its preset's nodes are
+    // captured now, before any stage is reset, and committed to the cache by
+    // commitPreparedArm. The incoming preset's image is the cache overlaid with
+    // that capture, so re-arming the SAME preset reads the values it is
+    // leaving rather than the ones cached before them.
+    // A null `attrCache` is an arm that neither stores the instance it
+    // replaces nor recalls anything (the tool reset's re-arm; see
+    // tool_activation_ownership.armUsesAttrCache).
+    result.attrCache_ = attrCache;
+    if (retainedOld !is null && attrCache !is null)
+        result.dropped_ = captureDroppedNodes(retainedOldId, retainedOld,
+                                              pipeline.allMut());
+    NodeAttrs[string] presetImage;
+    if (attrCache !is null) presetImage = attrCache.presetNodes(id);
+    if (result.dropped_.preset == id)
+        foreach (node, attrs; result.dropped_.nodes) presetImage[node] = attrs;
+    auto sticky = prepareStickyToolDefaults(candidate, kToolNode in presetImage);
+    string[] namedNames;
+    if (namedArgs.type == JSONType.object && namedArgs.object.length > 0) {
+        // `tool.set <id> on name:value` writes through the captured bounds too.
+        auto ps = candidate.params();
+        foreach (ref p; ps) applyToolAttrBound(id, p);
+        namedNames = injectPreparedParamsInto(ps, namedArgs);
+    }
+
+    result.pipe_ = new PreparedRecordContext(null, observers);
+    result.pipe_.setResourceIdentity(threadIdentity, contextIdentity);
+    if (!result.pipe_.preparePipeActivation(pipeline, pipeAttrs, gizmoHost, pipeScope,
+                                             presetImage) ||
+        !result.pipe_.markNoHistoryInstall())
+        throw new Exception("prepared tool arm refused pipe activation");
+
+    if (retainedOld !is null) {
+        auto outgoingDoor = cast(PreparedToolDoorClient)retainedOld;
+        if (outgoingDoor is null)
+            throw new Exception("active predecessor lacks prepared door");
+        result.outgoing_ = new PreparedRecordContext(history, observers);
+        result.outgoing_.setResourceIdentity(threadIdentity, contextIdentity);
+        if (!outgoingDoor.prepareDoorDeactivate(result.outgoing_, layer,
+                threadIdentity, contextIdentity))
+            throw new Exception("prepared predecessor deactivation refused");
+    }
+
+    // Incoming preparation reads an enlisted predecessor mesh shadow when the
+    // outgoing product has one; the live Layer remains unchanged.
+    auto projectedLayer = beginPreparedLayerRead(layer);
+    scope(exit) projectedLayer.close();
+
+    auto incomingDoor = cast(PreparedToolDoorClient)candidate;
+    if (incomingDoor is null)
+        throw new Exception("candidate lacks prepared activation door");
+    result.incoming_ = new PreparedRecordContext(
+        result.outgoing_ is null ? history : null, observers);
+    if (result.outgoing_ !is null &&
+        !result.outgoing_.transferHistoryTo(result.incoming_))
+        throw new Exception("prepared history handoff refused");
+    result.incoming_.setResourceIdentity(threadIdentity, contextIdentity);
+    if (!incomingDoor.prepareDoorActivate(result.incoming_, layer,
+            threadIdentity, contextIdentity))
+        throw new Exception("prepared candidate activation refused for '" ~ id ~
+            "' (lifecycleReplay=" ~ (lifecycleReplay ? "true" : "false") ~ ")");
+    if (classifiedIncoming) {
+        const pol = candidate.sessionPolicy();
+        auto lifecycle = new ToolActivationCommand(mesh, view, editMode,
+            id, previousId, pol.sessionSteps, door == ArmDoor.key,
+            firstStepCarriesActivation(pol), sessionToken, previousToken,
+            retainedOld !is null && toolArmEmitsLifecycle(retainedOld),
+            retainedOld !is null && retainedOld.sessionPolicy().historyTopologySteps,
+            pol.historyRecordedSteps);
+        lifecycle.onActivate = activateById;
+        lifecycle.onDeactivate = deactivate;
+        result.incoming_.prepareLifecycle(lifecycle);
+    }
+
+    result.params_ = new PreparedRecordContext(null, observers);
+    result.params_.setResourceIdentity(threadIdentity, contextIdentity);
+    if (auto paramDoor = cast(PreparedToolParamDoorClient)candidate) {
+        // A tool whose activation consumes the complete restored setting
+        // image and rebuilds once (the policy's `armRestoresWholeImage`: Loop
+        // Slice) would prepare that same full image once per sticky name.
+        if (!candidate.sessionPolicy().armRestoresWholeImage)
+            foreach (name; sticky.changedNames)
+                if (!paramDoor.prepareDoorParamChanged(name, result.params_, layer,
+                        threadIdentity, contextIdentity))
+                    throw new Exception("prepared sticky parameter refused: " ~ name);
+        foreach (name; namedNames)
+            if (!paramDoor.prepareDoorParamChanged(name, result.params_, layer,
+                    threadIdentity, contextIdentity))
+                throw new Exception("prepared named parameter refused: " ~ name);
+    }
+    if (!result.params_.markNoHistoryInstall())
+        throw new Exception("prepared parameter boundary refused");
+
+    result.pose_ = new PreparedRecordContext(null, observers);
+    result.pose_.setResourceIdentity(threadIdentity, contextIdentity);
+    if (auto poseDoor = cast(PreparedToolPoseDoorClient)candidate) {
+        if (!poseDoor.prepareDoorInitialPose(pose, result.pose_, layer,
+                threadIdentity, contextIdentity))
+            throw new Exception("prepared initial pose refused");
+    } else if (!result.pose_.markNoHistoryInstall()) {
+        throw new Exception("prepared no-op pose boundary refused");
+    }
+
+    // TASK 4482 — each of these five names WHICH transaction refused, and now
+    // also WHICH CHECK inside it did. Without the second half a refusal is
+    // indistinguishable from its four siblings inside `validate()`, and the
+    // only way to read it was a debugger with conditional breakpoints. The
+    // tool id travels with the message for the same reason: the door that
+    // catches this logs it, and "which tool" is the first thing asked.
+    if (!result.pipe_.validate())
+        throw new Exception("prepared tool arm pipe validation refused for '" ~
+            id ~ "': " ~ result.pipe_.validateFailureReason());
+    if (result.outgoing_ !is null && !result.outgoing_.validate())
+        throw new Exception("prepared tool arm outgoing validation refused for '"
+            ~ id ~ "': " ~ result.outgoing_.validateFailureReason());
+    if (!result.incoming_.validate())
+        throw new Exception("prepared tool arm incoming validation refused for '"
+            ~ id ~ "': " ~ result.incoming_.validateFailureReason());
+    if (!result.params_.validate())
+        throw new Exception("prepared tool arm params validation refused for '" ~
+            id ~ "': " ~ result.params_.validateFailureReason());
+    if (!result.pose_.validate())
+        throw new Exception("prepared tool arm pose validation refused for '" ~
+            id ~ "': " ~ result.pose_.validateFailureReason());
+
+    cleanupArmed = false;
+    return result;
+}
+
+/// The only live publication suffix. Storage was prebuilt by prepareArm;
+/// disposal is terminal and no throwing work follows it.
+bool commitPreparedArm(ref Tool active, ref string activeId,
+        ref PreparedArm prepared) nothrow {
+    if (prepared.consumed_) return false;
+    if (prepared.attrCache_ !is null) prepared.dropped_.commitTo(*prepared.attrCache_);
+    prepared.pipe_.install();
+    if (prepared.outgoing_ !is null) prepared.outgoing_.install();
+    prepared.candidate_.publish(active);
+    activeId = prepared.id_;
+    prepared.incoming_.install();
+    prepared.params_.install();
+    prepared.pose_.install();
+    prepared.candidate_.disposeRetained();
+    prepared.consumed_ = true;
+    return true;
+}
+
+static assert(is(typeof(&commitPreparedArm) == bool function(
+    ref Tool, ref string, ref PreparedArm) nothrow));

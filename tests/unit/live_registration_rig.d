@@ -1,45 +1,45 @@
 module tests.unit.live_registration_rig;
 
-import ai.exploration : AiExplorationController;
-import ai.interaction_log_writer : AiInteractionLogWriter;
-import ai.state : EditorAiState;
-import application_command_binding : ApplicationCommandBinding;
-import command : Command;
-import command_executor : CommandExecutor;
-import command_history : CommandHistory, RecordMode;
-import commands.layer.xform_edit : LayerXformEdit;
-import commands.mesh.morph_edit : MeshMorphEdit;
-import commands.mesh.session_edit : MeshSessionEdit;
-import commands.mesh.vertex_edit : MeshVertexEdit;
-import commands.tool.host : ToolHost, ToolHostReadView;
+import vibe3d.runtime.ai_advisor.ai.exploration : AiExplorationController;
+import vibe3d.runtime.ai_advisor.ai.interaction_log_writer : AiInteractionLogWriter;
+import vibe3d.runtime.ai_advisor.ai.state : EditorAiState;
+import vibe3d.apps.desktop.application_command_binding : ApplicationCommandBinding;
+import vibe3d.editing.commands.runtime.command : Command;
+import vibe3d.editing.commands.runtime.command_executor : CommandExecutor;
+import vibe3d.editing.commands.runtime.command_history : CommandHistory, RecordMode;
+import vibe3d.editing.commands.editor.commands.layer.xform_edit : LayerXformEdit;
+import vibe3d.editing.commands.editor.commands.mesh.morph_edit : MeshMorphEdit;
+import vibe3d.editing.commands.editor.commands.mesh.session_edit : MeshSessionEdit;
+import vibe3d.editing.commands.editor.commands.mesh.vertex_edit : MeshVertexEdit;
+import vibe3d.editing.tools.interactive.commands.tool.host : ToolHost, ToolHostReadView;
 import vibe3d.documents.model.document : Layer;
-import edit_session : EditSession;
+import vibe3d.editing.tools.interactive.edit_session : EditSession;
 import vibe3d.editing.contracts.editmode : EditMode;
-import editor_app : EditorApp;
-import guarded_action_controller : GuardObservationPorts,
+import vibe3d.apps.desktop.editor_app : EditorApp;
+import vibe3d.apps.desktop.guarded_action_controller : GuardObservationPorts,
     GuardedActionController, GuardedActionPorts;
-import http_command_adapter : AutomationResetContext, CommandHttpAdapter;
-import http_server : HttpServer;
-import live_registration_roles : LiveSessionRole, LiveViewModeRole;
-import math : Vec3;
+import vibe3d.apps.desktop.http_command_adapter : AutomationResetContext, CommandHttpAdapter;
+import vibe3d.runtime.http.http_server : HttpServer;
+import vibe3d.runtime.application_core.live_registration_roles : LiveSessionRole, LiveViewModeRole;
+import vibe3d.util.math.math : Vec3;
 import vibe3d.mesh.core.mesh : Mesh, makeCube, makeOctahedron;
-import mesh_gpu : GpuMesh;
-import pipe_gizmo_host : PipeGizmoHost;
-import remesh.remesh_job : RemeshJob;
-import registry : Registry;
-import registration : buildRegisteredXfrmTransformForOwnershipTest;
+import vibe3d.viewport.gpu.mesh_gpu : GpuMesh;
+import vibe3d.editing.tools.interactive.pipe_gizmo_host : PipeGizmoHost;
+import vibe3d.runtime.remesh.remesh.remesh_job : RemeshJob;
+import vibe3d.editing.tools.interactive.registry : Registry;
+import vibe3d.apps.desktop.registration : buildRegisteredXfrmTransformForOwnershipTest;
 import vibe3d.editing.contracts.seltype : SelType;
-import session_owner : Session;
+import vibe3d.runtime.application_core.session_owner : Session;
 import std.json : JSONValue;
 import std.traits : FieldNameTuple;
-import step_trace : StepTrace;
-import tool : Tool;
-import tool_activation_ownership : ToolTransition;
-import tool_lifecycle_registration : registerToolLifecycleCommands;
-import tools.edit.topology_pen.defs : TopoPenFactories;
-import ui.remesh_modal_state : RemeshModalState;
+import vibe3d.editing.commands.editor.step_trace : StepTrace;
+import vibe3d.editing.tools.interactive.tool : Tool;
+import vibe3d.editing.commands.runtime.tool_activation_ownership : ToolTransition;
+import vibe3d.apps.desktop.tool_lifecycle_registration : registerToolLifecycleCommands;
+import vibe3d.editing.tools.interactive.tools.edit.topology_pen.defs : TopoPenFactories;
+import vibe3d.ui.editor.ui.remesh_modal_state : RemeshModalState;
 import vibe3d.viewport.camera.view : View;
-import viewport : LayoutPreset, ViewportManager;
+import vibe3d.viewport.host.viewport : LayoutPreset, ViewportManager;
 
 private void noOpResetUi() {}
 private void noOpClearTraces() {}

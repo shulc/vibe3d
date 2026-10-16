@@ -14,9 +14,9 @@
 // predicate `vertexFanOrdered` itself against `faces[]`. See
 // doc/vertex_fan_walk_foreign_edge_plan.md §Phase 0 / §8.
 
-import subpatch_factories : subdivideCube;
+import vibe3d.viewport.subpatch.subpatch_factories : subdivideCube;
 import vibe3d.mesh.core.mesh;
-import math;
+import vibe3d.util.math.math;
 import std.algorithm : sort;
 
 void main() {}

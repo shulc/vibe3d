@@ -22,7 +22,7 @@
 module tests.unit.mesh_hide_derive_batch_test;
 
 import vibe3d.mesh.core.mesh;
-import math : Vec3;
+import vibe3d.util.math.math : Vec3;
 import vibe3d.mesh.edit_log.mesh_edit_delta : MeshEditScope;
 import tests.unit.mesh_by_value_gate;
 

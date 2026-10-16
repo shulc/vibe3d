@@ -11,14 +11,14 @@
 // a back-facing open triangle (so neither its own face nor its facing decides
 // anything); C2 sits on the SAME ray between the eye and Q.
 module tests.unit.snap_near_occluder_test;
-import mesh_visibility : visibilityProbe;
+import vibe3d.editing.selection.query.mesh_visibility : visibilityProbe;
 
 import std.format : format;
 import std.math : PI, sqrt, abs;
-import math : Vec3, lookAt, perspectiveMatrix, frontFacingLocal;
+import vibe3d.util.math.math : Vec3, lookAt, perspectiveMatrix, frontFacingLocal;
 import vibe3d.util.spatial.spatial : Viewport, ModelSpace, projectToWindowFull;
 import vibe3d.mesh.core.mesh : Mesh;
-import mesh_visibility : g_visCounters;
+import vibe3d.editing.selection.query.mesh_visibility : g_visCounters;
 
 private Viewport eyeViewport() {
     Viewport vp;

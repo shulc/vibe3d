@@ -35,7 +35,7 @@ import std.path : dirName;
 import std.string : indexOf, lastIndexOf;
 import std.traits : EnumMembers;
 
-import tool_activation_ownership;
+import vibe3d.editing.commands.runtime.tool_activation_ownership;
 
 private enum repoRoot = dirName(dirName(dirName(__FILE_FULL_PATH__)));
 

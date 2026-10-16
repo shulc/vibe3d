@@ -26,8 +26,8 @@
 
 import http_client : testBaseUrl, getJson, postJson;
 import http_command_helpers : commandBody;
-import forms : parseBinding, substituteQuery, valueToArgToken;
-import forms_render : textInputPresentation;
+import vibe3d.ui.forms.forms : parseBinding, substituteQuery, valueToArgToken;
+import vibe3d.ui.editor.forms_render : textInputPresentation;
 
 import std.net.curl;
 import std.json;

@@ -23,7 +23,7 @@ import std.net.curl;
 import std.json;
 import std.algorithm : sort;
 import std.stdio : stderr;
-import ai.copilot_gate : kCopilotEnabled;
+import vibe3d.runtime.ai_advisor.ai.copilot_gate : kCopilotEnabled;
 
 void main() {}
 

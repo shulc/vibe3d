@@ -1,20 +1,20 @@
 module tests.unit.headless_edit_lifecycle_test;
 import vibe3d.mesh.edit_replay.mesh_edit_replay : apply, revert;
 
-import command : Command;
-import command_history;
-import commands.tool.do_apply : ToolDoApplyCommand;
-import commands.tool.headless : ToolHeadlessCommand;
-import commands.mesh.mesh_edit_payload : MeshEditPayload, MeshRestorePolicy;
+import vibe3d.editing.commands.runtime.command : Command;
+import vibe3d.editing.commands.runtime.command_history;
+import vibe3d.editing.tools.interactive.commands.tool.do_apply : ToolDoApplyCommand;
+import vibe3d.editing.tools.interactive.commands.tool.headless : ToolHeadlessCommand;
+import vibe3d.editing.commands.editor.commands.mesh.mesh_edit_payload : MeshEditPayload, MeshRestorePolicy;
 import vibe3d.mesh.core.mesh : Mesh, MeshInvocation, MeshEditBatch, makeCube, editBatchStackLength;
 import vibe3d.mesh.edit_log.mesh_edit_delta : MeshEditTracker, MeshEditDelta, MeshEditScope;
-import math : Vec3;
+import vibe3d.util.math.math : Vec3;
 import vibe3d.mesh.snapshot.snapshot : MeshSnapshot;
-import tool : Tool, ToolSessionPolicy, HeadlessSourcePolicy;
+import vibe3d.editing.tools.interactive.tool : Tool, ToolSessionPolicy, HeadlessSourcePolicy;
 import tests.unit.live_registration_rig : LiveRegistrationRig;
-import application_command_binding : CommandInvocationContext, CommandInvocationOutcome;
+import vibe3d.apps.desktop.application_command_binding : CommandInvocationContext, CommandInvocationOutcome;
 import std.json : JSONValue;
-import command : CommandOrigin;
+import vibe3d.editing.commands.runtime.command : CommandOrigin;
 import vibe3d.mesh.change.change_bus : changeBus;
 
 
@@ -68,7 +68,7 @@ private Command invocation(LiveRegistrationRig rig, bool ephemeral = false) {
 }
 
 private bool applyRegistered(LiveRegistrationRig rig, Command c) {
-    return rig.executor.applyOrRefire(c, command_history.RecordMode.Record, null);
+    return rig.executor.applyOrRefire(c, vibe3d.editing.commands.runtime.command_history.RecordMode.Record, null);
 }
 
 unittest { // Pin the actual production factory, independently of the local rig.
@@ -410,7 +410,7 @@ unittest { // Unrecorded/batchless, balanced inner batches remain admitted.
 }
 
 unittest { // Selection and explicit close/navigation release the source receipt.
-    import tool_activation_ownership : CloseReason, CommandDoor;
+    import vibe3d.editing.commands.runtime.tool_activation_ownership : CloseReason, CommandDoor;
     foreach (boundary; [0, 1, 2]) {
         auto rig = sourceRig(true);
         auto m = &rig.session.editMesh();

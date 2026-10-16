@@ -1,11 +1,11 @@
 module tests.unit.mesh_bbox_test;
 
-import math : Vec3;
+import vibe3d.util.math.math : Vec3;
 import vibe3d.mesh.core.mesh : Mesh;
-import mesh_bbox;
+import vibe3d.editing.selection.query.mesh_bbox;
 import tests.unit.mesh_by_value_gate;
 
-mixin MeshByValueGate!(mesh_bbox);
+mixin MeshByValueGate!(vibe3d.editing.selection.query.mesh_bbox);
 
 unittest { // whole-layer bounds ignore selection and report empty geometry
     Mesh mesh;

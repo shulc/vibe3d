@@ -119,7 +119,7 @@ import std.array     : appender;
 import std.file      : write;
 
 import vibe3d.mesh.core.mesh;
-import math            : Vec3;
+import vibe3d.util.math.math            : Vec3;
 import vibe3d.mesh.edit_log.mesh_edit_delta : MeshEditDelta, MeshEditScope;
 import vibe3d.mesh.snapshot.snapshot        : MeshSnapshot;
 

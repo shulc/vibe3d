@@ -60,12 +60,12 @@ import vibe3d.mesh.ops.mesh_ops.triangulate : triangulateFacesByMask;
 import std.format : format;
 import std.json   : JSONValue, parseJSON;
 
-import command;
+import vibe3d.editing.commands.runtime.command;
 import vibe3d.mesh.core.mesh;
 import vibe3d.viewport.camera.view;
 import vibe3d.editing.contracts.editmode;
-import math      : Vec3;
-import http_json : meshPlanesJson, PlaneDumpMeta;
+import vibe3d.util.math.math      : Vec3;
+import vibe3d.runtime.application_core.http_json : meshPlanesJson, PlaneDumpMeta;
 import vibe3d.mesh.change.change_bus : MeshEditScope;
 
 import tests.unit.fixtures            : makeTaggedGridWeldSets;
@@ -74,17 +74,17 @@ import tests.unit.undo_parity_l0_test : ParityCell, fixturePath, compareOrCaptur
                                         assertExceptionTableWellFormed;
 import tests.unit.undo_parity_l3_test : checkOrderNormalisation;
 
-import commands.mesh.collapse         : MeshCollapse;
-import commands.mesh.vert_join        : MeshVertJoin;
-import commands.mesh.vert_merge       : MeshVertMerge;
-import commands.mesh.weld_vertex_pair : MeshWeldVertexPair;
-import commands.mesh.edge_join        : MeshEdgeJoin;
-import commands.mesh.merge            : MeshMergeFaces;
-import commands.mesh.triple           : MeshTriple;
-import commands.mesh.quadruple        : MeshQuadruple;
-import commands.mesh.detriangulate    : MeshDetriangulate;
-import commands.mesh.unify            : MeshUnify;
-import commands.mesh.reduce           : MeshReduce;
+import vibe3d.editing.commands.editor.commands.mesh.collapse         : MeshCollapse;
+import vibe3d.editing.commands.editor.commands.mesh.vert_join        : MeshVertJoin;
+import vibe3d.editing.commands.editor.commands.mesh.vert_merge       : MeshVertMerge;
+import vibe3d.editing.commands.editor.commands.mesh.weld_vertex_pair : MeshWeldVertexPair;
+import vibe3d.editing.commands.editor.commands.mesh.edge_join        : MeshEdgeJoin;
+import vibe3d.editing.commands.editor.commands.mesh.merge            : MeshMergeFaces;
+import vibe3d.editing.commands.editor.commands.mesh.triple           : MeshTriple;
+import vibe3d.editing.commands.editor.commands.mesh.quadruple        : MeshQuadruple;
+import vibe3d.editing.commands.editor.commands.mesh.detriangulate    : MeshDetriangulate;
+import vibe3d.editing.commands.editor.commands.mesh.unify            : MeshUnify;
+import vibe3d.editing.commands.editor.commands.mesh.reduce           : MeshReduce;
 
 enum string kL10Family = "weld_merge";
 enum string kL10Stand  = "makeTaggedGridWeldSets(3)";

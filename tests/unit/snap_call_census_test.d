@@ -314,12 +314,12 @@ unittest // one vertex finder for the topology tools (tasks 9407, 9437); the pen
 unittest // the signatures the clients rely on (compiler pins)
 {
     import vibe3d.editing.pipeline.contracts.operator : VectorStack;
-    import math : Vec3;
+    import vibe3d.util.math.math : Vec3;
 import vibe3d.util.spatial.spatial : Viewport;
-    import snap : snapPacketOf;
+    import vibe3d.editing.selection.query.snap : snapPacketOf;
     import vibe3d.editing.pipeline.contracts.toolpipe.packets : SnapPacket, SnapType;
-    import toolpipe.guide : SnapGuide, SnapQueryPolicy;
-    import toolpipe.stages.snap : SnapStage, liveSnapStage, liveSnapGuides;
+    import vibe3d.editing.selection.query.toolpipe.guide : SnapGuide, SnapQueryPolicy;
+    import vibe3d.editing.pipeline.evaluation.toolpipe.stages.snap : SnapStage, liveSnapStage, liveSnapGuides;
     static assert(is(typeof(&snapPacketOf) == SnapPacket function(ref VectorStack)));
     static assert(is(typeof(&liveSnapStage) == SnapStage function()));
     static assert(is(typeof(&liveSnapGuides) == SnapGuide[] function(SnapQueryPolicy, SnapStage)));
@@ -327,7 +327,7 @@ import vibe3d.util.spatial.spatial : Viewport;
     // (the bits reach the guide's own `propose` through the packet).
     static assert(is(typeof((SnapGuide g, Vec3 p, ref Viewport vp, ref SnapPacket c) {
         Vec3 o; SnapType t; bool b = g.propose(p, 1, 2, vp, c, o, t); })));
-    static assert(!__traits(compiles, { import snap : kGuideTypes; }));
+    static assert(!__traits(compiles, { import vibe3d.editing.selection.query.snap : kGuideTypes; }));
     VectorStack empty;
     assert(snapPacketOf(empty) == SnapPacket.init && !snapPacketOf(empty).enabled,
         "no SNAP stage ran: the read answers the init packet, snapping off");
@@ -335,17 +335,17 @@ import vibe3d.util.spatial.spatial : Viewport;
 
 unittest // a guide registered on the live stage reaches a create tool's query
 {
-    import math : Vec3, lookAt, perspectiveMatrix, identityMatrix;
+    import vibe3d.util.math.math : Vec3, lookAt, perspectiveMatrix, identityMatrix;
 import vibe3d.util.spatial.spatial : Viewport, projectToWindowFull;
     import vibe3d.mesh.core.mesh             : Mesh;
     import vibe3d.editing.contracts.editmode         : EditMode;
-    import snap             : invalidateSnapGrids;
+    import vibe3d.editing.selection.query.snap             : invalidateSnapGrids;
     import std.math         : PI, round;
-    import toolpipe.guide   : SnapGuide, GuideDrawState, SnapQueryPolicy, SnapPurpose, SnapGuideScope;
+    import vibe3d.editing.selection.query.toolpipe.guide   : SnapGuide, GuideDrawState, SnapQueryPolicy, SnapPurpose, SnapGuideScope;
     import vibe3d.editing.pipeline.contracts.toolpipe.packets : SnapType;
-    import toolpipe.pipeline : g_pipeCtx, ToolPipeContext;
-    import toolpipe.stages.snap : SnapStage, liveSnapStage, liveSnapGuides;
-    import tools.create.create_common : snapLocalHit, WorkplaneFrame;
+    import vibe3d.editing.pipeline.runtime.toolpipe.pipeline : g_pipeCtx, ToolPipeContext;
+    import vibe3d.editing.pipeline.evaluation.toolpipe.stages.snap : SnapStage, liveSnapStage, liveSnapGuides;
+    import vibe3d.editing.tools.interactive.tools.create.create_common : snapLocalHit, WorkplaneFrame;
 
     static class Refuse : SnapGuide {
         size_t asked;

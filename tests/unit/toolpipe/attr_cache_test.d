@@ -17,20 +17,20 @@ import std.process : thisProcessID;
 import std.string : indexOf;
 
 import vibe3d.editing.params.params : Param, ParamProvider;
-import prefs : Prefs, loadPrefs, savePrefs;
-import prepared_pipe_activation : PreparedPipeActivationOwner;
-import registry : PreparedPipeAttrs;
+import vibe3d.apps.desktop.prefs : Prefs, loadPrefs, savePrefs;
+import vibe3d.editing.tools.interactive.prepared_pipe_activation : PreparedPipeActivationOwner;
+import vibe3d.editing.tools.interactive.registry : PreparedPipeAttrs;
 import tests.unit.census_symbols : blankNonCode;
-import tool_activation_ownership : PipeArmScope;
-import toolpipe.attr_cache : NodeAttrs, PipelineAttrCache, captureDroppedNodes,
+import vibe3d.editing.commands.runtime.tool_activation_ownership : PipeArmScope;
+import vibe3d.editing.pipeline.evaluation.toolpipe.attr_cache : NodeAttrs, PipelineAttrCache, captureDroppedNodes,
     captureNodeAttrs, kToolNode, recallNodeAttrs;
 import vibe3d.editing.pipeline.contracts.toolpipe.packets : FalloffShape, FalloffType;
-import toolpipe.pipeline : Pipeline;
-import toolpipe.stage : Stage;
-import toolpipe.stages.actcenter : ActionCenterStage;
-import toolpipe.stages.axis : AxisStage;
-import toolpipe.stages.constrain : ConstrainStage;
-import toolpipe.stages.falloff : FalloffStage;
+import vibe3d.editing.pipeline.runtime.toolpipe.pipeline : Pipeline;
+import vibe3d.editing.pipeline.runtime.toolpipe.stage : Stage;
+import vibe3d.editing.pipeline.evaluation.toolpipe.stages.actcenter : ActionCenterStage;
+import vibe3d.editing.pipeline.evaluation.toolpipe.stages.axis : AxisStage;
+import vibe3d.editing.pipeline.evaluation.toolpipe.stages.constrain : ConstrainStage;
+import vibe3d.editing.pipeline.evaluation.toolpipe.stages.falloff : FalloffStage;
 
 private final class FakeNode : ParamProvider {
     float width = 1.0f;

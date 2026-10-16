@@ -10,7 +10,7 @@ import core.time : Duration, MonoTime, msecs, seconds;
 import vibe3d.platform.input.eventlog : clearEventPlayerControlsForTest,
     eventPlayerModifierForTest, setEventPlayerClockForTest,
     setEventPlayerCounterForTest, setEventPlayerModifierForTest;
-import http_server : HttpServer;
+import vibe3d.runtime.http.http_server : HttpServer;
 import std.conv : to;
 import std.json : JSONType, JSONValue, parseJSON;
 import std.socket : InternetAddress, Socket, SocketOption,

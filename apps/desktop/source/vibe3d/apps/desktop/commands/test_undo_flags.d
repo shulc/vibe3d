@@ -1,0 +1,52 @@
+module vibe3d.apps.desktop.commands.test_undo_flags;
+
+import vibe3d.editing.commands.runtime.command;
+import vibe3d.mesh.core.mesh;
+import vibe3d.viewport.camera.view;
+import vibe3d.editing.contracts.editmode;
+
+// ---------------------------------------------------------------------------
+// Test-automation-only commands exercising the explicit undoability override
+// flags (CmdFlags.UndoForce / CmdFlags.UndoSuppress). They let a headless test
+// drive both override paths through the normal /api/command dispatch +
+// recordCoalescing() chokepoint, asserting on the resulting undo-stack length:
+//
+//   * UndoSuppressNoop — carries CmdFlags.Model (would normally be undoable)
+//     PLUS UndoSuppress, so isUndoable() returns false and NO entry lands.
+//
+//   * UndoForceNoop — carries CmdFlags.SideEffect (would normally be skipped)
+//     PLUS UndoForce, so isUndoable() returns true and an entry DOES land.
+//
+// Both apply() are intentional no-ops: the flag layering, not any mesh effect,
+// is what the test observes. Not in any menu / UI; registered like the other
+// test-only command factories.
+// ---------------------------------------------------------------------------
+
+/// Model-flavored command that opts OUT of undo via UndoSuppress → no entry.
+class UndoSuppressNoop : Command {
+    this(Mesh* mesh, ref View view, EditMode editMode) {
+        super(mesh, view, editMode);
+    }
+    override string name()  const { return "undo.test.suppress"; }
+    override string label() const { return "Undo Suppress Test"; }
+    override CmdFlags cmdFlags() const {
+        return CmdFlags.Model | CmdFlags.UndoSuppress;
+    }
+    protected override bool applyImpl() { return true; }
+}
+
+/// SideEffect-flavored command that opts IN to undo via UndoForce → entry lands.
+class UndoForceNoop : Command {
+    this(Mesh* mesh, ref View view, EditMode editMode) {
+        super(mesh, view, editMode);
+    }
+    override string name()  const { return "undo.test.force"; }
+    override string label() const { return "Undo Force Test"; }
+    override CmdFlags cmdFlags() const {
+        return CmdFlags.SideEffect | CmdFlags.UndoForce;
+    }
+    protected override bool applyImpl() { return true; }
+    // NO `revert` OVERRIDE, and that is the point since task 2500: a forward
+    // that succeeded and recorded nothing answers `true` from the BASE. This
+    // class used to say so by hand, in the one line the base now owns.
+}

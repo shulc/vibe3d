@@ -38,8 +38,8 @@
 
 import std.math : PI, abs, cos, sin;
 
-import handler : RotateHandler, ScaleHandler;
-import math : Vec3, cross, normalize;
+import vibe3d.editing.tools.interactive.handler : RotateHandler, ScaleHandler;
+import vibe3d.util.math.math : Vec3, cross, normalize;
 import vibe3d.util.spatial.spatial : Viewport, projectToWindowFull, Orientation;
 import vibe3d.viewport.camera.view : View;
 

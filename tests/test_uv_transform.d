@@ -32,7 +32,7 @@ import std.conv   : to;
 import vibe3d.mesh.core.mesh       : Mesh, MeshMap, MapDomain, makeCube, kUvMapName;
 import vibe3d.viewport.camera.view       : View;
 import vibe3d.editing.contracts.editmode   : EditMode;
-import commands.mesh.uv_transform;
+import vibe3d.editing.commands.editor.commands.mesh.uv_transform;
 import std.net.curl : post, get;
 
 void main() {}

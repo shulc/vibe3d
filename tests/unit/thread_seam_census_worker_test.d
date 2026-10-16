@@ -6,8 +6,8 @@ import std.format : format;
 import std.path : buildPath, dirName;
 import std.string : indexOf;
 
-import subpatch_osd : CageSnapshot, OsdAccel, PreviewBuildResult;
-import subpatch_worker_web : SubpatchWorker;
+import vibe3d.viewport.subpatch.subpatch_osd : CageSnapshot, OsdAccel, PreviewBuildResult;
+import vibe3d.viewport.subpatch.subpatch_worker_web : SubpatchWorker;
 import tests.unit.census_symbols : blankNonCode, blankUnittestBodies;
 
 private enum repoRoot = dirName(dirName(dirName(__FILE_FULL_PATH__)));

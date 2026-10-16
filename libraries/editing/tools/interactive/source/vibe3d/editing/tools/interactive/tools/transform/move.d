@@ -1,0 +1,1087 @@
+module vibe3d.editing.tools.interactive.tools.transform.move;
+import vibe3d.editing.selection.query.toolpipe.guide : SnapQueryPolicy, SnapPurpose, SnapGuideScope;
+import vibe3d.viewport.display_policy.display_state : DrawPlan;
+
+import bindbc.opengl;
+import vibe3d.editing.pipeline.contracts.operator : VectorStack;
+import bindbc.sdl;
+
+import vibe3d.editing.tools.interactive.tools.transform.transform;
+
+struct PreparedMoveActivationImage {
+    PreparedTransformActivationImage base;
+    Vec3 propInput;
+    bool valid;
+    void clear() nothrow @nogc { this = PreparedMoveActivationImage.init; }
+}
+import vibe3d.editing.tools.interactive.handler;
+import vibe3d.viewport.display_policy.viewport_scheme : schemeColor, SchemeColor;
+import vibe3d.mesh.core.mesh;
+import vibe3d.viewport.gpu.mesh_gpu : GpuMesh;
+import vibe3d.editing.contracts.editmode;
+import vibe3d.editing.contracts.seltype : SelType;
+import vibe3d.util.math.math;
+import vibe3d.util.spatial.spatial : ModelSpace, Viewport, projectToWindowFull;
+import vibe3d.viewport.gpu.shader;
+
+import ImGui = d_imgui;
+import d_imgui.imgui_h;
+
+import std.math;
+import vibe3d.editing.tools.interactive.drag;
+import vibe3d.editing.tools.interactive.coord_rounding : coordRounding, coordRoundingFixedIncrement;
+import vibe3d.editing.selection.query.snap : snapCursor, SnapResult, snapPacketOf;
+import vibe3d.editing.pipeline.evaluation.toolpipe.stages.snap : liveSnapGuides;
+import vibe3d.editing.tools.interactive.snap_render : publishLastSnap, clearLastSnap;
+// Task 0617 Stage 4: XfrmTransformTool drags the active/primary mesh only
+// (CLAUDE.md: "Single-primary EDITING... tools hit the primary only"), so
+// its ModelSpace is the same resolver every other picking/snap call site
+// uses.
+import vibe3d.documents.model.document : primaryModelSpace;
+import vibe3d.editing.tools.interactive.prepared_record_context : PreparedRecordContext;
+import vibe3d.editing.contracts.prepared_tool_effect :
+    PreparedTransformProductEffect, PreparedTransformProductKind,
+    PreparedMoveUpdateEffect, PreparedMoveUpdateKind;
+import vibe3d.editing.tools.interactive.prepared_transform_product_activation : PreparedTransformProductActivationOwner;
+import vibe3d.editing.tools.interactive.prepared_move_update : PreparedMoveUpdateOwner;
+
+enum PreparedMoveUpdateBranch : ubyte {
+    InactiveNoop, DraggingNoop, WrapperEditOpenNoop, Refresh
+}
+
+struct PreparedMoveUpdateImage {
+    PreparedMoveUpdateBranch branch;
+    Vec3 center;
+    bool valid;
+    void clear() nothrow @nogc { this = PreparedMoveUpdateImage.init; }
+}
+
+// ---------------------------------------------------------------------------
+// MoveTool : TransformTool — shows MoveHandler at selection/mesh center
+//
+// Phase 3 (transform-single-source plan) responsibilities:
+//   - Own the MoveHandler instance, draw it, hit-test against it
+//     (`handleParts`), and run the screen-space drag math
+//     (`axisDragDelta` / `planeDragDelta` / `applySnapToDelta`).
+//   - On drag-axis motion, produce a basis-LOCAL gesture scalar in
+//     `pendingTranslateDelta` and return. The wrapper drains it and
+//     runs the unified `applyTRS` evaluate — MoveTool no longer
+//     mutates `mesh.vertices` on its own.
+//
+// What MoveTool no longer owns:
+//   - Edit-session boundaries (`beginEdit`/`commitEdit`) — wrapper.
+//   - Geometry mutation (`applyDelta` / `applyDeltaImmediate` /
+//     `applyPerClusterDelta` / `applyAbsoluteFromBaseline` — all
+//     deleted; the wrapper's `applyTRS(dragBaseline)` covers every
+//     case those wrappers used to dispatch among).
+//   - `gpuMatrix` whole-mesh bypass — wrapper.
+//   - Property-panel TRS sliders' apply path — wrapper's
+//     `applyMovePanelDelta`.
+// ---------------------------------------------------------------------------
+
+// Byte-identical extraction of the axis-selection math from `ctrlConstrain`
+// (which is still in this file and still the only caller).  Takes integer
+// tdx/tdy exactly as the live
+// path does (int arithmetic, no float reassociation).  The <25 wait-gate is
+// NOT in here — it stays in ctrlConstrain.  Arguments mirror the live read
+// sites verbatim so the call in ctrlConstrain is a cut-paste of the inputs
+// it was already using.  Not marked pure because projectToWindowFull reads
+// matrix state — the determinism is in the inputs, not the qualifier.
+int chooseConstraintAxis(Vec3 camBack,
+                              Vec3 inX, Vec3 inY, Vec3 inZ,
+                              Vec3 endX, Vec3 endY, Vec3 endZ,
+                              Vec3 center,
+                              const ref Viewport vp,
+                              int tdx, int tdy)
+{
+    import std.math : abs, sqrt;
+    float aXdot = abs(dot(camBack, inX));
+    float aYdot = abs(dot(camBack, inY));
+    float aZdot = abs(dot(camBack, inZ));
+    int ax1, ax2;
+    if      (aXdot >= aYdot && aXdot >= aZdot) { ax1 = 1; ax2 = 2; }
+    else if (aYdot >= aXdot && aYdot >= aZdot) { ax1 = 0; ax2 = 2; }
+    else                                       { ax1 = 0; ax2 = 1; }
+
+    float cx, cy, dummy;
+    float dmag = sqrt(cast(float)(tdx*tdx + tdy*tdy));
+    float ndx = tdx / dmag, ndy = tdy / dmag;
+    Vec3[3] axisEnds = [endX, endY, endZ];
+    int result = ax1; // fallback
+    if (projectToWindowFull(center, vp, cx, cy, dummy)) {
+        float bestDot = -1.0f;
+        foreach (a; [ax1, ax2]) {
+            float ax, ay, andcZ;
+            if (!projectToWindowFull(axisEnds[a], vp, ax, ay, andcZ)) continue;
+            float sdx = ax - cx, sdy = ay - cy;
+            float slen = sqrt(sdx*sdx + sdy*sdy);
+            if (slen < 1.0f) continue;
+            float d = abs(ndx * sdx/slen + ndy * sdy/slen);
+            if (d > bestDot) { bestDot = d; result = a; }
+        }
+    }
+    return result;
+}
+
+// ---------------------------------------------------------------------------
+
+class MoveTool : TransformTool {
+    MoveHandler handler;
+
+    // Phase 3 — gesture-scalar producer for the unified
+    // `XfrmTransformTool.applyTRS` flow. `MoveTool.onMouseMotion`'s
+    // drag-axis path writes the basis-LOCAL drag delta here and
+    // returns; the wrapper reads it, accumulates into
+    // `run.t`, and calls `applyTRS(dragBaseline)`. This
+    // routes every per-frame translate through the same kernels the
+    // numeric `tool.attr move T<axis>` + `tool.doApply` path uses, so
+    // per-cluster magnitudes can't diverge.
+    //
+    // The wrapper is expected to drain (read + reset to 0) on every
+    // motion event it processes; if it doesn't, the next read sees
+    // accumulated delta. Public so the wrapper can poke at it without
+    // a friend-class dance.
+    Vec3 pendingTranslateDelta = Vec3(0, 0, 0);
+
+    // Set true on the off-gizmo click-relocate branch of
+    // `onMouseButtonDown` (the gizmo is re-anchored to the click
+    // projection), false on every axis/handle grab. A relocate during a
+    // live tool session is a new logical run, so the wrapper (which owns
+    // the move edit session) reads + clears this immediately after
+    // `onMouseButtonDown` returns true to decide whether to commit the
+    // prior run before opening the next.
+    //
+    // Why a dedicated flag and not `dragAxis`: the relocate path leaves
+    // `dragAxis = 3` (see `beginScreenPlaneDragAt`) — byte-identical to a
+    // most-facing-plane center grab — so `dragAxis` cannot distinguish
+    // the two. `centerManual` is the "update() must not recompute center"
+    // latch, not a relocate marker, so it can't discriminate either.
+    bool lastClickWasRelocate = false;
+
+    // Set on EVERY off-gizmo press this bank consumes — relocating or not —
+    // and read+cleared by the wrapper alongside `lastClickWasRelocate`.
+    //
+    // The wrapper needs BOTH facts because an off-gizmo press is a run boundary
+    // in every ACEN mode, but the boundary work differs: a relocate MOVED the
+    // pin and must re-stage the new one, a pinned-mode press left the pin alone
+    // and must re-stage it verbatim. Before the pinned modes started a drag at
+    // all, their boundary was handled where the unclaimed press fell through
+    // (`XfrmTransformTool.onMouseButtonDown`'s off-gizmo commit block); the
+    // press no longer reaches there, so the boundary travels on this flag.
+    bool lastClickWasOffGizmo = false;
+
+    // Input-projection basis, captured ONCE at drag start (in
+    // `onMouseButtonDown`, where `dragAxis` becomes >= 0) from the live
+    // `currentBasis(...)`. This is the frame the screen→world input math
+    // reads (axis-constrain / delta projection), kept SEPARATE from the
+    // rendered gizmo orientation (`handler.axisX/Y/Z`). Today both are the
+    // same drag-start frame — the render orientation is frozen during a
+    // drag via the `dragAxis < 0` gate, and `inputBasis*` is captured from
+    // the same `currentBasis(...)` the last idle draw used — so this split
+    // is byte-stable. It lets the rendered frame move later without
+    // dragging the input projection with it (the oscillation eb3fd47 /
+    // baa8a92 / 0b812cf fixed).
+    Vec3 inputBasisX = Vec3(1, 0, 0);
+    Vec3 inputBasisY = Vec3(0, 1, 0);
+    Vec3 inputBasisZ = Vec3(0, 0, 1);
+
+    // Chained input-frame channel (gesture-frame unification, Phase 2).
+    // When the owner chained this gesture off the persisted gizmo frame, it
+    // pushes that ONE unified frame here (via `setWrapperInputFrame`,
+    // called once per gesture from `beginMoveDragSession`). The DECOMPOSE read
+    // sites then project the world delta onto THIS frame instead of the bank's
+    // own `inputBasisX/Y/Z`. This replaces the prior hand-synced override that
+    // overwrote `inputBasis*` from the wrapper's persisted basis at gesture start —
+    // same value (the channel carries the unified `frame`, the persisted gesture
+    // frame when chained), now sourced from the single frame. The STANDALONE
+    // unchained path keeps reading the bank's own `inputBasis*` (seeded by the
+    // `currentBasis(inputBasis*, vts)` writes). The center-box drag
+    // (dragAxis==3) is basis-free/screen-plane and is excluded
+    // at the push site (the wrapper passes `chained=false` for it), so it falls
+    // back to the live `inputBasis*` exactly as before.
+    Vec3 wrapperInputFrameX = Vec3(1, 0, 0);
+    Vec3 wrapperInputFrameY = Vec3(0, 1, 0);
+    Vec3 wrapperInputFrameZ = Vec3(0, 0, 1);
+    bool wrapperInputFrameValid = false;
+
+    // Push the wrapper's unified gesture frame into this bank for the WRAPPED
+    // input projection. `chained` is the wrapper's `frame.valid &&
+    // acenSettleAllowed() && dragAxis != 3` gate (mirrors the old override
+    // guard) — false for a fresh/non-chained gesture or the basis-free
+    // center-box, in which case the DECOMPOSE reads stay on `inputBasis*`.
+    void setWrapperInputFrame(Vec3 r, Vec3 u, Vec3 f, bool chained) {
+        wrapperInputFrameX     = r;
+        wrapperInputFrameY     = u;
+        wrapperInputFrameZ     = f;
+        wrapperInputFrameValid = chained;
+    }
+
+    // DEBUG-only — input-side parity guard (gesture-frame unification, Phase 2).
+    // When a wrapped DECOMPOSE read consults the pushed channel, that channel
+    // must carry the wrapper's unified `frame` (an orthonormal triple, asserted
+    // on the wrapper side at population), which is always a pure-rotation triple.
+    // Assert that local invariant here so the input-read safety net mirrors the
+    // render-rung asserts. Compiled out of release.
+    debug void assertWrapperInputFrameChained() const {
+        import std.math : abs;
+        if (!wrapperInputFrameValid) return;
+        enum float tol = 1e-3f;
+        assert(abs(wrapperInputFrameX.length - 1.0f) < tol,
+               "move wrapperInputFrameX not unit length");
+        assert(abs(wrapperInputFrameY.length - 1.0f) < tol,
+               "move wrapperInputFrameY not unit length");
+        assert(abs(wrapperInputFrameZ.length - 1.0f) < tol,
+               "move wrapperInputFrameZ not unit length");
+        assert(abs(dot(wrapperInputFrameX, wrapperInputFrameY)) < tol,
+               "move wrapperInputFrame X·Y not orthogonal");
+        assert(abs(dot(wrapperInputFrameX, wrapperInputFrameZ)) < tol,
+               "move wrapperInputFrame X·Z not orthogonal");
+        assert(abs(dot(wrapperInputFrameY, wrapperInputFrameZ)) < tol,
+               "move wrapperInputFrame Y·Z not orthogonal");
+    }
+
+    // Source selector for DECOMPOSE reads. A chained gesture reads the explicit
+    // owner frame; a fresh or center-box gesture reads the bank's drag-start
+    // frame.
+    Vec3 inAxisX() const {
+        return wrapperInputFrameValid ? wrapperInputFrameX : inputBasisX;
+    }
+    Vec3 inAxisY() const {
+        return wrapperInputFrameValid ? wrapperInputFrameY : inputBasisY;
+    }
+    Vec3 inAxisZ() const {
+        return wrapperInputFrameValid ? wrapperInputFrameZ : inputBasisZ;
+    }
+
+    // Phase 3 — `dragDelta` + `dragDeltaAtDragStart` deleted. The
+    // wrapper now owns the accumulated world delta (its
+    // `accumulatedWorldDelta` / `accumulatedAtDragStart`) plus the
+    // per-drag full-mesh `dragBaseline` that `applyTRS` rebuilds from.
+    Vec3     propInput;       // basis-local slider state (drawProperties)
+
+    bool     ctrlConstrain;        // Ctrl: axis TBD from initial movement (only for dragAxis==3)
+    int      constrainStartMX, constrainStartMY;
+    // The gesture's handle drag (M-HANDLE, task 9412): the pivot and pixel
+    // frozen at the press, so LAW A's and LAW B's conversions are linearised
+    // about ONE point and measured from ONE pixel. `grabApplied` is the
+    // PRE-SNAP client already handed to the wrapper, so each event emits only
+    // what the cumulative travel has not delivered yet. That client is also
+    // the snap's input, so a snapped position never feeds the next event;
+    // `snapHeld` is the offset the current snap holds the gizmo away from it,
+    // handed back on the first unsnapped event (captured K-B9 K9d: the gizmo
+    // rejoins the pointer). `axisLawPorted` is decided once, at the arm: false
+    // under the `Screen` action centre, where the reference wraps the
+    // translator in a decorator adding a term nobody has read, so `Screen`
+    // is held at its pre-port incremental body (drag.d's LAW-CHANGE POINT).
+    HandleDrag grab;
+    Vec3     grabApplied;
+    Vec3     snapHeld;
+    bool     axisLawPorted;
+    // Set true at the two Ctrl-lock entry sites (button-down Ctrl path +
+    // beginScreenPlaneDragAt Ctrl path); cleared at BOTH drag-end
+    // (onMouseButtonUp) AND fresh button-DOWN reset so a following non-Ctrl
+    // drag never inherits a stale flag.
+    bool     ctrlLockActive;
+
+public:
+    this(Mesh* delegate() meshSrc, GpuMesh* gpu, EditMode* editMode,
+         SelType delegate() selTypeSrc = null) {
+        super(meshSrc, gpu, editMode, selTypeSrc);
+        handler = new MoveHandler(Vec3(0, 0, 0));
+        cachedCenter = Vec3(0, 0, 0);
+    }
+
+    void destroy() {
+        handler.destroy();
+    }
+
+    // Returns the locked axis index (0=X 1=Y 2=Z) when a Ctrl-lock is live
+    // during an active drag, else -1.  Also returns -1 during the <25-px
+    // wait-gate (dragAxis still ==3 and ctrlLockActive true but not yet
+    // resolved) and for any ordinary single-axis drag (ctrlLockActive false).
+    int constraintLockedAxis() const {
+        return (ctrlLockActive && dragAxis >= 0 && dragAxis <= 2) ? dragAxis : -1;
+    }
+
+    override string name() const { return "Move"; }
+
+    override void activate() {
+        super.activate();
+        propInput = Vec3(0, 0, 0);
+    }
+    final PreparedMoveActivationImage buildPreparedProductActivation() nothrow @nogc {
+        PreparedMoveActivationImage image;
+        image.base = buildPreparedActivationImage();
+        image.propInput = Vec3(0, 0, 0); image.valid = true; return image;
+    }
+    final void installPreparedProductActivation(ref PreparedMoveActivationImage image)
+            nothrow @nogc {
+        if (!image.valid) return;
+        installPreparedActivation(image.base); propInput = image.propInput; image.clear();
+    }
+
+    /// Detached image for the exact Move update root. VectorStack and wrapper
+    /// references are observations only: neither escapes this call.
+    final PreparedMoveUpdateImage buildPreparedMoveUpdate(
+            bool ownerEditOpen, Vec3 actionCenter) {
+        PreparedMoveUpdateImage image;
+        image.valid = true;
+        if (!active) { image.branch = PreparedMoveUpdateBranch.InactiveNoop; return image; }
+        if (dragAxis >= 0) { image.branch = PreparedMoveUpdateBranch.DraggingNoop; return image; }
+        if (ownerEditOpen) {
+            image.branch = PreparedMoveUpdateBranch.WrapperEditOpenNoop;
+            return image;
+        }
+        image.branch = PreparedMoveUpdateBranch.Refresh;
+        image.center = actionCenter;
+        return image;
+    }
+
+    /// Fixed carrier-free commit projection. The only mutating branch preserves
+    /// the legacy cached-center then handler-position order.
+    final void installPreparedMoveUpdate(ref PreparedMoveUpdateImage image)
+            nothrow @nogc {
+        if (!image.valid) return;
+        if (image.branch == PreparedMoveUpdateBranch.Refresh) {
+            cachedCenter = image.center;
+            handler.setPosition(image.center);
+        }
+        image.clear();
+    }
+
+    /// Prepared twin of update(). Still dormant: task 4053's cutover moved the
+    /// ARM and two DROP transitions, not the per-frame update, so the
+    /// production override remains the byte-for-byte legacy route.
+    final PreparedMoveUpdateEffect prepareUpdate(bool ownerEditOpen,
+            Vec3 actionCenter, PreparedRecordContext context) {
+        if (context is null) return PreparedMoveUpdateEffect(
+            preparedToolStateOwner, PreparedMoveUpdateKind.None, false);
+        scope(failure) context.discard();
+        auto owner = PreparedMoveUpdateOwner.prepare(
+            this, ownerEditOpen, actionCenter);
+        auto kind = owner is null ? PreparedMoveUpdateKind.None : owner.effectKind();
+        bool ok = owner !is null && context.prepareMoveUpdate(owner) &&
+            context.markNoHistoryInstall();
+        if (!ok) context.discard();
+        return PreparedMoveUpdateEffect(preparedToolStateOwner, kind, ok);
+    }
+
+    version(unittest) final void seedPreparedMoveUpdateForTest(
+            bool isActive, int axis, Vec3 cached,
+            Vec3 handlerCenter) nothrow @nogc {
+        active = isActive; dragAxis = axis;
+        cachedCenter = cached; handler.center = handlerCenter;
+    }
+    version(unittest) final bool preparedMoveUpdateStateForTest(
+            Vec3 cached, Vec3 handlerCenter) const nothrow @nogc {
+        return cachedCenter == cached && handler.center == handlerCenter;
+    }
+    version(unittest) void seedPreparedProductActivationForTest() nothrow @nogc {
+        seedPreparedActivationForTest(); propInput = Vec3(4,5,6);
+    }
+    version(unittest) bool preparedProductActivationForTest() const nothrow @nogc {
+        return preparedActivationForTest() && propInput == Vec3(0,0,0);
+    }
+    version(unittest) bool preparedProductActivationSeedForTest() const nothrow @nogc {
+        return preparedActivationSeedForTest() && propInput == Vec3(4,5,6);
+    }
+    final PreparedTransformProductEffect prepareActivate(
+            PreparedRecordContext context) {
+        if (context is null) return PreparedTransformProductEffect(
+            preparedToolStateOwner, PreparedTransformProductKind.Move, false);
+        scope(failure) context.discard();
+        auto owner = PreparedTransformProductActivationOwner.prepare(this);
+        bool ok = owner !is null &&
+            context.prepareTransformProductActivation(owner) &&
+            context.markNoHistoryInstall();
+        if (!ok) context.discard();
+        return PreparedTransformProductEffect(preparedToolStateOwner,
+            PreparedTransformProductKind.Move, ok);
+    }
+
+    // No `params()` override: TX/TY/TZ live on the wrapper now
+    // (`XfrmTransformTool.params()` at xfrm_transform.d), since
+    // factory ids `move` / `xfrm.transform` etc. all route to the
+    // wrapper. `tool.attr <id> TX` writes into the wrapper's
+    // `run.t`, then `tool.doApply` → `applyHeadless()`
+    // → `applyTRS(mesh.vertices.dup)` uses it.
+
+    // Phase 3 — MoveTool is only ever instantiated by
+    // `XfrmTransformTool`; the wrapper overrides `applyHeadless` to
+    // route through the unified `applyTRS(mesh.vertices.dup)` path.
+    // No factory builds a bare MoveTool any more, so the sub-tool's
+    // own `applyHeadless` was dead code and was removed.
+
+    override void deactivate() {
+        super.deactivate();
+    }
+
+    // The gizmo's parts in hit priority (plane circles > centre box > arrows):
+    // 0/1/2=axis 3=most-facing plane 4/5/6=XY/YZ/XZ plane. The arbiter
+    // registration (at part offset `base`, so banks get distinct parts) and the
+    // bank's own press / hover test read this one list, so the highlighted
+    // handle is the one a click grabs. Registration does NOT begin()/update()/
+    // suppress() — the wrapper owns the single test+update pass.
+    HandlePart[7] handleParts() {
+        return [HandlePart(handler.circleXY, 4), HandlePart(handler.circleYZ, 5),
+                HandlePart(handler.circleXZ, 6), HandlePart(handler.centerBox, 3),
+                HandlePart(handler.arrowX, 0), HandlePart(handler.arrowY, 1),
+                HandlePart(handler.arrowZ, 2)];
+    }
+    void registerHandles(ToolHandles th, int base) { auto p = handleParts(); th.add(p[], base); }
+    void registerCompactHandles(ToolHandles th, int base) { auto p = handleParts(); th.add(p[3 .. $], base); }
+
+    void setWrapperGizmoPose(Vec3 center, Vec3 bX, Vec3 bY, Vec3 bZ)
+            nothrow @nogc {
+        cachedCenter = center;
+        handler.setPosition(center);
+        // flex_border_handles_plan.md Phase 2 — the wrapper passes the Model-C
+        // RENDER basis (idle: live currentBasis; during a drag: the gesture-
+        // frozen `(axisTracksSelection ? R_gesture : I)·B0`). It is now applied
+        // UNCONDITIONALLY — the old `dragAxis < 0` render gate is removed so the
+        // rendered orientation follows renderBasis cross-bank (Risk 1). The INPUT
+        // projection is unaffected: it reads the separately-frozen `inputBasis*`
+        // (Phase 1), never handler.axis*, so the gesture math stays stable while
+        // the rendered frame moves.
+        handler.setOrientation(bX, bY, bZ);
+    }
+
+    // Recompute gizmo center from current selection / mesh state.
+    //
+    // Phase 3 — the wrapper owns the selection/mutation-change commit
+    // hook AND the mid-tool falloff-change re-apply (both keyed off
+    // its own `editBaseline()`). MoveTool's update only refreshes the
+    // gizmo center from ACEN when idle. The wrapper checks the same
+    // selection/mutation versions BEFORE calling moveSub.update(),
+    // so by the time we get here either: (a) versions matched (no
+    // change), or (b) versions mismatched and the wrapper already
+    // committed — either way reading the current ACEN center is
+    // correct.
+    void updateInput(Vec3 actionCenter, bool ownerEditOpen) {
+        if (!active) return;
+
+        // Skip during drag — selection and mesh can't change "outside"
+        // the tool's own input. Without this, a drag motion event
+        // would mid-frame re-pull the ACEN center and yank the gizmo
+        // off the cursor.
+        if (dragAxis >= 0) return;
+
+        // The owner passes both the pose and its edit-open decision explicitly;
+        // the input bank never reaches back into the edit lifecycle.
+        if (!ownerEditOpen) {
+            cachedCenter = actionCenter;
+            handler.setPosition(cachedCenter);
+        }
+    }
+
+    override void draw(const ref Shader shader, const ref Viewport vp, ref VectorStack vts,
+                       const ref DrawPlan plan, bool visualOnly = false)
+    {
+        if (!active) return;
+        // Task 0206: only the interactive (owner-cell) draw may pin
+        // cachedVp — a Quad/Split visual replica draws under a foreign
+        // cell's projection (see Tool.draw's doc comment).
+        if (!visualOnly) cachedVp = vp;
+
+        // Flush pending GPU upload once per frame (partial selection during drag).
+        if (needsGpuUpdate) {
+            uploadToGpu();
+            needsGpuUpdate = false;
+        }
+
+        handler.draw(shader, vp);
+
+        // Constraint line: drawn along the locked axis through the pivot
+        // when a Ctrl-lock is active.  Depth disabled so it reads as an
+        // overlay. (This used to cite a `CrossGizmo.draw` in handler.d for the
+        // same depth-off trick — no such class exists in the tree, and
+        // handler.d is now a 17-line facade over handles/*.d. The live
+        // depth-off overlay primitive is `handles/gl_util.d`'s
+        // `drawWorldSegments`.)
+        // No arrow setState override — the arbiter already highlights the
+        // captured arrow in the scheme's active colour via setHaul+update.
+        if (ctrlLockActive && dragAxis >= 0 && dragAxis <= 2) {
+            drawConstraintLine(shader, vp);
+        }
+        // Falloff overlay + endpoint handles are drawn ONCE at the
+        // XfrmTransformTool wrapper, via the PipeGizmoHost-owned emitter.
+        // The banks never touch falloff.
+    }
+
+    void drawAxesOnly(const ref Shader shader, const ref Viewport vp, ref VectorStack vts, bool visualOnly = false)
+    {
+        if (!active) return;
+        if (!visualOnly) cachedVp = vp;
+
+        if (needsGpuUpdate) {
+            uploadToGpu();
+            needsGpuUpdate = false;
+        }
+
+        handler.drawAxesOnly(shader, vp);
+    }
+
+    void drawCompact(const ref Shader shader, const ref Viewport vp, ref VectorStack vts, bool visualOnly = false)
+    {
+        if (!active) return;
+        if (!visualOnly) cachedVp = vp;
+
+        if (needsGpuUpdate) {
+            uploadToGpu();
+            needsGpuUpdate = false;
+        }
+
+        handler.drawAxesAndCenter(shader, vp);
+    }
+
+    // Draw a world-space constraint line along the locked axis through the gizmo
+    // pivot.  Uses the rendered arrow geometry (handler.arrow{X|Y|Z}.end - center)
+    // so the line matches the arrow the arbiter highlighted.  Called from draw()
+    // only when ctrlLockActive && dragAxis in [0,2].
+    private void drawConstraintLine(const ref Shader shader, const ref Viewport vp)
+    {
+        version(unittest) return; // no GL in unit tests
+
+        // Build the direction from the already-oriented rendered arrow geometry.
+        Vec3[3] ends = [handler.arrowX.end, handler.arrowY.end, handler.arrowZ.end];
+        Vec3 dir = normalize(ends[dragAxis] - handler.center);
+
+        // Choose a screen-stable world length: use the gizmo arm length × 3 so
+        // the line extends clearly in both directions past the visible arrow.
+        float k = (ends[dragAxis] - handler.center).length * 3.0f;
+
+        Vec3[2] pair = [handler.center - dir * k, handler.center + dir * k];
+
+        // The scheme's ACTIVE-handle colour — this line is drawn only while an
+        // axis is locked and hauled, which is exactly the state that colour
+        // means. It matches the arbiter's highlight on the captured arrow, and
+        // it now matches it by construction rather than by two hand-copied
+        // literals that agreed until one of them was corrected.
+        immutable Vec3 color = schemeColor(SchemeColor.handleActive);
+        // WINDOW PIXELS. Halved from 1.5f with task 0600's extrusion-unit fix
+        // (see shader.thickLineVertexSrc); renders the same 0.75 px it did.
+        immutable float lineWidth = 0.75f;
+
+        glDisable(GL_DEPTH_TEST);
+        drawWorldSegments(pair, vp, color, lineWidth, shader.program);
+        glEnable(GL_DEPTH_TEST);
+    }
+
+    override bool onMouseButtonUp(ref const SDL_MouseButtonEvent e, ref VectorStack vts) {
+        // Hide the screen-falloff disc on every LMB-up — onMouseButtonDown
+        // turned it on unconditionally when Screen falloff is active so
+        // the disc renders for the whole click+hold, including the
+        // click-outside-gizmo case where no drag ever starts. Must run
+        // before the dragAxis-guard early return below.
+        if (e.button == SDL_BUTTON_LEFT) {
+            import vibe3d.editing.tools.interactive.falloff_handles : screenFalloffLMBEnd;
+            screenFalloffLMBEnd();
+        }
+        if (e.button != SDL_BUTTON_LEFT || dragAxis == -1) return false;
+
+        ctrlConstrain  = false;
+        ctrlLockActive = false;   // clear-site 1: drag-end
+
+        // Phase 3 — the wrapper now owns the GPU upload / gpuMatrix
+        // reset / wholeMeshDrag handling, the commit-edit hooks, and
+        // the BrushReset stroke boundary. MoveTool only resets the
+        // drag-axis state it owns (dragAxis = -1) and clears the snap
+        // overlay it published.
+        dragAxis = -1;
+        clearLastSnap();
+        // Sticky-pin follow: when ACEN.userPlaced is active (set by
+        // click-outside-relocate at drag start), update the pin to the
+        // post-drag handler position. Without this, the next update()
+        // frame asks ACEN for the center and gets back the original
+        // click point — snap-final position is lost and the gizmo
+        // visually jumps back. With snap on the jump is dramatic
+        // because the gizmo had locked onto a discrete snap target.
+        //
+        // Gated to the relocate-allowed modes (Auto / None / Screen). In
+        // Element mode the pin is owned by the click-pick (tryPickElement →
+        // setUserPlaced at the picked element), NOT by the drag: re-pinning to
+        // handler.center here would drag the gizmo OFF the picked element to
+        // the moving-set position (the whole-mesh centroid under an empty
+        // selection), so the gizmo snapped back to the center on release. Skip
+        // the follow there and the picked-element pin survives the gesture.
+        if (acenIsUserPlaced() && pressPlacesCenter())
+            notifyAcenUserPlaced(handler.center);
+        lastSelectionHash = computeSelectionHash();
+        return true;
+    }
+
+    bool onMouseButtonDownWithResolvedAxis(ref const SDL_MouseButtonEvent e,
+                                           ref VectorStack vts,
+                                           int resolvedAxis,
+                                           scope void delegate() beforeRelocate = null,
+                                           scope void delegate() beforePinnedHaul = null) {
+        if (!active || e.button != SDL_BUTTON_LEFT) return false;
+        // Don't interfere with pan/rotate/zoom modifier combos.
+        version(unittest) SDL_Keymod mods = 0;
+        else SDL_Keymod mods = SDL_GetModState();
+        bool ctrl = (mods & KMOD_CTRL) != 0;
+        if (mods & (KMOD_ALT | KMOD_SHIFT)) return false;
+
+        // Soft Drag: re-center the screen-falloff disc at the click
+        // point on every fresh grab AND flip the overlay-visibility
+        // flag on so the disc renders for the duration of the LMB
+        // hold — even when the click lands outside a gizmo arrow
+        // (no drag will start in that case, but the user still gets
+        // visual confirmation of where the falloff is anchored).
+        // Must happen BEFORE captureFalloffForDrag(vts) below so the
+        // snapshot picks up the new center. No-ops when no Screen-
+        // type falloff stage is active.
+        {
+            import vibe3d.editing.tools.interactive.falloff_handles : screenFalloffActive,
+                                     screenFalloffSetCenter,
+                                     screenFalloffLMBBegin;
+            if (screenFalloffActive()) {
+                screenFalloffSetCenter(e.x, e.y);
+                screenFalloffLMBBegin();
+            }
+        }
+
+        ctrlConstrain = false;
+        ctrlLockActive = false;   // clear stale lock before re-deciding
+        lastClickWasRelocate = false;
+        lastClickWasOffGizmo = false;
+        // The caller resolved the part (-1 = off every handle): the wrapper's
+        // arbiter, whose miss stands — the hit pass is the draw pass.
+        dragAxis = resolvedAxis;
+        if (dragAxis >= 0) {
+            // Ctrl constraint applies only to the most-facing plane (dragAxis==3)
+            if (ctrl && dragAxis == 3) {
+                ctrlConstrain = true;
+                ctrlLockActive = true;   // lock-entry site 1: button-down Ctrl path
+                constrainStartMX = e.x; constrainStartMY = e.y;
+            }
+            lastMX = e.x; lastMY = e.y;
+            armPlaneDrag(e.x, e.y, vts);
+            // Freeze the input-projection basis for the gesture (= the
+            // current idle basis = the frozen rendered orientation today).
+            currentBasis(inputBasisX, inputBasisY, inputBasisZ, vts);
+            buildVertexCacheIfNeeded();
+            // Phase 3 — wrapper (`XfrmTransformTool.beginMoveDragSession`)
+            // captures falloff / symmetry / edit-session baseline /
+            // dragBaseline / fast-path predicate AFTER this returns
+            // true. MoveTool only owns dragAxis + ctrlConstrain +
+            // lastMX/Y now.
+            return true;
+        }
+
+        // Click outside gizmo. TWO independent questions, which one
+        // predicate used to answer:
+        //
+        //   (a) may this click MOVE the pivot?  Only Auto / None / Screen.
+        //       The others (Select / SelectAuto / Element / Local / Origin /
+        //       Manual / Border) derive the pivot from the selection or pin
+        //       it to a fixed point, and a click must not drag it off.
+        //   (b) may this click start a DRAG?  Always. A translation's
+        //       RESULT is pivot-independent — the pivot only says where the
+        //       screen->world conversion is linearised (LAW B's
+        //       `planeAnchor`), and a pinned mode has a perfectly good pivot
+        //       to linearise about.
+        //
+        // (b) used to be answered by (a)'s predicate, so under every pinned
+        // mode a press away from the gizmo returned false and the tool never
+        // engaged at all — no drag, no translation, nothing.
+        //
+        // Where the anchor comes from:
+        //   Auto / None : click projected onto the most-facing world-axis
+        //                 plane through the camera focus.
+        //   Screen      : click projected onto a camera-perpendicular
+        //                 plane through the current selection bbox centre.
+        //   pinned      : the pivot ACEN already computed (`handler.center`,
+        //                 refreshed from the stage by every idle `update()`),
+        //                 left exactly where it is.
+        //
+        // Either way the drag plane is the most-facing plane THROUGH the
+        // anchor — drag projection feels natural across camera angles
+        // regardless of where the anchor sits.
+        //
+        // Element is the one pinned mode that keeps the old answer to (b):
+        // there the click is already spoken for — it PICKS the anchor element,
+        // and the wrapper starts the drag from the picked centre in a branch
+        // that runs after this one. Claiming the press here would anchor the
+        // drag at the PRE-pick pivot and strand the pick.
+        immutable bool relocates = pressPlacesCenter();
+        if (!relocates && acenClickPicksElement())
+            return false;
+        // A pinned off-gizmo press is a run boundary. Let the wrapper close
+        // that run and publish the fresh idle pose BEFORE this bank reads the
+        // handler centre into the gesture's plane anchor. Doing it after
+        // beginScreenPlaneDragAt freezes the prior run's c+T and produces a
+        // release jump when the new run starts from T=0.
+        if (!relocates && beforePinnedHaul !is null)
+            beforePinnedHaul();
+        Vec3 anchor = handler.center;
+        if (relocates) {
+            if (!computeClickRelocateHit(e.x, e.y, anchor, vts))
+                return false;
+            if (beforeRelocate !is null) beforeRelocate();
+            // Off-gizmo relocate: mark so the wrapper closes the prior run
+            // before the new session opens.
+            // A pinned-mode drag moves NO pin, so it is not a run boundary
+            // and this stays false there.
+            lastClickWasRelocate = true;
+        }
+        lastClickWasOffGizmo = true;
+        beginScreenPlaneDragAt(e.x, e.y, anchor, ctrl,
+                               /*notifyAcen=*/relocates, vts);
+        return true;
+    }
+
+    // Standalone (Edge Extend's bank): the bank's own test — unless no handle
+    // is drawn (H8, gap 217: an operation-anchored handle before it opens).
+    override bool onMouseButtonDown(ref const SDL_MouseButtonEvent e, ref VectorStack vts) {
+        return onMouseButtonDownWithResolvedAxis(e, vts,
+            handleHittable() ? firstHitPart(e.x, e.y, cachedVp, handleParts()) : -1);
+    }
+
+    // Start a screen-plane drag with the gizmo positioned at `hit`.
+    // Extracted from the click-outside-gizmo path so callers can
+    // initiate the same drag from a different anchor.
+    // XfrmTransformTool calls this on its MoveTool sub-instance when
+    // falloff.element click-pick lands off all gizmo handles — the
+    // gizmo snaps to the picked centre and a screen-plane drag of
+    // the prior selection (= moving set) starts on the same click —
+    // an ElementMove-style "click+drag on an element drags the
+    // selection through the new falloff anchor" UX.
+    //
+    // `notifyAcen` controls the ACEN userPlaced push: true for the
+    // Auto/None/Screen relocate flow (so the user-placed point
+    // sticks across queries), false for tool-driven re-anchors
+    // where ACEN's pivot logic already owns the position.
+    public void beginScreenPlaneDragAt(int mx, int my, Vec3 hit,
+                                       bool ctrl, bool notifyAcen,
+                                       ref VectorStack vts) {
+        // Phase 3 — relocate is just "set up the dragAxis + visual
+        // gizmo position". The wrapper's `beginMoveDragSession`
+        // (called immediately after this returns) handles the
+        // dragBaseline / edit-session / falloff/symmetry capture
+        // / fast-path predicate.
+        //
+        // Note: we no longer pre-commit any open edit here. The
+        // tool-session edit baseline (captured idempotently in the
+        // wrapper) spans the WHOLE session including any relocate-
+        // mid-session — same "live tool" undo unit MoveTool had
+        // pre-refactor.
+        handler.setPosition(hit);
+        centerManual = true;
+        if (notifyAcen) {
+            notifyAcenUserPlaced(hit);
+            notePressPlacement(hit);        // W3 (task 7144)
+        }
+        dragAxis = 3;   // most-facing plane through gizmo center
+        lastMX = mx; lastMY = my;
+        // The relocate has just moved the gizmo to `hit`; that relocated pivot
+        // is the anchor this drag linearises about, so arm AFTER setPosition.
+        armPlaneDrag(mx, my, vts);
+        // Freeze the input-projection basis for this relocate drag.
+        currentBasis(inputBasisX, inputBasisY, inputBasisZ, vts);
+        buildVertexCacheIfNeeded();
+        if (ctrl) {
+            ctrlConstrain = true;
+            ctrlLockActive = true;   // lock-entry site 2: beginScreenPlaneDragAt Ctrl path
+            constrainStartMX = mx; constrainStartMY = my;
+        }
+    }
+
+    // Press the gesture's handle drag at the gizmo pivot as it stands now,
+    // from BOTH drag-start sites, so a relocate-then-drag and a handle grab
+    // arm identically.
+    private void armPlaneDrag(int mx, int my, ref VectorStack vts) {
+        snapHeld = Vec3(0, 0, 0);
+        armAxisLeg(mx, my);
+        axisLawPorted = !screenActionCentre(vts);
+    }
+
+    // At a plain handle grab this is the button-down; at a Ctrl constrain it
+    // is the event the axis was chosen on, where that leg of the gesture
+    // actually starts (nothing moved before it, so the client is unchanged).
+    private void armAxisLeg(int mx, int my) {
+        grab.press(handler.center, mx, my);
+        grabApplied = handler.center;
+    }
+
+    // The frame the gesture's travel goes through, per event: the input basis
+    // is the wrapper's, pushed after the press.
+    private DragFrame moveDragFrame(Vec3 mi0, Vec3 mi1, Vec3 mi2) const {
+        DragFrame f;
+        if (dragAxis > 2) {
+            f.kind = dragAxis == 3 ? DragKind.viewPlane : DragKind.handlePlane;
+            f.plane = dragAxis;
+            f.basisX = mi0; f.basisY = mi1; f.basisZ = mi2;
+            return f;
+        }
+        f.axis = dragAxis == 0 ? mi0 : dragAxis == 1 ? mi1 : mi2;
+        if (axisLawPorted) return f;
+        f.kind = DragKind.screenAxis;
+        f.axis = f.axis * (handler.arrowX.end - handler.center).length;
+        return f;
+    }
+
+    // Is the `Screen` action centre the one in force? Under it the ported
+    // conversion is NOT run — and the reason is a hold, not a match.
+    //
+    // On the reference side `actr.screen` publishes a second object over the
+    // translator slot, but that object is a DECORATOR: its `GetNewPosition`
+    // forwards to the inner translator — the very conversion that was ported
+    // — and then adds a file-scope hit-handle triple to every component,
+    // re-latched whenever the handle part changes. Nobody has read that
+    // triple. So under `Screen` the reference is neither the ported law nor
+    // the editor's own compensated one, and shipping either would be a guess.
+    // The editor's own is kept because it is what `Screen` already did, which
+    // makes this change behaviour-NEUTRAL there and leaves the open question
+    // where it was.
+    //
+    // Read once at the arm and frozen for the gesture — a mode that changed
+    // mid-drag must not change the conversion mid-drag.
+    private bool screenActionCentre(ref VectorStack vts) {
+        import vibe3d.editing.pipeline.contracts.toolpipe.packets : ActionCenterPacket;
+        import vibe3d.editing.pipeline.evaluation.toolpipe.stages.actcenter : ActionCenterStage;
+        auto acen = vts.get!ActionCenterPacket();
+        return acen !is null
+            && acen.type == cast(int)ActionCenterStage.Mode.Screen;
+    }
+
+    // Phase 7.3a/c: route the would-be gizmo position through
+    // SnapStage. Returns the (possibly-adjusted) world delta to apply
+    // this frame. No-op when no pipeline is registered or snap is
+    // disabled. The dragged element's own verts are excluded so a
+    // single-vert drag can't snap to itself. 7.3d: also stashes the
+    // SnapResult on the tool + global so draw() can render the
+    // overlay and HTTP /api/snap/last can read it.
+    private Vec3 applySnapToDelta(Vec3 gizmoCenter, Vec3 worldDelta, Vec3 client,
+                                  int sx, int sy, ref VectorStack vts)
+    {
+        // SNAP packet is already published in vts (upstream stage ran
+        // during the dispatcher's pipeline.evaluate).
+        const snapPkt = snapPacketOf(vts);
+        if (!snapPkt.enabled) {
+            clearLastSnap();
+            return releaseSnap(worldDelta);
+        }
+
+        // Exclude verts the drag is moving. Otherwise a single-vert drag
+        // always snaps to its own (zero-distance) projected pixel. The moving
+        // set IS the processed operand (task 7144): the mirror pass writes a
+        // partner only when that partner is itself in the operand, so no
+        // vertex outside `vertexIndicesToProcess` moves — a moving vertex left
+        // un-excluded would chase the cursor and answer from a stale grid.
+        immutable int nProc = vertexProcessCount
+                            < cast(int)vertexIndicesToProcess.length
+                            ? vertexProcessCount
+                            : cast(int)vertexIndicesToProcess.length;
+        uint[] exclude;
+        exclude.reserve(nProc);
+        foreach (vi; vertexIndicesToProcess[0 .. nProc])
+            if (vi >= 0) exclude ~= cast(uint)vi;
+
+        SnapResult sr = snapCursor(client, sx, sy, cachedVp, *mesh, primaryModelSpace(),
+                                   snapPkt, exclude, null, liveSnapGuides(SnapQueryPolicy(SnapPurpose.placement, SnapGuideScope.registered)));
+        publishLastSnap(sr);
+        if (sr.snapped) {
+            immutable Vec3 d = constrainSnapDelta(sr.worldPos - gizmoCenter);
+            snapHeld = snapHeld + (d - worldDelta);
+            return d;
+        }
+        return releaseSnap(worldDelta);
+    }
+
+    // An unsnapped event: its own delta plus the offset a snap was holding,
+    // so the gizmo is back on the client point (no retained offset).
+    private Vec3 releaseSnap(Vec3 worldDelta) {
+        immutable Vec3 d = worldDelta - snapHeld;
+        snapHeld = Vec3(0, 0, 0);
+        return d;
+    }
+
+    // Project a raw snap delta (snapTarget - gizmoCenter) onto the active
+    // drag axis / plane so an off-axis snap candidate doesn't smear the
+    // selection across axes. For an X-arrow drag with snap to a vertex
+    // at (Tx, Ty, Tz), this returns ((Tx - Gx) * axisX) — i.e. the gizmo
+    // moves only along X to the snap target's X coordinate. This is
+    // "axis-locked snap".
+    //
+    // The centerBox handle (dragAxis==3) is intentionally NOT constrained:
+    // it's the "free move" handle, and the user expectation is that
+    // grabbing it + snapping lands the gizmo exactly at the snap point in
+    // 3D. The explicit plane circles (4/5/6) keep their plane lock — the
+    // user picked that plane on purpose.
+    private Vec3 constrainSnapDelta(Vec3 delta) {
+        // Single-axis drag — keep only the component along the locked axis.
+        // Reads the unified gesture frame when wrapper-chained (gesture-frame
+        // unification, Phase 2), else the bank's drag-start-frozen INPUT basis —
+        // never the rendered `handler.axis*`, so input projection is insulated
+        // from the rendered frame. The channel carries the same value the old
+        // hand-synced override wrote, so this is byte-identical when chained.
+        debug assertWrapperInputFrameChained();
+        Vec3 ax0 = inAxisX(), ax1 = inAxisY(), ax2 = inAxisZ();
+        if (dragAxis == 0) return ax0 * dot(delta, ax0);
+        if (dragAxis == 1) return ax1 * dot(delta, ax1);
+        if (dragAxis == 2) return ax2 * dot(delta, ax2);
+        // Plane circles — strip the component along the plane normal.
+        if (dragAxis == 4) return delta - ax2 * dot(delta, ax2);
+        if (dragAxis == 5) return delta - ax0 * dot(delta, ax0);
+        if (dragAxis == 6) return delta - ax1 * dot(delta, ax1);
+        // dragAxis == 3 (centerBox) and any unrecognised value: pass
+        // through the full 3D snap delta.
+        return delta;
+    }
+
+    override bool onMouseMotion(ref const SDL_MouseMotionEvent e, ref VectorStack vts) {
+        if (!active) return false;
+        if (dragAxis == -1) {
+            // Idle hover: refresh the live click-outside snap preview
+            // so the cyan overlay shows where the gizmo would land if
+            // the user clicked right now. A part >= 0 under the cursor
+            // would start a drag, not a relocate — preview is suppressed there.
+            updateLiveSnapPreview(e.x, e.y, firstHitPart(e.x, e.y, cachedVp, handleParts()), vts);
+            return false;
+        }
+
+        // Ctrl-constrain: wait for initial movement to determine which of the two
+        // in-plane axes to lock to, then switch dragAxis to that axis (0/1/2).
+        if (ctrlConstrain) {
+            int tdx = e.x - constrainStartMX;
+            int tdy = e.y - constrainStartMY;
+            if (ctrlLockPending(tdx, tdy)) { lastMX = e.x; lastMY = e.y; return true; }
+
+            // ctrlConstrain only ever runs for the center-box drag (dragAxis==3),
+            // which the wrapper excludes from chaining (chained=false), so the
+            // selector resolves to the live `inputBasis*` here — basis-free as
+            // before. Routed through the selector for uniformity.
+            debug assertWrapperInputFrameChained();
+            const ref float[16] vv = cachedVp.view;
+            Vec3 camBack = Vec3(vv[2], vv[6], vv[10]);
+            dragAxis = chooseConstraintAxis(camBack,
+                inAxisX(), inAxisY(), inAxisZ(),
+                handler.arrowX.end, handler.arrowY.end, handler.arrowZ.end,
+                handler.center, cachedVp, tdx, tdy);
+            ctrlConstrain = false;
+            lastMX = e.x; lastMY = e.y;
+            // The axis leg of this gesture starts HERE, not at the button-down
+            // that was still a centre-box press. Re-arm the ported
+            // conversion's press pixel and base so the ~5 px the lock consumed
+            // are not re-delivered as a jump on the next event — which is what
+            // `lastMX = e.x` did for the incremental law it replaces.
+            armAxisLeg(e.x, e.y);
+            return true; // axis locked — movement starts on the next motion event
+        }
+
+        // Project the screen drag against the unified gesture frame when
+        // wrapper-chained (gesture-frame unification, Phase 2), else the bank's
+        // own drag-start INPUT basis. The center-box (dragAxis==3) is excluded
+        // from chaining at the push site, so its plane drag resolves to the live
+        // `inputBasis*` here — basis-free as before.
+        debug assertWrapperInputFrameChained();
+        Vec3 mi0 = inAxisX(), mi1 = inAxisY(), mi2 = inAxisZ();
+        // LAW A ported / LAW B: CUMULATIVE, the press pivot plus the travel
+        // since the press pixel through the frozen anchor (drag.d), so this
+        // event emits only what the total has not delivered yet. Feeding the
+        // previous pixel and the live gizmo would restore the incremental
+        // behaviour these laws replace.
+        bool skip;
+        Vec3 client, worldDelta;
+        if (dragAxis <= 2 && !axisLawPorted) {
+            // LAW A, the editor's own body, incremental against the live gizmo:
+            // the `Screen` hold (see `screenActionCentre`); its client is the
+            // sum it delivered, so the snap probes where the gizmo tracks.
+            // `lastMX/lastMY` stay written below as the fallback for a
+            // dispatch with no cooked gesture.
+            import vibe3d.editing.pipeline.contracts.toolpipe.packets : GesturePacket;
+            int prevMX, prevMY;
+            gesturePrevPixel(vts.get!GesturePacket(), e.x, e.y,
+                             lastMX, lastMY, prevMX, prevMY);
+            worldDelta = axisDragDelta(e.x, e.y, prevMX, prevMY,
+                                       dragAxis, handler,
+                                       mi0, mi1, mi2,
+                                       cachedVp, skip);
+            client = grabApplied + worldDelta;
+        } else {
+            client = grab.client(e.x, e.y, moveDragFrame(mi0, mi1, mi2), cachedVp, skip);
+            worldDelta = client - grabApplied;
+        }
+        if (skip) { lastMX = e.x; lastMY = e.y; return true; }
+        grabApplied = client;
+
+        // Phase 7.3a: snap the client point; the gizmo lands on the snapped
+        // point and the selection moves by the same delta (the overlay's
+        // result is published to `g_lastSnap`).
+        worldDelta = applySnapToDelta(handler.center, worldDelta, client, e.x, e.y, vts);
+
+        // Phase 3 — single-source refactor.
+        //
+        // MoveTool's drag-axis path no longer mutates geometry. It
+        // produces ONE basis-local scalar (projected onto the gizmo's
+        // shared axes — same basis as `run.t`'s
+        // interpretation in `XfrmTransformTool.applyTRS`) and parks it
+        // in `pendingTranslateDelta`. The wrapper drains this on every
+        // motion event, accumulates into `run.t`, and
+        // runs the unified `applyTRS(dragBaseline)`. Under ACEN.Local
+        // + axis.local the SAME basis-local scalar then flows to
+        // `applyTranslatePerCluster` (one scalar per cluster, applied
+        // along each cluster's OWN signed fwd) so per-cluster
+        // magnitudes can't diverge — that was the round-1 bug.
+        //
+        // `dragDelta`, `gpuMatrix`, `needsGpuUpdate`, the visual
+        // `handler.setPosition` update, and the wholeMesh fast-path
+        // are now all the wrapper's responsibility. Idle/hover and
+        // falloff-gizmo branches above are unchanged.
+        pendingTranslateDelta = pendingTranslateDelta
+            + Vec3(dot(worldDelta, mi0),
+                   dot(worldDelta, mi1),
+                   dot(worldDelta, mi2));
+
+        lastMX = e.x;
+        lastMY = e.y;
+        return true;
+    }
+
+    struct PanelInput {
+        Vec3 delta;
+        bool active;
+        bool done;
+    }
+
+    PanelInput drawInputProperties(Vec3 publishedValue) {
+        // The owner's published translation is the BASIS-LOCAL
+        // cumulative for the current drag. With dragAxis >= 0 we
+        // mirror that into propInput so the sliders track the live
+        // drag. Outside a drag, propInput stays at whatever the
+        // last slider edit left it (= 0 after a tool-session
+        // commit, since reactivate zeroes the wrapper's
+        // run.t).
+        if (dragAxis >= 0) propInput = publishedValue;
+        Vec3 propBefore = propInput;
+
+        ImGui.DragFloat("X", &propInput.x, 0.01f, 0, 0, "%.4f");
+        bool xActive = ImGui.IsItemActive();
+        bool xDone   = ImGui.IsItemDeactivatedAfterEdit();
+        ImGui.DragFloat("Y", &propInput.y, 0.01f, 0, 0, "%.4f");
+        bool yActive = ImGui.IsItemActive();
+        bool yDone   = ImGui.IsItemDeactivatedAfterEdit();
+        ImGui.DragFloat("Z", &propInput.z, 0.01f, 0, 0, "%.4f");
+        bool zActive = ImGui.IsItemActive();
+        bool zDone   = ImGui.IsItemDeactivatedAfterEdit();
+
+        PanelInput result;
+        result.active = xActive || yActive || zActive;
+        result.done = xDone || yDone || zDone;
+        if (result.active) result.delta = propInput - propBefore;
+        return result;
+    }
+
+    // Phase 3 — the `applyDelta` / `applyDeltaImmediate` /
+    // `applyAbsoluteFromBaseline` / `applyPerClusterDelta` helpers
+    // were deleted. The drag-axis branch produces a basis-local
+    // gesture scalar (parked in `pendingTranslateDelta`); the
+    // wrapper drains, accumulates into `run.t`, and
+    // runs the single `applyTRS(dragBaseline)` evaluate which
+    // dispatches into the same `xform_kernels.applyTranslate*` /
+    // `applyTranslatePerCluster` routines those wrappers used to
+    // call. Per-cluster magnitudes can no longer diverge because
+    // the screen-projection happens ONCE per frame against the
+    // gizmo's shared axes, not per-cluster.
+}

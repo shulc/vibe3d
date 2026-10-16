@@ -66,7 +66,7 @@ unittest {
     assert(expected.length == 22, "W16-B named shader population floor moved");
 
     string extractor = "module w16_b_shader_extract;\n"
-        ~ "import shader; import gpu_select;\n";
+        ~ "import vibe3d.viewport.gpu.shader; import vibe3d.viewport.gpu.gpu_select;\n";
     foreach (entry; expected) {
         const dot = entry[0].indexOf('.');
         const moduleName = entry[0][0 .. cast(size_t) dot];

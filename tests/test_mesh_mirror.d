@@ -21,7 +21,7 @@ import std.conv : to;
 import std.math : abs;
 
 import vibe3d.mesh.core.mesh : CloneWeld, Mesh;
-import math : Vec3;
+import vibe3d.util.math.math : Vec3;
 
 void main() {}
 

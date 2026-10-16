@@ -1,0 +1,7919 @@
+// The Topology Pen tool itself: the class, its gesture handlers and its
+// commit steps. Reached by everyone through the package facade
+// (`import tools.edit.topology_pen;`); this module name exists so that
+// `package` here means the PEN's package and nothing wider -- see
+// `package.d` for why that distinction is the point.
+module vibe3d.editing.tools.interactive.tools.edit.topology_pen.tool;
+import vibe3d.mesh.ops.mesh_edge_slice : splitFaceByVertices;
+
+import vibe3d.editing.selection.query.toolpipe.guide : SnapQueryPolicy, SnapPurpose, SnapGuideScope;
+import vibe3d.editing.selection.query.hover_state;
+
+import bindbc.sdl;
+import std.json : JSONValue;
+import std.math : hypot, sqrt, SQRT2;
+
+import vibe3d.editing.tools.interactive.tool;
+import vibe3d.viewport.display_policy.display_state : DrawPlan;
+// `render.d`'s mixin body resolves in THIS scope, so this direct import also
+// covers its two `selectLoopEdges` call sites.
+import vibe3d.mesh.ops.mesh_ops.select_loop : selectLoopEdges, isEdgeBorder;
+import vibe3d.mesh.ops.mesh_ops.extrude : extendEdgesByMask, kExtrudeEditScope;
+import vibe3d.mesh.ops.mesh_ops.loop_slice : insertEdgeLoops, collectEdgeRing,
+                             loopSliceRingEdges, kLoopSliceEditScope;
+import vibe3d.mesh.core.mesh                : Mesh, MeshCacheKey, MeshEditBatch;
+                             // task 3240 (plan 2910 step 3) — the edge-slice
+                             // family is free functions now, same reason
+                             // again: `splitFaceByVertices` is reached
+                             // through UFCS on a `Mesh*` deref at the
+                             // triangle-fan gesture, and a SELECTIVE
+                             // `import mesh : …` does not see a
+                             // `public import`'s free names unless it
+                             // names them.
+import vibe3d.viewport.gpu.mesh_gpu            : GpuMesh;
+import vibe3d.util.math.math : Vec3, closestOnSegment2D, closestPointOnSegmentToRay, dot, cross, pointInPolygon2D, rayPlaneIntersect;
+import vibe3d.util.spatial.spatial : Viewport, projectToWindowFull, screenPointToRay, AimViewport, aimSpace, ModelSpace, screenPointToLocalRay;
+import vibe3d.documents.model.document             : Layer, primaryModelSpace;
+import vibe3d.viewport.gpu.shader              : Shader;
+import vibe3d.editing.pipeline.contracts.operator            : VectorStack, viewportOf, pickOcclusionOf;
+import vibe3d.editing.pipeline.contracts.toolpipe.packets    : ConstrainHitPacket, ConstrainPacket, ConstrainGeom, HoverTarget, HoverTargetKind,
+                             SubjectPacket, SnapPacket, SnapType, SymmetryPacket;
+import vibe3d.editing.pipeline.evaluation.toolpipe.stages.constrain : liveConstrainStage, backgroundHit;
+import vibe3d.editing.pipeline.evaluation.toolpipe.stages.snap : liveSnapGuides, SnapStage, liveSnapStage;
+import vibe3d.editing.selection.query.constraint           : resolveHoverTarget, topoPenPressPickPx,
+                              topoPenSnapAcceptPx, topoPenSnapGatherPx,
+                              kTopoPenSnapAuto, closestPointOnMeshes, constrainPoint, BackgroundSource;
+import vibe3d.editing.selection.query.snap                  : backgroundSourcesFull, SnapAdmit, snapPacketOf, editedVertexAt,
+                               snapCursor, SnapResult;
+import vibe3d.editing.tools.interactive.tools.edit.smooth_relax : RelaxVec3, RelaxTopology, deriveBoundary, relaxPasses;
+import vibe3d.editing.tools.interactive.tools.edit.topology_pen.render : PenRenderOps;
+import vibe3d.editing.tools.interactive.tools.edit.topology_pen.snap_guide : PenSnapGuide, admitsMoveElement;
+import vibe3d.editing.tools.interactive.evaluated_move_weld : EvaluatedMoveWeld, searchMoveElement, pairedMoveEnds, evaluatedMoveHandle, heldMoveEngages, moveEndpointSearch, polygonMoveSides;
+import vibe3d.editing.tools.interactive.tools.edit.topology_pen.json   : PenStateJsonOps;
+import vibe3d.editing.selection.scene_query.bvh_pick              : BvhPick, BackgroundRayPicker, SurfaceHit;
+import vibe3d.editing.commands.runtime.command_history      : CommandHistory, PreparedHistoryKind;
+import vibe3d.editing.commands.editor.commands.mesh.vertex_new : MeshVertexNew;
+import vibe3d.editing.commands.editor.commands.mesh.session_edit : MeshSessionEdit;
+import vibe3d.editing.commands.runtime.command               : Command;
+import vibe3d.mesh.snapshot.snapshot              : MeshSnapshot;
+import vibe3d.viewport.gpu.display_sync         : refreshDisplay;
+import vibe3d.mesh.change.change_bus            : MeshEditScope;
+import vibe3d.editing.params.params                : Param, IntEnumEntry, wireTagForValue;
+import vibe3d.platform.input.tool_input            : ToolAction, PassThrough, InputPhase, InputButton,
+                                InputMod, ResetScope, InputBinding,
+                                resolveToolAction, toButton, toMods;
+import vibe3d.editing.tools.interactive.drag                  : planeDragDelta, HandleDrag, DragFrame, DragKind;
+import vibe3d.platform.input.eventlog               : queryMouse;
+import vibe3d.platform.input.held_gesture_buttons   : g_heldGestureButtons;
+import vibe3d.editing.contracts.prepared_tool_effect   : PreparedSessionActivateEffect,
+                                 PreparedActivateKind,
+                                 PreparedTopologyPenUpdateEffect,
+                                 PreparedTopologyPenUpdateKind,
+                                 PreparedDeactivateEffect,
+                                 PreparedDeactivateKind;
+import vibe3d.editing.tools.interactive.prepared_record_context : PreparedRecordContext, PreparedToolDoorClient,
+    PreparedToolPoseDoorClient;
+import vibe3d.editing.tools.interactive.prepared_topology_pen_activation : PreparedTopologyPenActivationOwner;
+import vibe3d.editing.tools.interactive.prepared_topology_pen_update : PreparedTopologyPenUpdateOwner;
+import vibe3d.editing.tools.interactive.prepared_topology_pen_deactivate : PreparedTopologyPenDeactivateOwner;
+
+import ImGui = d_imgui;
+import d_imgui.imgui_h;
+
+import vibe3d.editing.tools.interactive.tools.edit.topology_pen.defs;
+
+struct PreparedTopologyPenActivationImage {
+    bool valid;
+    ConstrainHitPacket expectedHit;
+    HoverTarget expectedTarget;
+    SnapResult expectedPlacementSnap;
+    SlideDecline expectedDecline;
+    int expectedDeclineSeed;
+    void clear() nothrow @nogc {
+        valid = false; expectedHit = ConstrainHitPacket.init;
+        expectedTarget = HoverTarget.init; expectedPlacementSnap = SnapResult.init;
+        expectedDecline = SlideDecline.None; expectedDeclineSeed = -1;
+    }
+}
+
+struct PreparedTopologyPenUpdateImage {
+    bool valid, hasPacket;
+    ConstrainHitPacket expectedHit, nextHit;
+    HoverTarget expectedTarget, nextTarget;
+    SnapResult expectedPlacementSnap, nextPlacementSnap;
+    void clear() nothrow @nogc { this = PreparedTopologyPenUpdateImage.init; }
+}
+
+struct PreparedTopologyPenDeactivateImage {
+    bool valid;
+    ConstrainHitPacket expectedHit;
+    HoverTarget expectedTarget;
+    SnapResult expectedPlacementSnap;
+    SlideDecline expectedDecline;
+    int expectedDeclineSeed;
+    SnapPacket expectedDragSnap;
+    GestureArm expectedMoveArmed;
+    int expectedGrabbedVert;
+    MoveElem expectedMoveElem;
+    uint[] expectedMoveVerts;
+    Vec3[] expectedMoveBase;
+    bool expectedMoveDirty, expectedMoveWelded;
+    EvaluatedMoveWeld expectedMoveFrame;
+    ulong expectedMoveGeneration;
+    void clear() nothrow @nogc {
+        valid = false;
+        expectedHit = ConstrainHitPacket.init;
+        expectedTarget = HoverTarget.init; expectedPlacementSnap = SnapResult.init;
+        expectedDecline = SlideDecline.None; expectedDeclineSeed = 0;
+        expectedDragSnap = SnapPacket.init;
+        expectedMoveArmed.armed = false; expectedGrabbedVert = 0;
+        expectedMoveElem = MoveElem.None;
+        expectedMoveVerts = null; expectedMoveBase = null;
+        expectedMoveDirty = expectedMoveWelded = false;
+        expectedMoveFrame = null; expectedMoveGeneration = 0;
+    }
+}
+
+// Corner-provenance (task 0901): verified NOT APPLICABLE across this package.
+// Every face this tool creates goes exclusively through `Mesh.makePolygonFromVerts`
+// (grep confirms zero `.faces ~=`/`.faces[i] =`/`.faces.length =` writes
+// anywhere under tools/edit/topology_pen/) -- a single-face kernel that calls
+// `addFace` exactly once per invocation, then `buildLoops()` in the same
+// call, with no loop across several appends for a maintenance edit to
+// accidentally split into a mixed addFace/bare-`faces~=` pattern (the
+// task-0690 shape). It is therefore safe by construction the same way
+// `addFace` itself is, and is not treated as a 0901 site needing its own
+// `declareCornerAppend()` -- unlike `mesh_ops/bridge.d`'s multi-face loops,
+// there is no drift for the cross-check to guard against here.
+
+/// The names of every `GestureArm` field of `TopologyPenTool`, in declaration
+/// order — derived by the compiler from the field declarations themselves.
+///
+/// THE list. `anyGestureArmed()`, `resetAllGestureArms()` and the arm-coverage
+/// unittest all iterate this one constant, so none of them can be out of step
+/// with the others or with the class: adding a gesture is declaring one field.
+///
+/// `TopologyPenTool` is named explicitly rather than reached through
+/// `typeof(this)` because inside a `const` method `typeof(this)` is
+/// `const(TopologyPenTool)`, and `is(typeof(field) == GestureArm)` would then
+/// match NOTHING — the walk would silently visit zero fields and every arm
+/// would read as disarmed. Deriving the list once, here at module scope,
+/// removes that trap from the two consumers.
+package(vibe3d.editing.tools.interactive.tools.edit.topology_pen) enum string[] kGestureArmFields = () {
+    string[] r;
+    static foreach (m; __traits(derivedMembers, TopologyPenTool))
+        static if (is(typeof(__traits(getMember, TopologyPenTool, m)) == GestureArm))
+            r ~= m;
+    return r;
+}();
+
+/// The Topology Pen: one tool, one class, eleven gestures.
+///
+/// What is HERE: the session state each gesture arms and clears, the input
+/// dispatch that routes a chord to a gesture, the drag maths, and the commit
+/// steps that write the mesh.
+///
+/// What is elsewhere in the package, and why (task 0718 — the class was
+/// 19 905 lines):
+///   * `defs.d`       — the vocabulary this class is written in: the gesture
+///                      and mode enums, the chord table, the binding grid,
+///                      the command-factory aliases. Knows nothing about this
+///                      class, which is why it can be read first.
+///   * `render.d`     — every pixel the tool draws, mixed back in below as
+///                      `PenRenderOps`.
+///   * `json.d`       — the `GET /api/tool/state` answer and its wire tags,
+///                      mixed back in as `PenStateJsonOps`.
+///   * `snap_guide.d` — border classification and the `SnapGuide` this tool
+///                      registers for the duration of a gesture.
+///   * the white-box unittests — `tests/unit/tools/edit/topology_pen/
+///     gestures_test.d`, a module named INTO this package so it can keep
+///     driving the gesture handlers directly.
+///
+/// The two mixins are members of this class in every way that matters: they
+/// read its state, including its `private` members, exactly as they did when
+/// their bodies were typed out here.
+class TopologyPenTool : Tool, InputBindable, PreparedToolDoorClient,
+                        PreparedToolPoseDoorClient, TopologyStepClient {
+
+    /// Click-vs-drag gate, in pixels, shared by EVERY gesture in this tool:
+    /// a release within this distance of the press pixel is a click, not a
+    /// drag, and commits nothing. Compared SQUARED (`dx*dx + dy*dy < k*k`),
+    /// strictly less-than, so exactly `k` pixels already counts as a drag.
+    ///
+    /// One constant because it was six identical local `enum int
+    /// kMinDragPx = 3;` declarations, each carrying a comment saying it
+    /// mirrors the others (audit №4, TP3). Two gestures deliberately do NOT
+    /// gate on it — `smoothUp` and `smoothLoopUp`, whose stationary click IS
+    /// the operation; their own comments say so.
+    ///
+    /// NOT the same constant as pen.d's `DRAG_THRESHOLD_PX = 4`. That is a
+    /// different tool with a different measured value; the identical idiom
+    /// there is not evidence the two are one setting.
+    enum int kMinDragPx = 3;
+
+    /// The gate itself, applied to a release's screen delta from its press
+    /// pixel: `true` ⇒ this release was a CLICK and the gesture commits
+    /// nothing.
+    ///
+    /// Task 0705 gives the comparison the same single home wave 1 gave the
+    /// constant. It was written out six times — `buildUp`, `slideUp`,
+    /// `moveLoopUp`, `dupLoopUp`, `dupEdgeUp` and `perVertexTargets` — always
+    /// as the same squared, strictly-less-than test, and always under a
+    /// comment saying it "mirrors" one of the other five. Comparing squared
+    /// and strictly is the part that can silently drift; the six call sites
+    /// still differ in which start pixel they measure from and in what they
+    /// return, which is why THIS is the shared part and the release legs are
+    /// not otherwise merged.
+    private static bool releaseIsClick(int dx, int dy) {
+        return dx * dx + dy * dy < kMinDragPx * kMinDragPx;
+    }
+
+private:
+    ConstrainHitPacket lastHit_;
+    HoverTarget         lastTarget_;
+    SnapResult          placementSnap_;
+
+    // --- P2 placement deps (doc/topopen_p2_plan.md) — wired by
+    // registration.d, mirroring the ctor/binding shape VertexTool had
+    // (tools/create/vertex_place.d — whose own `setUndoBindings` went in task
+    // 1905 phase B; it binds through `Tool.setGestureBindings`, and this family
+    // followed in group G7, phase D). All may be left unset (test/no-app
+    // construction); `placeVertexAt` degrades to a no-op rather than crashing
+    // when the base's `gestureFactory` is null.
+    package(vibe3d.editing.tools.interactive.tools.edit.topology_pen) Mesh* delegate() meshSrc_;
+    @property Mesh* mesh() { return meshSrc_(); }
+    GpuMesh*         gpu_;
+
+    // --- P5 Remove gesture's own BVH face pick (doc/topopen_p5_remove_plan.md
+    // D1) — self-contained: the tool already holds gpu_/meshSrc_ from P2, so
+    // this instance is lazily constructed (`pickPrimaryFace`) and used ONLY
+    // for `pickFace` on the PRIMARY cage mesh — zero coupling to app
+    // internals / the app's own hover-pick instance.
+    BvhPick removePick_;
+    BackgroundRayPicker bgRayPick_;   // `backgroundRayHit`'s BVHs with no CONS stage (a pipeline-less pen)
+
+    // TASK 1905 PHASE B — the pen's `package CommandHistory history_;` field is
+    // gone; `history` now lives on `Tool` (see its declaration there for why
+    // every subclass copy had to go in one commit). This setter keeps the
+    // FORMER SPELLING reachable for the in-package rig, and it is a bridge with
+    // a measured reason rather than a courtesy:
+    //
+    //   * `tests/unit/tools/edit/topology_pen/gestures_test.d` names itself
+    //     `module tools.edit.topology_pen.gestures_test` ON PURPOSE — its own
+    //     header says so — precisely to be granted this class's `package`
+    //     members, and it binds this one 86 times.
+    //   * `protected` on the base does NOT reach it: `protected` grants derived
+    //     classes and the same MODULE, never a sibling module in the same
+    //     package. The plan's round 4 checked for outside readers with a grep
+    //     confined to `source/tools/edit/topology_pen/` and concluded there
+    //     were none; the readers are in `tests/unit/`, and this is the
+    //     correction.
+    //
+    // A setter and not a second field: a field would be the silent shadow the
+    // whole one-commit rule exists to prevent. There is one storage location,
+    // on `Tool`.
+    package(vibe3d.editing.tools.interactive.tools.edit.topology_pen) void history_(CommandHistory h) { history = h; }
+
+    // TASK 1905 PHASE D — the pen's own `VertexNewFactory addVertexFactory_;`
+    // is gone with it. The base's single `gestureFactory` slot
+    // (`Command delegate()`, bound by `setGestureBindings`) now carries it, and
+    // the RAW record site is the right occupant of that one slot: it is the
+    // only G7 gesture whose carrier is not a `MeshSessionEdit`, so it is the
+    // only one whose class the base's untyped delegate has to be cast back to
+    // — and that cast's null arm is a COUNTED refusal
+    // (`noteGestureCarrierMismatch`), see `placeVertexAt`. The other thirteen
+    // stay in `factories_` below, typed, because the seam deliberately has ONE
+    // slot and widening it per carrier is the shape plan §3 rejected.
+
+    // --- Per-gesture undo factories (P3..P12 + Fill, task 0494) — grouped
+    // into `TopoPenFactories` (see its own doc comment for each field's
+    // provenance). The `ref` shims below keep the pre-grouping field names
+    // working for the same-module direct-construction rigs, which assign
+    // them one at a time; prod code reads `factories_` directly.
+    TopoPenFactories factories_;
+    package(vibe3d.editing.tools.interactive.tools.edit.topology_pen) @property ref TopoPenBuildFactory        buildEditFactory_()        { return factories_.build; }
+    package(vibe3d.editing.tools.interactive.tools.edit.topology_pen) @property ref TopoPenMoveFactory         moveEditFactory_()         { return factories_.move; }
+    package(vibe3d.editing.tools.interactive.tools.edit.topology_pen) @property ref TopoPenRemoveFactory       removeEditFactory_()       { return factories_.remove; }
+    package(vibe3d.editing.tools.interactive.tools.edit.topology_pen) @property ref TopoPenRemoveEdgeFactory   removeEdgeEditFactory_()   { return factories_.removeEdge; }
+    package(vibe3d.editing.tools.interactive.tools.edit.topology_pen) @property ref TopoPenRemoveVertexFactory removeVertexEditFactory_() { return factories_.removeVertex; }
+    package(vibe3d.editing.tools.interactive.tools.edit.topology_pen) @property ref TopoPenAddLoopFactory      addLoopEditFactory_()      { return factories_.addLoop; }
+    package(vibe3d.editing.tools.interactive.tools.edit.topology_pen) @property ref TopoPenSlideFactory        slideEditFactory_()        { return factories_.slide; }
+    package(vibe3d.editing.tools.interactive.tools.edit.topology_pen) @property ref TopoPenSmoothFactory       smoothEditFactory_()       { return factories_.smooth; }
+    package(vibe3d.editing.tools.interactive.tools.edit.topology_pen) @property ref TopoPenSplitFactory        splitEditFactory_()        { return factories_.split; }
+    package(vibe3d.editing.tools.interactive.tools.edit.topology_pen) @property ref TopoPenMoveLoopFactory     moveLoopEditFactory_()     { return factories_.moveLoop; }
+    package(vibe3d.editing.tools.interactive.tools.edit.topology_pen) @property ref TopoPenDupLoopFactory      dupLoopEditFactory_()      { return factories_.dupLoop; }
+    package(vibe3d.editing.tools.interactive.tools.edit.topology_pen) @property ref TopoPenSmoothLoopFactory   smoothLoopEditFactory_()   { return factories_.smoothLoop; }
+    package(vibe3d.editing.tools.interactive.tools.edit.topology_pen) @property ref TopoPenFillFactory         fillEditFactory_()         { return factories_.fill; }
+    package(vibe3d.editing.tools.interactive.tools.edit.topology_pen) @property ref TopoPenPlaceFactory        placeEditFactory_()        { return factories_.place; }
+    package(vibe3d.editing.tools.interactive.tools.edit.topology_pen) @property ref TopoPenAttrFactory         attrEditFactory_()         { return factories_.attr; }
+
+    // --- P3 drag-build session state (tool.d, doc/topopen_p3_plan.md).
+    // Armed on a press that lands on an existing primary-layer vertex;
+    // classified ONCE at arm time (the mesh is never mutated between press
+    // and release, so re-classifying at release would be redundant, not
+    // more correct — and a stale index after an external undo mid-drag is
+    // handled by `resyncSession` clearing all of this instead). Cleared by
+    // `onMouseButtonUp` on commit/no-op and by `resyncSession` on an
+    // external history navigation.
+    package(vibe3d.editing.tools.interactive.tools.edit.topology_pen) int       sourceVert_     = -1;
+    package(vibe3d.editing.tools.interactive.tools.edit.topology_pen) GestureArm      dragArmed_;
+    int       dragStartX_, dragStartY_;
+    int       ghostTriN_      = -1;   // Tri case: `triNeighbourAt` at the last cursor (the ghost)
+    Vec3      buildPressHitW_;        // Tri case: the BG ray hit at the source's pixel (WORLD)
+    bool      buildPressHitOk_;
+    Vec3      buildNormalW_;          // Tri case: the tangent-plane normal at the source (WORLD)
+    BuildCase classifiedCase_ = BuildCase.None;
+    int       triN_           = -1;   // Tri case: the neighbour (N-angle at release)
+    int[]     triCands_;              // Tri case: the border neighbours N-angle picks from
+    int[]     triCandDirs_;           // ...and each side's polygon direction (+1 a->x, -1 x->a)
+    int       quadP_          = -1;   // Quad case: border neighbour whose polygon runs a->P
+    int       quadQ_          = -1;   // Quad case: the other border neighbour
+
+    // --- P4 Move/Place session state (tool.d, doc/topopen_p4_plan.md,
+    // Design A). Both outcomes of a plain-LMB press are ARMED at DOWN
+    // (`onPlainLmbDown`'s findSourceVertex disambiguation) and COMMITTED at
+    // UP (`onMouseButtonUp`) — never at DOWN, so a stationary click's
+    // DOWN-then-UP pair stays bit-identical to the pre-P4 DOWN-commit
+    // behavior (the byte-identity gate P4 step 1 proves). `placeArmed_`
+    // mirrors P2's original press-on-empty-background click; `moveArmed_`/
+    // `grabbedVert_` arm when the SAME press instead lands on an existing
+    // primary-layer vertex. Cleared by `onMouseButtonUp` on every
+    // commit/no-op path and by `resyncSession` on an external history
+    // navigation, exactly like the P3 drag-build state above.
+    package(vibe3d.editing.tools.interactive.tools.edit.topology_pen) GestureArm placeArmed_;
+    package(vibe3d.editing.tools.interactive.tools.edit.topology_pen) GestureArm moveArmed_;
+    package(vibe3d.editing.tools.interactive.tools.edit.topology_pen) int  grabbedVert_ = -1;
+
+    // --- Move-mode ELEMENT grab + LIVE drag (task 0484). Two extensions of
+    // the P4 vertex grab above, both owner-observed on the reference and
+    // spelled out by its own Move description ("moves an element as you drag
+    // it, but it remains fixed against the background surface as it slides
+    // around — useful in editing vertices, EDGES, and POLYGONS"):
+    //
+    //   1. WHAT can be grabbed. A press resolves the element under the
+    //      cursor by proximity — vertex within `topoPenPressPickPx`, else edge
+    //      within the same radius, else the face under the cursor — and
+    //      `moveVerts_` becomes THAT element's vertices (1 / 2 / N). Before
+    //      this, an edge or face press was declined outright
+    //      (doc/tasks/done/0482-topopen-move-nonvertex.md deliberately left
+    //      it unimplemented rather than invent one).
+    //
+    //   2. WHEN the mesh changes. The move is applied LIVE on every motion
+    //      event, not only at release — the geometry deforms under the
+    //      cursor instead of a ghost line predicting it. The whole press is
+    //      ONE step the session records at release, from the press image
+    //      (`basis_`, below).
+    //
+    // The FINAL positions still come from the RELEASE event's own pixel, as
+    // they always did — the live writes are a preview made of real geometry,
+    // and they never change where the gesture lands. That is what keeps this
+    // a superset of the P4 law rather than a replacement for it.
+    //
+    // `moveBase_` is the moving set's positions AT ARM TIME and every target
+    // is computed from it, never from the live (already-moved) positions —
+    // otherwise each motion event would compound onto the previous one and
+    // the element would race away from the cursor.
+    //
+    // `moveDirty_` records whether any live write actually happened (the weld
+    // gate reads it: a grab that moved nothing welds nothing). Cleared — like
+    // every arm above — by `resetAllGestureArms()`.
+    //
+    // `moveWelded_` records whether the release's destructive landing (task
+    // 0555) actually absorbed anything; the post-commit `resyncSession` reads
+    // it (the vertex array was compacted under `moveVerts_`).
+    package(vibe3d.editing.tools.interactive.tools.edit.topology_pen) MoveElem     moveElem_  = MoveElem.None;
+    package(vibe3d.editing.tools.interactive.tools.edit.topology_pen) uint[]       moveVerts_;
+    package(vibe3d.editing.tools.interactive.tools.edit.topology_pen) Vec3[]       moveBase_;
+    // The grab point under the press (`pressAnchor`), local; read only while armed.
+    package(vibe3d.editing.tools.interactive.tools.edit.topology_pen) Vec3         moveAnchor_;
+    // The edge/polygon Move's shared offset at the last evaluation (zero on a
+    // click or a miss): what the release writes to the Offset (L18).
+    package(vibe3d.editing.tools.interactive.tools.edit.topology_pen) Vec3         moveOffset_ = Vec3(0, 0, 0);
+    private bool         movePerspectiveGuideAccepted_;
+    // The axis move (K-FH rule 5): the offset keeps ONE world axis
+    // (`moveAxis_`, -1 until elected), chosen once by `onElectedAxis`.
+    package(vibe3d.editing.tools.interactive.tools.edit.topology_pen) bool         moveAxisLock_ = false;
+    package(vibe3d.editing.tools.interactive.tools.edit.topology_pen) int          moveAxis_     = -1;
+    package(vibe3d.editing.tools.interactive.tools.edit.topology_pen) int          moveStartX_, moveStartY_;
+    package(vibe3d.editing.tools.interactive.tools.edit.topology_pen) bool         moveDirty_ = false;
+    bool         moveWelded_ = false;
+    EvaluatedMoveWeld moveFrame_;
+
+    // --- The press STEP (plan 8646). Every bound chord press is one topology
+    // step of the session: `openPressStep` opens it before the mode handler
+    // runs, `closePressStep` ends it after the release's handler, and the
+    // session records ONE row whether or not the mesh changed (law L5).
+    // `basis_` is the press image — the session's own capture, shared — and
+    // is what a cancel restores. The row's carrier and label are the ones the
+    // handler that RAN chose (`noteStep`), read at the end; a press whose
+    // handler committed nothing keeps its chord mode's default.
+    package(vibe3d.editing.tools.interactive.tools.edit.topology_pen) MeshSnapshot basis_;
+    package(vibe3d.editing.tools.interactive.tools.edit.topology_pen) bool         stepOpen_;
+    private ubyte        stepButton_;
+    // Overlapping buttons (L56, wave plan §9.26.1/§9.27): each press is its
+    // OWN step. `heldMask_` holds the pen's consumed buttons still down (bit
+    // b-1 for SDL button b, intersected with the router's held set at every
+    // pen release so a lost release cannot stick); a press while a step
+    // is open ends the earlier gesture and makes its button INERT
+    // (`inertButtons_`): its release is consumed and dispatches nothing.
+    package(vibe3d.editing.tools.interactive.tools.edit.topology_pen) ubyte        heldMask_;
+    package(vibe3d.editing.tools.interactive.tools.edit.topology_pen) ubyte        inertButtons_;
+    private MeshSessionEdit delegate() stepFactory_;
+    private string       stepLabel_;
+
+    // --- The OPERATION CONTEXT (wave plan 8640 S7a, §9.7): the Offset the
+    // last press wrote — for the Move family the offset its kernel applied
+    // (vertex: its travel; edge / polygon / loop: the G-delta offset of the
+    // pressed anchor, S7b), written raw at every motion and at the release —
+    // and the descriptor of that press (`stepKind`, the
+    // moved vertices, their press-image positions), written at its end. All
+    // six are the policy's haul attributes: a press resets them before its
+    // open image (`pressOpensOperation`) and they are restored only into the
+    // instance that recorded a row (M-H). Read by the re-application by step
+    // kind (S7b, `reapplyLastStep`, table `kReapply`). The descriptor is session
+    // state, never a wire route: three `podArray_` (hidden, transient, refused
+    // by every write door); the kind is a 0-or-1-element array, `stepKind()`.
+    package(vibe3d.editing.tools.interactive.tools.edit.topology_pen) float        offsetX_ = 0.0f, offsetY_ = 0.0f, offsetZ_ = 0.0f;
+    package(vibe3d.editing.tools.interactive.tools.edit.topology_pen) PenStepKind[] stepKind_;
+    package(vibe3d.editing.tools.interactive.tools.edit.topology_pen) uint[]       stepVerts_;
+    package(vibe3d.editing.tools.interactive.tools.edit.topology_pen) Vec3[]       stepOrig_;
+
+    /// The recorded press's kind (`None` when it wrote no descriptor).
+    package(vibe3d.editing.tools.interactive.tools.edit.topology_pen) PenStepKind stepKind() const {
+        return stepKind_.length ? stepKind_[0] : PenStepKind.None;
+    }
+
+    // --- P6 Add Loop session state (tool.d,
+    // doc/topopen_p6_addloop_plan.md). Armed on a Shift+MMB press that
+    // lands on a primary-layer edge whose perpendicular ring exists
+    // (`onShiftMmbDown`); the ratio tracks the cursor on every subsequent
+    // motion event (`onMouseMotion`) and commits on release
+    // (`onMouseButtonUp`'s MIDDLE branch, `commitAddLoop`). `seedRailA_`/
+    // `seedRailB_` are the directed LAYER-LOCAL endpoints `ratioFromCursor`
+    // measures the `[0,1]` ratio against (task 0619: this said "world-space"
+    // and `seedRail` fills them from raw `m.vertices[]`; `ratioOnSegment`
+    // is what lifts them for its own world election, and the ratio comes
+    // back local for free because an affine map preserves ratios along a
+    // line) (`seedRail`, captured once at arm
+    // time — the mesh is never mutated between arm and commit, so
+    // re-deriving them at every motion event would be redundant). Cleared
+    // by `onMouseButtonUp` on commit/no-op and by `resyncSession` on an
+    // external history navigation, exactly like the P3/P4 arm state above.
+    package(vibe3d.editing.tools.interactive.tools.edit.topology_pen) int  addLoopSeed_  = -1;
+    package(vibe3d.editing.tools.interactive.tools.edit.topology_pen) GestureArm addLoopArmed_;
+    int  addLoopStartX_, addLoopStartY_;
+    package(vibe3d.editing.tools.interactive.tools.edit.topology_pen) Vec3 seedRailA_, seedRailB_;
+    package(vibe3d.editing.tools.interactive.tools.edit.topology_pen) float addLoopRatio_ = 0.5f;
+
+    // Add Loop "at the Middle" option (reference parity,
+    // doc/tasks/work/0480-topopen-addloop-middle.md): forces the loop cut to
+    // the exact 50% of every crossed edge instead of the click-derived
+    // ratio. A STICKY tool-wide toggle, NOT per-gesture arm state — read
+    // live at commit time by `addLoopFrac` (never cached) and deliberately
+    // absent from `resetAllGestureArms()`/`resyncSession()`, which clear the
+    // per-gesture arm bools on every fresh press / external history
+    // navigation (matches the `tool_activate_sticky_clobber` precedent:
+    // sticky options are set before `activate()`/arm-reset and must not be
+    // clobbered by either). Default OFF, so the shipped click-derived
+    // behaviour remains the default. The reference pairs this option with a
+    // numeric "position" attribute and greys THAT out while this is on; our
+    // "position" is the live cursor ratio (`addLoopRatio_`), so the same
+    // pairing shows up here as `addLoopFrac` ignoring the cursor entirely.
+    package(vibe3d.editing.tools.interactive.tools.edit.topology_pen) bool addLoopMiddle_ = false;
+
+    // --- P7 Slide session state (tool.d,
+    // doc/topopen_p7_slide_plan.md, V1-scope Option B). Armed on a Ctrl+LMB
+    // press that lands on a primary-layer edge with at least one slidable
+    // endpoint (`onCtrlLmbDown`); `slideEndA_`/`slideEndB_` are the grabbed
+    // edge's two endpoint vertex indices, `slideNbrA_`/`slideNbrB_` are each
+    // endpoint's OWN rail neighbor — its unique remaining incident edge at
+    // valence-2, its polygon-continuation edge at valence>2 (`-1` when the
+    // rail doesn't resolve and the endpoint is held fixed; see
+    // `continuationNeighbor`).
+    //
+    // `slideAnchor_` is the grabbed edge's midpoint FROZEN AT PRESS — the
+    // plane anchor the pointer drag is converted against (`slideDeltaFromDrag`);
+    // freezing it keeps the conversion stable while the ghost moves.
+    // `slideDeltaK_` is the law's ONE signed scalar, shared by BOTH endpoints
+    // (only the rail direction differs between them — see `slideEndpointPos`),
+    // recomputed press->cursor on every motion event (`onMouseMotion`) and
+    // again at release (`slideUp` -> `commitSlide`). It replaces the pair of
+    // `[0,1]` per-rail fractions V1 tracked; there is no bounded fraction in
+    // this law at all.
+    //
+    // Cleared by `onMouseButtonUp` on commit/no-op and by `resyncSession` on
+    // an external history navigation, exactly like the P3/P4/P6 arm state
+    // above.
+    package(vibe3d.editing.tools.interactive.tools.edit.topology_pen) int   slideSeed_  = -1;
+    package(vibe3d.editing.tools.interactive.tools.edit.topology_pen) GestureArm  slideArmed_;
+    package(vibe3d.editing.tools.interactive.tools.edit.topology_pen) int   slideStartX_, slideStartY_;
+    package(vibe3d.editing.tools.interactive.tools.edit.topology_pen) int   slideEndA_ = -1, slideEndB_ = -1;
+    package(vibe3d.editing.tools.interactive.tools.edit.topology_pen) int   slideNbrA_ = -1, slideNbrB_ = -1;
+    package(vibe3d.editing.tools.interactive.tools.edit.topology_pen) Vec3  slideAnchor_ = Vec3(0, 0, 0);
+    package(vibe3d.editing.tools.interactive.tools.edit.topology_pen) float slideDeltaK_ = 0.0f;
+    // The VERTEX slide (task 8700, P2): a Ctrl+LMB press that the Move
+    // classifier (`resolveGrabTarget`) resolves to a vertex slides that vertex
+    // alone, along the world axis whose screen image best follows the drag,
+    // then onto the background (`vertexSlideTarget`). `slideVertex_` is it (-1 = the edge slide above);
+    // `slideAxis_` (0/1/2, -1 before any motion) and `slideDeltaK_` are the
+    // live evaluation, `slideVertexTarget_` its landed point, for the preview.
+    package(vibe3d.editing.tools.interactive.tools.edit.topology_pen) int   slideVertex_ = -1;
+    package(vibe3d.editing.tools.interactive.tools.edit.topology_pen) int   slideAxis_   = -1;
+    package(vibe3d.editing.tools.interactive.tools.edit.topology_pen) Vec3  slideVertexTarget_ = Vec3(0, 0, 0);
+    // The EDGE slide over a background (wave plan 8640 S7b, §9.26.3 [A14-3],
+    // §9.27 [A15-4]; laws L47/L50): the cursor path accumulates from the
+    // press; when it first reaches `kEdgeSlideLatchPx` the world axis is
+    // LATCHED (`slideAxis_`) from the surface delta at that moment and kept
+    // for the gesture; the endpoints then move by the total G-delta offset
+    // projected on it. `slideOverBg_` selects this kernel at the arm; with no
+    // background the measured rail law (`commitSlide`) stands.
+    package(vibe3d.editing.tools.interactive.tools.edit.topology_pen) bool  slideOverBg_ = false;
+    package(vibe3d.editing.tools.interactive.tools.edit.topology_pen) float slidePathPx_ = 0.0f;
+    package(vibe3d.editing.tools.interactive.tools.edit.topology_pen) int   slidePrevX_, slidePrevY_;
+    package(vibe3d.editing.tools.interactive.tools.edit.topology_pen) Vec3  slideEdgeTargetA_ = Vec3(0, 0, 0), slideEdgeTargetB_ = Vec3(0, 0, 0);
+
+    // Slide DECLINE diagnostics (doc/tasks/work/0482-topopen-move-nonvertex.md
+    // item 3 follow-up) — read-only observability, no behaviour change.
+    //
+    // `onCtrlLmbDown` declines on two structurally DIFFERENT outcomes that were
+    // indistinguishable from outside, because both leave `slideArmed_ == false`
+    // and `slideSeed_ == -1` (the seed is only assigned once the gesture arms):
+    //   * NoEdge          — no primary edge within `topoPenPressPickPx`: a genuine
+    //                       pick miss.
+    //   * NoContinuation  — an edge WAS resolved, but neither endpoint's rail
+    //                       resolves, so the shipped hold-fixed contract leaves
+    //                       nothing to slide (see `continuationNeighbor` for the
+    //                       enumerated open cases). Not a miss: a deliberate,
+    //                       contract-driven decline.
+    // A consumer that cannot tell those apart has to treat every non-apply as a
+    // possible port-side pick failure, which makes a whole gesture's worth of
+    // differential cells untriageable. `slideDeclineSeed_` carries the
+    // resolved-but-unarmed edge for the NoContinuation case (`-1` otherwise) so
+    // a differential can also check WHICH edge was picked, not just that one
+    // was. It is deliberately a SEPARATE field from `slideSeed_`, which keeps
+    // its existing meaning ("the ARMED gesture's seed") — nothing that reads
+    // the armed seed can be confused by a declined press.
+    //
+    // Lifecycle: written on EVERY exit of `onCtrlLmbDown` (so it always
+    // describes the most recent Slide press, not a stale one) and cleared by
+    // `activate`/`deactivate`/`resyncSession`. It is NOT arm state and is
+    // deliberately absent from `resetAllGestureArms()` (which runs BEFORE this
+    // handler on every LEFT press, and would therefore erase the record a
+    // consumer is about to read) and from `anyGestureArmed()` (a diagnostic
+    // record must never gate the hover indicator). `resyncSession` DOES clear
+    // it: an external history navigation can delete the very edge
+    // `slideDeclineSeed_` names, and publishing a stale index is worse than
+    // publishing none — same rationale as the passive hover/fill state cleared
+    // there.
+    package(vibe3d.editing.tools.interactive.tools.edit.topology_pen) SlideDecline slideDecline_     = SlideDecline.None;
+    package(vibe3d.editing.tools.interactive.tools.edit.topology_pen) int          slideDeclineSeed_ = -1;
+
+    // --- P8 Smooth session state (tool.d,
+    // doc/topopen_p8_smooth_plan.md). Armed by a Shift+Ctrl+LMB press
+    // (`onShiftCtrlLmbDown`) — NO source-vertex pick (whole-primary-mesh
+    // scope, unlike every other gesture above) and NO mutation on down;
+    // `smoothDragDx_` is the SIGNED horizontal displacement of the cursor
+    // from the press pixel, recomputed (never accumulated) on every
+    // subsequent motion event (`onMouseMotion`) and converted to a pass
+    // count at release (`onMouseButtonUp`'s Smooth branch,
+    // `applySmoothPasses`) through the one shared law helper
+    // `smoothPassesForDragDx` — the only read of `smoothDragDx_` besides
+    // `toolStateJson()`'s live readback (REV1 MINOR: the plan's original
+    // `smoothPassCount_` field is dropped since it was never assigned;
+    // both `onMouseButtonUp` and `toolStateJson()` derive `N` from
+    // `smoothDragDx_` directly). `smoothLastX_`/`_Y_` now track ONLY the
+    // live cursor for `draw()`'s armed-ring affordance — the pass count no
+    // longer measures anything against them (see `kSmoothPassStridePx`:
+    // path length and vertical motion are both measured to be ignored).
+    // Cleared by `onMouseButtonUp` on commit/no-op and by `resyncSession`
+    // on an external history navigation, exactly like the P3/P4/P6/P7 arm
+    // state above.
+    package(vibe3d.editing.tools.interactive.tools.edit.topology_pen) GestureArm  smoothArmed_;
+    int   smoothStartX_, smoothStartY_, smoothLastX_, smoothLastY_;
+    int   smoothDragDx_ = 0;
+
+    // --- P9 Split session state (tool.d,
+    // doc/topopen_p9_split_plan.md). Armed on a plain-MMB press that lands
+    // on an existing primary-layer vertex A (`onPlainMmbDown`);
+    // `splitTargetVert_` tracks the CURRENT snap target C off every
+    // subsequent motion event (`onMouseMotion`) and is re-resolved once more
+    // at the release pixel (`onMouseButtonUp`'s MIDDLE branch, `commitSplit`)
+    // — the release event's own resolution is authoritative, never the
+    // last-motion value (a mouse-up with no intervening motion event must
+    // still resolve C at ITS OWN pixel). `-1` means "no vertex under the
+    // cursor" — a clean no-op, since Split is a vertex->vertex chord split
+    // and never inserts a vertex partway along an edge (that is Add Loop's
+    // job, doc/tasks/work/0480-topopen-addloop-middle.md).
+    // Cleared by `onMouseButtonUp` on commit/no-op and by `resyncSession` on
+    // an external history navigation, exactly like the P3/P4/P6/P7/P8 arm
+    // state above.
+    package(vibe3d.editing.tools.interactive.tools.edit.topology_pen) GestureArm splitArmed_;
+    package(vibe3d.editing.tools.interactive.tools.edit.topology_pen) int  splitSourceVert_  = -1;
+    package(vibe3d.editing.tools.interactive.tools.edit.topology_pen) int  splitTargetVert_  = -1;
+
+    // --- The snap CONFIGURATION this gesture runs on, snapshotted at press.
+    //
+    // The drag-snap acceptance and gather radii are not the pen's own numbers.
+    // They belong to the application-wide snapping service (our `SnapStage`,
+    // which publishes them on the `SnapPacket` every other snapping consumer
+    // in the tree already reads) and the tool is one client of it among many.
+    // The pen used to carry a private copy of the same pair in `constraint.d`
+    // — two subsystems storing one fact, each unable to see the other — and
+    // this field is what replaced it.
+    //
+    // SNAPSHOT-AT-PRESS, dropped at release, deliberately: the ranges must not
+    // change under a gesture that is already in flight, so a mid-drag `snap
+    // innerRange` edit takes effect on the NEXT press and not this one. That
+    // is the same lifetime a registered snapping guide has — the ranges are
+    // pushed into it when its drag starts and it is unregistered when the drag
+    // ends — and the same shape `XfrmToolBase.captureSnapForDrag` already uses
+    // for the transform tools.
+    //
+    // Read from the `VectorStack` the event handler is already holding rather
+    // than by walking the pipeline again: `app.d`'s `buildToolVts` has already
+    // run `pipeline.evaluate` into it, so the packet is right there, and this
+    // is `captureSnapForDrag`'s own source. When no SNAP stage is registered
+    // this stays `SnapPacket.init`, whose ranges ARE the stage's declared
+    // defaults (pinned by a unittest in `toolpipe/stages/snap.d`), so a
+    // pipeline-less pen — every direct-construction unittest in the package's
+    // test module (`tests/unit/tools/edit/topology_pen/gestures_test.d`),
+    // and the headless paths — behaves exactly as it did when the constants
+    // were private.
+    //
+    // GATED on `SnapPacket.enabled` since task 0523, where it used not to be.
+    // The pen welded whether or not the user had snapping on — alone among the
+    // snapping clients in this tree — and that was our divergence, not a
+    // feature: the reference gates its pen on the shared enable through both
+    // of the tool's channels, and the mechanism that would have excused us (a
+    // guide declaring itself always-on) does not exist. `resolveSnapTargetVert`
+    // is where the gate reads; see its doc for what it costs at our default.
+    package(vibe3d.editing.tools.interactive.tools.edit.topology_pen) SnapPacket dragSnap_;
+    // The view at the last press: the constraint's geometry pass (`passLocal`)
+    // runs in it, the step's re-apply included.
+    Viewport pressVp_;
+
+    // The key this tool's startup snap arming is filed under in the stage's
+    // single push slot (`SnapStage.pushEnabled`). The reference keys its own
+    // save/restore on the ACTIVATING PRESET'S NAME, so this is our factory id
+    // — the name every route to this tool activates through. See
+    // `armStartupSnap` for what the arming is and why it is measured.
+    private enum string kSnapArmOwner = "mesh.topoPen";
+
+    // The Mode dropdown (task 0477 continuation + task 0483): the wire-tag
+    // table backing `PenMode`'s `Param.intEnum_` — mirrors
+    // `loop_slice_tool.d`'s `editTable`/`modeTable` precedent. Tags and
+    // labels are the REFERENCE's own, single-sourced here so the form row,
+    // the `tool.attr mesh.topoPen mode <tag>` write and the
+    // `/api/tool/state` readback can never drift apart.
+    //
+    // A STICKY tool-wide mode toggle, NOT per-gesture arm state — like
+    // `addLoopMiddle_` above, deliberately absent from
+    // `resetAllGestureArms()`/`resyncSession()` (a mode switch must survive
+    // an external history navigation) and read live by dispatch
+    // (`onPlainLmbDown`) / the motion-time preview compute
+    // (`onMouseMotion`), never cached.
+    private static immutable IntEnumEntry[8] penModeTable = [
+        IntEnumEntry(cast(int)PenMode.Move,      "move",      "Move"),
+        IntEnumEntry(cast(int)PenMode.Duplicate, "duplicate", "Duplicate"),
+        IntEnumEntry(cast(int)PenMode.Remove,    "remove",    "Remove"),
+        IntEnumEntry(cast(int)PenMode.Split,     "split",     "Split"),
+        IntEnumEntry(cast(int)PenMode.AddLoop,   "addLoop",   "Add Loop"),
+        IntEnumEntry(cast(int)PenMode.Point,     "point",     "Point"),
+        IntEnumEntry(cast(int)PenMode.Fill,      "fill",      "Fill"),
+        IntEnumEntry(cast(int)PenMode.Smooth,    "smooth",    "Smoothing"),
+    ];
+    package(vibe3d.editing.tools.interactive.tools.edit.topology_pen) PenMode penMode_ = PenMode.Move;   // live-measured reference default
+
+    // Edge Loop / Edge Slide — the two sticky boolean modifiers that sit
+    // ALONGSIDE the Mode dropdown in the reference's own Tool Properties
+    // sheet, with the same defaults (both OFF, live-measured —
+    // toolcards/topology_pen/attr_defaults_capture.md, PRIVATE).
+    //
+    // `edgeLoop_` ("Edge Loop") promotes a mode to its loop variant, exactly
+    // as the reference's per-option `Desc` strings pair them: Move+loop is
+    // the RMB gesture (`onMoveLoopRmbDown`), Duplicate+loop the Shift+RMB one
+    // (`onDupLoopShiftRmbDown`), Smoothing+loop the Shift+Ctrl+RMB one
+    // (`onSmoothLoopRmbDown`), and Remove+loop dissolves the whole edge loop
+    // through the pressed edge (`removeEdgeAt`, task 0494 — this used to be
+    // the tool's one unwired input slot, and the note here used to claim the
+    // flag was deliberately ignored by Remove; it was measured, it is ported,
+    // and the claim is gone with it). The remaining four modes have no loop
+    // variant and ignore the flag.
+    //
+    // Remove reads it in ONE of its three primitives — the edge one. A Remove
+    // press that latches a polygon or a vertex behaves identically with the
+    // flag on or off, because the reference's dispatcher does not read it
+    // either.
+    //
+    // `edgeSlide_` ("Edge Slide") restricts a move to the neighbouring edge
+    // rails (`onCtrlLmbDown`). Ctrl+LMB with no background is NOT this: it
+    // is the Move held to one world axis (K-FH rule 5, gap rows 627/628). It
+    // applies to the Move family only (Move mode, and Point mode's move
+    // half, which the reference defines as "works as in the Move mode");
+    // `edgeLoop_` wins when both are on (there is no slide-a-whole-
+    // loop gesture in this tool, so a loop press is the only one of the two
+    // that can be honoured — see `moveOrPlaceDown`).
+    //
+    // Sticky, for the same reason `penMode_` is: they are dropdown-adjacent
+    // options, not gesture state.
+    package(vibe3d.editing.tools.interactive.tools.edit.topology_pen) bool edgeLoop_  = false;
+    package(vibe3d.editing.tools.interactive.tools.edit.topology_pen) bool edgeSlide_ = false;
+
+    // `innerSnap_` ("Inner Snap") — the reference's own third dropdown-adjacent
+    // checkbox, default OFF (measured, task 0496), and it selects a CANDIDATE
+    // SET rather than a radius: with it OFF the pen's SNAP TARGET must be a
+    // BORDER element (an edge with at most one incident polygon, or a vertex
+    // touching one such edge); with it ON the mesh interior becomes snappable
+    // too. Sticky across gestures, for the same reason `penMode_` is.
+    //
+    // SCOPE, deliberately narrow and measured (task 0496): this gates the
+    // pen's drag-time SNAP TARGET — today that is Split's target vertex C,
+    // vibe3d's only "which existing element does this drag land on" query
+    // (`splitTargetVert_`, whose own doc comment already calls it the snap
+    // target). It deliberately does NOT gate the press-time element PICK
+    // (`findSourceVertex` / `findRingSeedEdge` on their own): our own capture
+    // corpus shows the reference grabbing and sliding an INTERIOR edge
+    // (polygon count 2) with this flag at its default, and seeding Add Loop
+    // from interior edges of a closed mesh, so gating the press pick would
+    // contradict measurements we already hold. See the resolvers' own note.
+    package(vibe3d.editing.tools.interactive.tools.edit.topology_pen) bool innerSnap_ = false;
+
+    // `backFace_` ("Backface") — the SECOND HALF of the same admission policy
+    // `innerSnap_` is the first half of, default OFF (measured live, task
+    // 0497). Where `innerSnap` picks WHICH TOPOLOGY may be a snap candidate,
+    // this one picks WHICH ORIENTATION may: with it OFF a candidate whose own
+    // normal points away from the viewer is refused; with it ON the
+    // orientation test is skipped entirely and a back-facing element is as
+    // good a target as a front-facing one. Sticky across gestures, for the
+    // same reason `penMode_` is.
+    //
+    // WHY IT IS A PEN ATTRIBUTE AND NOT A SERVICE SETTING, which is the whole
+    // point of the row: the reference reads this flag in the tool's own
+    // candidate-FILTER callbacks — the same callbacks that carry `innerSnap`
+    // — and nowhere else. The orientation gate is therefore the CLIENT'S, an
+    // option the tool may decline; it is not a law the snapping service
+    // applies to everybody. Our snap service has no orientation term on
+    // vertex / edge candidates either (`doc/measured_laws.md` §3).
+    //
+    // SCOPE, narrow because that is what was measured: the flag gates the
+    // pen's own snap-candidate admission (`PenSnapGuide.admits`) and nothing
+    // else. In particular it does NOT gate the press-time element PICK, does
+    // not touch the background placement ray — which was separately measured
+    // to be TWO-SIDED on both sides, so culling there would CREATE a
+    // divergence rather than close one — and does not switch any depth test
+    // on or off. The reference reads it on the VERTEX and EDGE candidate
+    // branches only; its polygon branch never reads it, and our guide admits
+    // vertices only, so the vertex branch is the whole of what is reachable
+    // here.
+    //
+    // Wiring this knob CHANGES this tool's default outcome, exactly as
+    // `keepVertex_` did: before it the pen's snap target was a pure
+    // screen-nearest with no orientation test at all, i.e. we shipped the ON
+    // branch while the measured default is OFF.
+    package(vibe3d.editing.tools.interactive.tools.edit.topology_pen) bool backFace_ = false;
+
+    // `keepVertex_` ("Keep Vertices") — the reference's own fourth
+    // dropdown-adjacent checkbox, default OFF (measured, task 0494), and it
+    // gates ORPHAN RETENTION on the Remove mode's EDGE path: with it off, a
+    // dissolve that eats a vertex's WHOLE polygon fan deletes that vertex and
+    // re-stitches its survivors; with it on the vertex stays as a corner of the
+    // merged polygon. See `removeEdgeAt`.
+    //
+    // Wiring this knob CHANGED this tool's default outcome: before task 0494
+    // the pen's only dissolve path kept consumed vertices unconditionally, i.e.
+    // it shipped the ON branch while the measured default is OFF.
+    //
+    // SCOPE, and it is narrow because that is what was measured: the flag was
+    // varied on the EDGE path only. The vertex and polygon primitives were both
+    // captured at OFF, and the reference's own code reads the flag in neither
+    // — so they ignore it here rather than guess a second meaning for it.
+    //
+    // Sticky across gestures, for the same reason `penMode_` is.
+    package(vibe3d.editing.tools.interactive.tools.edit.topology_pen) bool keepVertex_ = false;
+
+    // `fillRange_` ("Range") and `fillQuadOnly_` ("Quads Only") — the two
+    // FILL-mode attributes (task 0488). Both were in this tool's "awaiting
+    // their own measurement" bucket (see `params()`'s three-bucket audit)
+    // until the Fill candidate rule was measured twice — once live and once
+    // off a recording — and both are now load-bearing inputs to
+    // `findFillRing`, so they ship together with it rather than as knobs
+    // added for their own sake.
+    //
+    //   `fillRange_`    multiplies the hover radius to give the candidate
+    //                   GATHER radius, in screen pixels
+    //                   (`fillRange_ * fillHoverRadiusPx(...)`). It is a
+    //                   gather radius and NOTHING else: it never enters the
+    //                   ranking, so above the mesh's own threshold more reach
+    //                   changes nothing (the nearest-four cap absorbs it) and
+    //                   below it the gesture refuses.
+    //   `fillQuadOnly_` is the COUNT gate: on, the search accepts exactly 4
+    //                   candidates; off, exactly 4 OR exactly 3 (and the
+    //                   3-path runs no shape test at all).
+    //
+    // BOUNDS, measured, never guessed — the same measured clamp table every
+    // other row on this tool traces to (task 0499 §C-0, recovered live AND
+    // statically from the reference's own UI-hint table, so it is not
+    // re-derivable from anything in this repo — read it there before moving a
+    // number): `range` is min 0.0 with NO upper bound; `quadOnly` is [0,1],
+    // i.e. a plain boolean. Defaults 1.5 / ON, both measured (the reference's
+    // own reset seeds 1.5, and every armed cell of the live run read back
+    // exactly the requested value).
+    //
+    // AVAILABILITY: the reference REFUSES a write to either attribute outside
+    // Fill mode (an error, not an ignore) and greys the row out in its panel;
+    // likewise `smoothStrength` outside Smoothing (law L16). Ported (wave plan
+    // 8640 slice 8690): `paramEnabled` below answers the mode test, the panel
+    // greys the row, and the `tool.attr` door refuses a disabled row's write for
+    // every tool.
+    private enum float kFillRangeDefault = 1.5f;
+    package(vibe3d.editing.tools.interactive.tools.edit.topology_pen) float fillRange_    = kFillRangeDefault;
+    package(vibe3d.editing.tools.interactive.tools.edit.topology_pen) bool  fillQuadOnly_ = true;
+
+    // Which gesture the LAST unmodified-LMB press actually resolved to
+    // (task 0483). Written by `onPlainLmbDown`'s router at DOWN, read by
+    // `lmbModeUp` at UP so the release reaches THAT gesture's commit leg —
+    // re-resolving the mode at release would dispatch the wrong commit if
+    // the dropdown moved mid-drag (`tool.attr mesh.topoPen mode <tag>` is
+    // reachable over HTTP at any moment, and the Tool Properties dropdown
+    // is one click away). Per-press RECORD, so `resetAllGestureArms()`
+    // returns it to the neutral `PlaceOrMove` — whose UP leg is guarded
+    // by `placeArmed_`/`moveArmed_` and therefore a safe no-op.
+    package(vibe3d.editing.tools.interactive.tools.edit.topology_pen) PenGesture[3] gestureOn_ = PenGesture.PlaceOrMove;
+
+    // --- P10 Move Loop session state (tool.d,
+    // doc/topopen_p10_moveloop_plan.md). Armed on an RMB press that lands on
+    // a primary-layer edge (`onMoveLoopRmbDown`, reusing `findRingSeedEdge`
+    // verbatim from P6/P7): the moving set is the SORTED-UNIQUE endpoint
+    // vertices of `Mesh.selectLoopEdges(seed)` (REV1 FIX-1 — the classic
+    // in-line edge-loop CHAIN, not `loopSliceRingEdges`'s perpendicular
+    // ring), captured ONCE at arm time (the mesh is never mutated between
+    // arm and commit, so re-gathering at release would be redundant, not
+    // more correct — and a stale index after an external undo mid-drag is
+    // handled by `resyncSession` clearing all of this instead).
+    // `moveLoopStartX_`/`moveLoopStartY_` is the RMB-down pixel (the drag's
+    // anchor); `moveLoopCurX_`/`moveLoopCurY_` tracks the LIVE cursor off
+    // every subsequent motion event (`onMouseMotion`) purely for `draw()`'s
+    // ghost preview — the shared screen-delta `commitMoveLoop` actually
+    // applies is always computed from the RELEASE event's own pixel
+    // (`onMouseButtonUp`), never from this cached value. Cleared by
+    // `onMouseButtonUp` on commit/no-op and by `resyncSession` on an
+    // external history navigation, exactly like the P3/P4/P6/P7/P9 arm
+    // state above. (Task 0503 removed the per-background `BvhPick` cache
+    // that used to live here: the re-snap is no longer a ray, so there is
+    // no BVH to keep — `resnapToBackground` now calls the same
+    // `closestPointOnMeshes` P8/P12's Smooth does, which walks the source
+    // faces directly.)
+    package(vibe3d.editing.tools.interactive.tools.edit.topology_pen) GestureArm  moveLoopArmed_;
+    package(vibe3d.editing.tools.interactive.tools.edit.topology_pen) int   moveLoopSeed_   = -1;
+    package(vibe3d.editing.tools.interactive.tools.edit.topology_pen) int   moveLoopStartX_, moveLoopStartY_;
+    int   moveLoopCurX_,   moveLoopCurY_;
+    package(vibe3d.editing.tools.interactive.tools.edit.topology_pen) uint[] moveLoopVerts_;
+
+    // --- P11 Dup Loop session state (tool.d,
+    // doc/topopen_p11_duploop_plan.md). Armed on a Shift+RMB press that
+    // lands on a primary-layer edge (`onDupLoopShiftRmbDown`, reusing
+    // `findRingSeedEdge` verbatim from P6/P7/P10): `dupLoopEdges_` are the
+    // gathered loop's raw EDGE INDICES (`Mesh.selectLoopEdges(seed)` — REV1
+    // FIX-1 label correction: a BOUNDARY seed is the FULL CLOSED perimeter
+    // — the owner-observed spec case — an INTERIOR seed an OPEN chain, see
+    // `onDupLoopShiftRmbDown`'s own doc comment), captured ONCE at arm time
+    // — the mesh is never mutated between arm and commit, so re-gathering
+    // at release would be redundant, not more correct, and a stale index
+    // after an external undo mid-drag is handled by `resyncSession`
+    // clearing all of this instead. Unlike P10 Move Loop (which stores the
+    // unique VERTEX set), this stores the EDGE list — the commit needs it
+    // to build `Mesh.extendEdgesByMask`'s mask, not just a moving set.
+    // `dupLoopStartX_`/`dupLoopStartY_` is the Shift+RMB-down pixel (the
+    // drag's anchor); `dupLoopCurX_`/`dupLoopCurY_` tracks the LIVE cursor
+    // off every subsequent motion event (`onMouseMotion`) purely for
+    // `draw()`'s ghost preview — the shared screen-delta `commitDupLoop`
+    // actually applies is always computed from the RELEASE event's own
+    // pixel (`onMouseButtonUp`), never from this cached value. The
+    // extrude+drag itself is deferred to ONE atomic release-time commit
+    // (`commitDupLoop`), mirroring P6 Add Loop's/P9 Split's own
+    // defer-to-release discipline for a topology-growing op — never a
+    // mid-drag mutation. Cleared by `onMouseButtonUp` on commit/no-op and
+    // by `resyncSession` on an external history navigation, exactly like
+    // the P3-P10 arm state above.
+    package(vibe3d.editing.tools.interactive.tools.edit.topology_pen) GestureArm  dupLoopArmed_;
+    package(vibe3d.editing.tools.interactive.tools.edit.topology_pen) int   dupLoopSeed_    = -1;
+    package(vibe3d.editing.tools.interactive.tools.edit.topology_pen) int[] dupLoopEdges_;
+    package(vibe3d.editing.tools.interactive.tools.edit.topology_pen) int   dupLoopStartX_, dupLoopStartY_;
+    int   dupLoopCurX_,   dupLoopCurY_;
+
+    // --- Duplicate-EDGE session state (task 0485). The single-edge sibling
+    // of the Dup Loop state above, armed by a Shift+LMB press that lands on
+    // an edge instead of a vertex: the reference's Duplicate mode
+    // "duplicates an edge as you drag it", and only widens that to a whole
+    // loop "with Edge Loop enabled or by dragging with the right mouse
+    // button". So Shift+LMB on an edge is the ONE-edge case of the very
+    // operation Shift+RMB already runs, and it commits through the same
+    // kernel (`commitDupEdges`) with a one-element edge list.
+    //
+    // DELIBERATELY NOT the `dupLoop*` fields reused with a shorter list: each
+    // gesture keeps its own payload so one handler's narrow self-reset can
+    // never clear another's (a cross-button press ends the held gesture
+    // through `openPressStep` instead — L56).
+    package(vibe3d.editing.tools.interactive.tools.edit.topology_pen) GestureArm  dupEdgeArmed_;
+    package(vibe3d.editing.tools.interactive.tools.edit.topology_pen) int   dupEdgeSeed_  = -1;
+    package(vibe3d.editing.tools.interactive.tools.edit.topology_pen) int[] dupEdgeEdges_;          // what the release will duplicate: [seed], or the trimmed border run
+    int   dupEdgeStartX_, dupEdgeStartY_;
+    int   dupEdgeCurX_,   dupEdgeCurY_;
+
+    // --- P12 Smooth+Loop session state (tool.d,
+    // doc/topopen_p12_smoothloop_plan.md). Armed on a Shift+Ctrl+RMB press
+    // that lands on a primary-layer edge (`onSmoothLoopRmbDown`, reusing
+    // `findRingSeedEdge` verbatim from P6/P7/P10/P11); the moving set is the
+    // SAME sorted-unique endpoint-vertex gather P10 uses (`uniqueRingVerts`),
+    // captured ONCE at arm time into `smoothLoopVerts_` — the mesh is never
+    // mutated between arm and commit, so re-gathering at release would be
+    // redundant, not more correct (REV1 FIX-2: the commit REUSES this cache
+    // verbatim rather than re-running `uniqueRingVerts`) — and a stale index
+    // after an external undo mid-drag is handled by `resyncSession` clearing
+    // all of this instead. `smoothLoopStartX_`/`_Y_` is the press pixel;
+    // `smoothLoopCurX_`/`_Y_` doubles as BOTH the running "last motion
+    // position" the drag-distance accumulator measures against AND the live
+    // cursor `draw()`'s ghost ring previews at (mirroring Move Loop's
+    // `moveLoopCurX_`/`_Y_`) — one field serves both roles since after every
+    // motion event it IS the live cursor. `smoothLoopDragPx_` accumulates
+    // cursor TRAVEL — the whole-mesh Smooth gesture used to do the same, but
+    // its pacing has since been measured and replaced (`kSmoothPassStridePx`)
+    // while this path's was never sampled, so the two are deliberately forked
+    // (`kSmoothLoopPassStridePx`). The only read of it is at release, to
+    // derive the pass count (`onMouseButtonUp`'s Smooth+Loop branch). Cleared by
+    // `onMouseButtonUp` on commit/no-op and by `resyncSession` on an
+    // external history navigation, exactly like the P3-P11 arm state above.
+    package(vibe3d.editing.tools.interactive.tools.edit.topology_pen) GestureArm   smoothLoopArmed_;
+    package(vibe3d.editing.tools.interactive.tools.edit.topology_pen) int    smoothLoopSeed_    = -1;
+    package(vibe3d.editing.tools.interactive.tools.edit.topology_pen) uint[] smoothLoopVerts_;
+    package(vibe3d.editing.tools.interactive.tools.edit.topology_pen) int    smoothLoopStartX_, smoothLoopStartY_;
+    package(vibe3d.editing.tools.interactive.tools.edit.topology_pen) int    smoothLoopCurX_,   smoothLoopCurY_;
+    package(vibe3d.editing.tools.interactive.tools.edit.topology_pen) float  smoothLoopDragPx_ = 0.0f;
+
+    // P8 pass count — the MEASURED law (task 0490; superseded the earlier
+    // "unmeasured throttle" guess of one pass per 20px of cursor TRAVEL):
+    //
+    //     N = max(1, 1 + (xCurrent - xPress) / kSmoothPassStridePx)
+    //
+    // Three things are measured here and each one of them contradicts the
+    // guess it replaces:
+    //   * the stride is 5 screen pixels, not 20;
+    //   * the input is the SIGNED HORIZONTAL displacement from the press
+    //     pixel — so dragging back toward (and past) the press pixel makes
+    //     the count FALL again, and it is bounded by the floor of 1, never
+    //     by how far the cursor has been;
+    //   * vertical motion contributes NOTHING (a purely vertical drag is
+    //     one pass, exactly like a stationary click) and neither does the
+    //     accumulated PATH length — only where the cursor is now, relative
+    //     to where the press was.
+    // The division is signed and truncates toward zero, matching the
+    // reference's own integer divide.
+    //
+    // `MAX_TOPOPEN_SMOOTH_PASSES` stays the two-layer DoS backstop (mirrors
+    // `MeshSmooth`'s own `MAX_SMOOTH_ITER`, `commands/mesh/smooth.d`) — this
+    // is a DERIVED count (drag geometry), not a user `Param`, so it needs
+    // the kernel cap + floor, not an `enforceBounds()`. At a 5px stride the
+    // cap is first reached at a +1275px horizontal drag, i.e. beyond any
+    // real viewport-width gesture: it is a runaway guard, NOT a silent clamp
+    // inside the working range.
+    private enum int kSmoothPassStridePx        = 5;
+    private enum int MAX_TOPOPEN_SMOOTH_PASSES  = 256;
+
+    // FORKED, DELIBERATELY UNMEASURED: the Smooth+LOOP path
+    // (`applySmoothLoopPasses`) keeps the ORIGINAL guessed pacing — one pass
+    // per 20px of accumulated cursor travel. The law above was measured on
+    // the whole-mesh Smooth path only; the loop variant was never sampled,
+    // and silently generalizing a measurement from one path to another is
+    // exactly what `inverseEdgeLenRelax`'s own doc comment warns against.
+    // Close it with a capture of THAT path, not by deleting this fork.
+    private enum float kSmoothLoopPassStridePx = 20.0f;
+
+    // The one place the measured pass-count law above is evaluated: both the
+    // release path (`smoothUp` -> `applySmoothPasses`) and the live state
+    // readback (`toolStateJson`'s `smoothPassCount`) go through it, so the
+    // count a test observes mid-drag is by construction the count a release
+    // would apply. Returns the FULLY clamped value (floor 1, cap
+    // MAX_TOPOPEN_SMOOTH_PASSES) — `applySmoothPasses` re-applies the same
+    // clamp for its direct (headless / unit-test) callers.
+    //
+    // NO USER PARAM, ON PURPOSE (task 0490 — do not "fix" this by adding
+    // one): the reference exposes an iteration-count attribute of its own,
+    // but that attribute and this gesture counter are the SAME storage cell
+    // in it, and its press handler overwrites that cell with 1 at the start
+    // of EVERY Smooth press. Setting the attribute therefore cannot affect
+    // the gesture that follows — which is why a captured run that set it to
+    // 3 still relaxed exactly once. Exposing it as a `Param` here would
+    // CREATE a divergence rather than close one, the same resolution already
+    // taken for the reference's boundary/corner lock attributes (see
+    // `applySmoothPasses`).
+    package(vibe3d.editing.tools.interactive.tools.edit.topology_pen) static int smoothPassesForDragDx(int dragDx) {
+        int n = 1 + dragDx / kSmoothPassStridePx;   // signed, truncating toward zero
+        if (n < 1) n = 1;
+        if (n > MAX_TOPOPEN_SMOOTH_PASSES) n = MAX_TOPOPEN_SMOOTH_PASSES;
+        return n;
+    }
+
+    // Smooth relaxation force factor (measured): `F = strength / 20`, with a
+    // reference default `strength` of 1.0 → F = 0.05. The divisor is a
+    // literal read from the reference, not a fitted constant. Backing store
+    // for the `smoothStrength` Param (see `params()`); sticky across
+    // gestures like every other tool option here.
+    private enum float kSmoothStrengthDefault = 1.0f;
+    private enum float kSmoothStrengthDivisor = 20.0f;
+    package(vibe3d.editing.tools.interactive.tools.edit.topology_pen) float smoothStrength_ = kSmoothStrengthDefault;
+
+    // --- Generic Hover-Highlight indicator (doc/topopen_hover_highlight_plan.md,
+    // REV1). An always-on, mode-INDEPENDENT "what's under the cursor"
+    // affordance over the PRIMARY mesh, orthogonal to every armed gesture
+    // above: resolved every motion event (`onMouseMotion`, below) via
+    // `computeHoverIndicator` and rendered in `draw()` UNDER the per-mode
+    // gesture ghosts (Build/Move/AddLoop/Slide/Smooth/Split/MoveLoop) —
+    // those take precedence whenever `anyGestureArmed()` is true. Pure
+    // render: no mesh mutation, no undo. Distinct from the P0/P1 CONS
+    // `lastHit_`/`lastTarget_` (background-cage) hover path below, which is
+    // left intact — that one resolves over the BACKGROUND and picks ONE of
+    // vertex/edge/face; this one is over the PRIMARY and shows the nearest
+    // vertex AND edge simultaneously.
+    //
+    // `hoverNearestVert_`/`hoverNearestEdge_` are the screen-nearest PRIMARY
+    // vertex/edge (via `findSourceVertex`/`findRingSeedEdge`'s `∞`-threshold
+    // RESOLUTION pass). REV1 FIX-1 (KILLER): `hoverOverMesh_` — the over-
+    // mesh GATE — is NOT driven solely by `pickPrimaryFace >= 0` (a
+    // face-BVH raycast that returns -1 whenever the primary has zero/sparse
+    // faces — this tool's own from-scratch retopo founding state, bare
+    // vertices/edges laid down before the first face closes; `classifySource`
+    // explicitly treats `BuildCase.Edge`/`Tri` as normal ongoing states, not
+    // error cases). Instead the gate is the OR of the face pick AND a
+    // SEPARATE, FINITE-threshold proximity pass of the SAME two functions
+    // (computed in `onMouseMotion`, never reused across the two purposes),
+    // so a faceless/bare-edge scene still lights up while a cursor genuinely
+    // far from all geometry does not.
+    //
+    // `hoverBoundary_` is `isEdgeBorder(hoverNearestEdge_)` (n == 1 EXACTLY —
+    // MINOR-4: NOT "<=1"; a 0-face bare edge is not a boundary, it simply has
+    // nothing to hatch) and `hoverBoundaryFace_` is that single incident
+    // face (via `facesAroundEdge`), for the cross-hatch in `draw()`. Cleared
+    // by `resyncSession` on an external history navigation (no motion event
+    // may follow it), mirroring every other session-state block above —
+    // but unlike the P3-P10 arm flags, this is NOT part of
+    // `resetAllGestureArms()`/`anyGestureArmed()`: it is not a gesture arm,
+    // just a passive display cache with no commit path of its own.
+    package(vibe3d.editing.tools.interactive.tools.edit.topology_pen) bool hoverOverMesh_     = false;
+    package(vibe3d.editing.tools.interactive.tools.edit.topology_pen) int  hoverNearestVert_  = -1;
+    package(vibe3d.editing.tools.interactive.tools.edit.topology_pen) int  hoverNearestEdge_  = -1;
+    package(vibe3d.editing.tools.interactive.tools.edit.topology_pen) bool hoverBoundary_     = false;
+    package(vibe3d.editing.tools.interactive.tools.edit.topology_pen) int  hoverBoundaryFace_ = -1;
+
+    // WHAT a press at the current cursor would grab (task 0484 follow-up),
+    // resolved by the SAME `resolveGrabTarget` the press itself calls — so
+    // the highlight cannot name one element while the press takes another.
+    // This is what `draw()` renders: exactly ONE element, never the
+    // nearest-vertex-and-nearest-edge pair the fields above describe.
+    //
+    // Those fields stay, and stay published: they answer a DIFFERENT question
+    // ("what is nearest, at any distance" — an ∞-threshold scan, the
+    // affordance the hover plan specified) which `/api/tool/state` consumers
+    // already read. This pair answers "what is under the cursor, within pick
+    // range, and therefore live". `hoverGrabIndex_` indexes whichever array
+    // `hoverGrabElem_` names.
+    package(vibe3d.editing.tools.interactive.tools.edit.topology_pen) MoveElem hoverGrabElem_  = MoveElem.None;
+    package(vibe3d.editing.tools.interactive.tools.edit.topology_pen) int      hoverGrabIndex_ = -1;
+
+    // The reference's two DISPLAY toggles for this tool (task 0499), both
+    // measured default ON and both plain booleans with no mode gate of their
+    // own. They are the only two attributes in the reference's whole attribute
+    // set whose behavior is measured AND which vibe3d does not publish: a
+    // display flag has no numeric or topological effect to get wrong, which is
+    // exactly why these two can be ported when the numeric ones cannot.
+    //
+    // SCOPE IS A VIBE3D DECISION, NOT A MEASURED LAW — do not silently widen
+    // it. What is measured: the attributes exist, they are booleans, they
+    // default ON, and they control drawing only. WHICH overlay elements they
+    // gate in the reference was NOT measured. We gate exactly our own pen
+    // hover indicator's vertex marker / edge line (`hoverIndicatorElem`), and
+    // nothing else — never the viewport's own vertex/edge display, which is a
+    // global view setting here and would be a far larger claim than the
+    // measurement supports. Both default `true`, so the drawn result with an
+    // untouched panel is byte-identical to before this row existed.
+    //
+    // The hover indicator's third case — the FACE hatch — has no counterpart
+    // among the reference's two toggles and is therefore left ungated
+    // (recorded as an open item in the task file, not resolved by guessing a
+    // third toggle into existence).
+    package(vibe3d.editing.tools.interactive.tools.edit.topology_pen) bool showVertex_ = true;
+    package(vibe3d.editing.tools.interactive.tools.edit.topology_pen) bool showEdge_   = true;
+
+    // Fill mode hover preview: the ring `findFillRing` resolves under the
+    // cursor — 4 corners, or 3 when `quadOnly` is off — in the ORDER the
+    // build would use, or `null` when the mode isn't Fill / the search
+    // refuses / a gesture is armed. A passive display cache — like
+    // `hoverNearestVert_` above — NOT part of
+    // `resetAllGestureArms()`/`anyGestureArmed()`. Computed unconditionally
+    // in `onMouseMotion`'s not-armed branch (its own sibling gate, NOT
+    // nested inside the `hoverOverMesh_` block above — see the plan's
+    // mandatory opponent fix #2: `hoverOverMesh_` requires a pick within
+    // `topoPenPressPickPx`, which is false when hovering the CENTER of an empty
+    // gap cell, exactly the defining Fill-mode case).
+    //
+    // ONE SEARCH, shared with the commit (task 0488): the reference's own
+    // draw path runs the identical candidate search the press does, so the
+    // highlight is not an approximation of the outcome — it IS the outcome.
+    // Anything that changes the rule therefore changes this preview in the
+    // same breath; they cannot be ported apart.
+    package(vibe3d.editing.tools.interactive.tools.edit.topology_pen) uint[] fillRing_;
+
+    // Fill mode hover-reach RADIUS overlay (task 0477 continuation, a
+    // derived law — full provenance/disassembly kept in the PRIVATE
+    // toolcard, toolcards/topology_pen/fill_radius_law_capture.md): a
+    // cosmetic screen-space circle, centered on the live cursor pixel,
+    // sized to the farther endpoint of whichever BORDER edge the cursor is
+    // nearest. `fillRadiusPx_` is computed alongside `fillRing_` above, in
+    // `onMouseMotion`'s Fill-mode branch (its own sibling gate, same
+    // rationale `fillRing_` isn't nested in `hoverOverMesh_`: hovering the
+    // open middle of a gap is nowhere near any vertex/edge/face within
+    // `topoPenPressPickPx`, yet a nearby border edge still legitimately sizes
+    // the circle). `fillRadiusValid_` is false whenever a non-Fill mode is
+    // active, a gesture is armed, or no border edge is within tolerance of
+    // the cursor (this also covers the vertex-only-hover case the toolcard
+    // leaves unresolved as an honest gap — no circle rather than a guessed
+    // one). Overlay-only: never read by `findFillRing`/`commitFill`, so it
+    // cannot affect the fill kernel, undo, or any other mode.
+    package(vibe3d.editing.tools.interactive.tools.edit.topology_pen) bool  fillRadiusValid_ = false;
+    package(vibe3d.editing.tools.interactive.tools.edit.topology_pen) float fillRadiusPx_    = 0.0f;
+
+    // Visual constants (Pinned Decision 4): a steel-blue palette
+    // DELIBERATELY distinct from both the P1 bg-cage bright-cyan
+    // `IM_COL32(0,220,255,…)` (`markerCol`/cyan, `draw()` below) and the
+    // pen-orange `markerCol` (`draw()` below) — different hues, not a
+    // near-miss. MINOR-6: flagged as an owner watch-item (the
+    // retopo-over-background use case can place the two markers at nearly
+    // the same pixel) — V1 does not gate on resolving it.
+    private enum uint  kHoverElemCol          = IM_COL32(128, 170, 187, 255);
+    private enum float kHoverVertSquareHalfPx = 6.0f;   // -> 12x12px filled square
+    private enum float kHoverEdgeWidthPx      = 2.0f;
+    private enum uint  kHoverHatchCol         = IM_COL32(40, 40, 40, 150);
+    private enum float kHoverHatchSpacingPx   = 7.0f;
+    private enum float kHoverHatchWidthPx     = 1.0f;
+
+    // Fill-mode candidate-cell preview colour (task 0477 continuation,
+    // doc/topopen_fill_plan.md Phase 5): a green DELIBERATELY distinct from
+    // the steel-blue `kHoverElemCol` above and the pen-orange `markerCol`
+    // (`draw()` below) — a third, unambiguous hue for "this cell would be
+    // capped".
+    private enum uint  kFillPreviewCol         = IM_COL32(120, 210, 120, 230);
+
+    // Fill-mode radius-overlay colour (task 0477 continuation, the derived
+    // radius law): pale, thin, and translucent — DELIBERATELY distinct
+    // from every other hue in this palette (steel-blue element, green cell
+    // preview, cyan snap highlight, orange place marker) so the reach
+    // circle never reads as any of those affordances.
+    private enum uint  kFillRadiusCol          = IM_COL32(230, 230, 230, 140);
+    private enum int   kFillRadiusSegments     = 48;
+    private enum float kFillRadiusThicknessPx  = 1.0f;
+
+    void readHit(ref VectorStack vts) {
+        if (auto p = vts.get!ConstrainHitPacket()) {
+            lastHit_ = *p;
+            Viewport vp = viewportOf(vts);
+            if (auto subject = vts.get!SubjectPacket())
+                if (subject.cursorValid)
+                    lastTarget_ = resolveHoverTarget(lastHit_, vp, topoPenPressPickPx(vp),
+                        backgroundSourcesFull(), subject.cursorX, subject.cursorY, subject.pickOcclusion);
+            if (auto subject = vts.get!SubjectPacket())
+                if (subject.cursorValid && !moveArmed_)
+                    placementSnap_ = placementElection(lastHit_.point, subject.cursorX, subject.cursorY,
+                        vp, snapPacketOf(vts));
+        }
+        // else: leave lastHit_/lastTarget_ unchanged — see class doc (the
+        // per-frame render-loop's vts never carries the packet; only a
+        // real mouse event does).
+    }
+
+    // ---------------------------------------------------------------------
+    // THE FILE'S ONE PROJECTION SEAM — split in two by SPACE (task 0619
+    // Stage 4a, doc/tool_aiming_item_transform_plan.md §2.2).
+    //
+    // What used to be here was a single `projectPt(Vec3 world, …)` whose
+    // parameter was named `world` and which was handed a raw, LAYER-LOCAL
+    // `mesh.vertices[…]` by most of its call sites. On a layer with a
+    // non-identity item transform that projects the geometry to where it
+    // would sit at IDENTITY, not to where it is drawn — so every pick,
+    // veto, gather and ghost in this file aimed at the wrong pixels.
+    //
+    // The name is deliberately GONE rather than fixed in place: deleting it
+    // turned all 161 of its call sites into build errors, which is the only
+    // mechanism that forces each one to be classified rather than assumed
+    // (§R2). The two replacements differ in the TYPE of their viewport, so a
+    // MIS-classified site cannot compile either:
+    //
+    //   * `projectLocalPt` takes an `AimViewport` — a viewport that has
+    //     already had a `ModelSpace` composed into it and that cannot be
+    //     produced any other way (math.d §2.0). Hand it `mesh.vertices[…]`
+    //     and any other layer-local quantity.
+    //   * `projectWorldPt` takes a plain `Viewport`. Hand it a value that is
+    //     ALREADY in world space — everything the CONS stage publishes
+    //     (`lastHit_.point` / `.normal` / `.nearestVertPos` /
+    //     `.nearestEdgeA/B`, world since 0617).
+    //
+    // Neither takes a `ModelSpace`, so there is no parameter to silence the
+    // compiler with an identity value: the only available choice is a
+    // semantic one.
+    //
+    // AIMING KIND for `projectLocalPt`: **Pixel** (§1.1). The law is "keep
+    // the geometry local, compose the viewport", because
+    // `proj·(view·M)·v ≡ proj·view·(M·v)` holds exactly — so the pixel this
+    // returns IS the pixel the vertex is drawn at, with no per-vertex
+    // transform. Build the `AimViewport` ONCE per query (§3): it is a stack
+    // copy plus one 4×4 multiply, which is cheap per event and unacceptable
+    // per vertex.
+    // ---------------------------------------------------------------------
+
+    /// Project a LAYER-LOCAL point to a foreground-drawlist pixel through the
+    /// aiming space; false when behind the camera.
+    static bool projectLocalPt(Vec3 pLocal, const ref AimViewport vpAim, out ImVec2 pt) {
+        float sx, sy, ndcZ;
+        if (!projectToWindowFull(pLocal, vpAim.vp, sx, sy, ndcZ)) return false;
+        pt = ImVec2(sx, sy);
+        return true;
+    }
+
+    /// Project an ALREADY-WORLD point to a foreground-drawlist pixel; false
+    /// when behind the camera. The typed home for "this value is not a mesh
+    /// coordinate" — so nobody has to fabricate an aim space to say so.
+    package(vibe3d.editing.tools.interactive.tools.edit.topology_pen) static bool projectWorldPt(Vec3 pWorld, const ref Viewport vp, out ImVec2 pt) {
+        float sx, sy, ndcZ;
+        if (!projectToWindowFull(pWorld, vp, sx, sy, ndcZ)) return false;
+        pt = ImVec2(sx, sy);
+        return true;
+    }
+
+    // Fill mode radius-overlay LAW (task 0477 continuation — derived from a
+    // reference engine's disassembly; full provenance kept in the PRIVATE
+    // toolcard, toolcards/topology_pen/fill_radius_law_capture.md, never in
+    // this tracked source): the hover-reach circle's radius is the FARTHER
+    // of the cursor's screen-space Euclidean distance to the two endpoints
+    // of whichever border edge the cursor is nearest. Pure + static (no
+    // mesh/GL access) so the arithmetic is independently unit-testable.
+    package(vibe3d.editing.tools.interactive.tools.edit.topology_pen) static float fillHoverRadiusPx(float cursorX, float cursorY,
+                                   ImVec2 edgeEndpointA, ImVec2 edgeEndpointB) {
+        immutable float dA = hypot(edgeEndpointA.x - cursorX, edgeEndpointA.y - cursorY);
+        immutable float dB = hypot(edgeEndpointB.x - cursorX, edgeEndpointB.y - cursorY);
+        return dA > dB ? dA : dB;
+    }
+
+public:
+    // Deps default-unset (matches the pre-P2 `new TopologyPenTool()`
+    // registration site — every existing P0/P1 caller/test keeps working
+    // unchanged); `setUndoBindings` supplies the placement path.
+    this() {}
+
+    this(Mesh* delegate() meshSrc, GpuMesh* gpu) {
+        this.meshSrc_ = meshSrc;
+        this.gpu_     = gpu;
+    }
+
+    // The thirteen per-gesture undo factories arrive as ONE named value (task
+    // 6352): the application assembles `TopoPenFactories` field by field beside
+    // its session-edit descriptors, so two structurally identical delegates
+    // can no longer be exchanged by argument position. History and the
+    // placement carrier are NOT here — they come from `Tool.setGestureBindings`,
+    // and this method takes no `CommandHistory`. Pinned by
+    // tests/unit/topology_pen_factory_bundle_test.d and member 7 of
+    // tests/unit/tool_commit_seam_census_g7_test.d.
+    void setPenFactories(TopoPenFactories factories) {
+        factories_ = factories;
+    }
+
+    override string name() const { return "Topology Pen"; }
+
+    // Its visible arm is a strict-LIFO history row (slice M1 carries the former marker).
+    // Every press is one topology step the SESSION records (plan 8646): one
+    // begin site (`openPressStep`), one end site (`closePressStep`), no
+    // per-gesture record call. The pen reports its own basis (the press image),
+    // and its attribute image is every published param (D15).
+    override ToolSessionPolicy sessionPolicy() const nothrow @nogc {
+        // Rollovers (slice M6): the flags table sets the flag on this tool (and
+        // on Drag Weld); no hover type is picked here yet, so nothing is drawn.
+        static immutable ToolSessionPolicy policy = {
+            activationRow: true, rollovers: Rollover.target,
+            // L57 (C5): a UI-door recording command keeps the pen armed.
+            commandClose: CommandClose.uiDoor,
+            sessionSteps: true, historyTopologySteps: true,
+            dropWritesRow: true,
+            dropUndo: DropUndoPolicy(DropUndoExtent.newestPressBlock, DropRedoPopulation.discard, DropUndoResidualPopulation.pressMarker),
+            pressOpensOperation: true, foldsParamRowsIntoBlock: true,
+            imageAttrs: ["middle", "mode", "loop", "slide", "smoothStrength",
+                         "showVertex", "showEdge", "innerSnap", "keepVertex",
+                         "range", "quadOnly", "backFace", "offsetX", "offsetY",
+                         "offsetZ", "stepKind", "stepVerts", "stepOrig"],
+            haulAttrs: ["offsetX", "offsetY", "offsetZ", "stepKind", "stepVerts",
+                        "stepOrig"] };
+        return policy;
+    }
+
+    // Add Loop "at the Middle" option schema
+    // (doc/tasks/work/0480-topopen-addloop-middle.md) — the FIRST `params()`
+    // override on this tool. Backs both the
+    // `tool.attr mesh.topoPen middle ?` HTTP path and the
+    // `config/forms/topology_pen.yaml` checkbox row; the attr name
+    // "middle" MUST match that form's `control:` string exactly — the
+    // boot-time `validateForms` strict-checks every form attr against this
+    // list and fails loud on a typo.
+    //
+    // Mode dropdown (task 0477 continuation, doc/topopen_fill_plan.md
+    // Phase 1, MANDATORY opponent fix #1): the `mode` IntEnum Param is
+    // APPENDED to this array — never a full-replace, which would drop
+    // `middle` and fail boot-time `validateForms` against its existing
+    // yaml row. "mode" MUST match `config/forms/topology_pen.yaml`'s new
+    // dropdown row's `control:` string exactly, same contract as
+    // `middle` above.
+    //
+    // `loop` / `slide` (task 0483) — the reference's own "Edge Loop" /
+    // "Edge Slide" checkboxes, APPENDED for that same reason. They modify
+    // what the Mode dropdown dispatches an unmodified LMB press to; see
+    // `edgeLoop_`/`edgeSlide_`'s own doc comment for the routing rules and
+    // `onPlainLmbDown` for the table that applies them.
+    //
+    // `innerSnap` (task 0496) — the reference's own third checkbox, APPENDED
+    // for the same reason, default OFF (measured). Unlike the attributes this
+    // form deliberately omits, its behaviour IS measured: it selects the
+    // CANDIDATE SET the pen's snap target may resolve to (border-only when
+    // off, the interior as well when on) — see `innerSnap_` for the scope.
+    //
+    // Smooth strength (reference parity, `doc/tasks/work/0478-topopen-smooth-kernel.md`):
+    // APPENDED for the same reason — never a full-replace. Scales the Smooth
+    // relaxation force as `F = smoothStrength / kSmoothStrengthDivisor`
+    // (`applySmoothPasses`); the reference's own default is 1.0, giving
+    // F = 0.05. Bounds are `.enforceBounds()`-backed so a headless
+    // `tool.attr` injection cannot drive the force outside the sane range
+    // (0 = a pure no-op, the upper end already well past useful). This is a
+    // FORCE scale, not a work scale — the iteration count, which IS the work
+    // scale, carries its own `MAX_TOPOPEN_SMOOTH_PASSES` cap in
+    // `applySmoothPasses`, and the kernel additionally rejects a non-finite
+    // factor that `.enforceBounds()` cannot clamp.
+    //
+    // `showVertex` / `showEdge` (task 0499) — the reference's two DISPLAY
+    // toggles, both measured default ON, both ungated booleans. APPENDED, same
+    // reason as every row above. See their fields' own doc comment for the one
+    // thing about them that is a vibe3d decision rather than a measurement (the
+    // SCOPE of what they hide) and for why the face hatch stays ungated.
+    //
+    // `keepVertex` (task 0494) — the Remove mode's orphan-retention gate,
+    // measured in BOTH directions on one cell pair and measured default OFF.
+    // APPENDED LAST, same reason as every row above. Note what publishing it
+    // did: our pre-0494 behaviour was its ON branch, so the row does not merely
+    // expose a knob, it moves the default. See the field's own doc comment.
+    //
+    // `backFace` (task 0538) — the orientation half of the pen's snap
+    // admission policy, APPENDED LAST, same reason as every row above,
+    // measured default OFF. It leaves the "awaiting measurement" bucket below
+    // on the same terms `innerSnap` did: its BEHAVIOUR is measured (at OFF a
+    // candidate whose own normal faces away from the viewer is refused; at ON
+    // the orientation test is skipped), its BOUNDS are a plain boolean, and it
+    // is a load-bearing input to the ported admission rule rather than a knob
+    // for its own sake. See the field's own doc comment for the scope, and for
+    // why publishing it MOVES the default rather than merely exposing a knob.
+    //
+    // `range` / `quadOnly` (task 0488) — the two FILL attributes, APPENDED
+    // LAST, same reason as every row above. They leave the "awaiting
+    // measurement" bucket below because the Fill candidate rule is now
+    // measured twice over and BOTH are load-bearing inputs to it: `range`
+    // multiplies the hover radius into the candidate gather radius, and
+    // `quadOnly` is the 3-vs-4 count gate. Bounds are the measured ones (min
+    // 0.0, no upper bound / [0,1]) — see `fillRange_`'s own doc comment for
+    // the provenance and for their availability (a write outside Fill mode is
+    // refused, as `smoothStrength` is outside Smoothing: `paramEnabled`).
+    //
+    // ---- WHY THIS LIST IS SHORT, AND WHAT OWNS THE REST -------------------
+    //
+    // The reference tool carries 31 attributes; this list publishes 12. The gap
+    // is deliberate and sorted into three buckets. A knob whose BEHAVIOR is not
+    // measured is not "approximately right" — it does something else and the
+    // user cannot tell. A knob with GUESSED BOUNDS is the same class of error,
+    // so every row here traces to the measured clamp table (task 0499 §C-0 in
+    // the task file; recovered live AND statically, so it is not re-derivable
+    // from anything in this repo — read it there before adding a row).
+    //
+    //   (a) behavior measured, safe to publish now — `range`, `quadOnly`
+    //       (task 0488). Both graduated out of bucket (c) when Fill's
+    //       candidate rule was measured; neither is a knob for its own sake
+    //       (each is an input the ported search reads).
+    //   (b) measured as pure DISPLAY — `showVertex`, `showEdge`. Below.
+    //   (c) awaiting their own measurement — NOT published, one owner each:
+    //         iteration count (see the note below)       -> task 0490 (Smooth)
+    //         `falloffDist`, `connect`, `shape`, p0/p1   -> task 0491 (falloff)
+    //         `joinDisco`                                -> task 0500 (weld)
+    //         boundary/corner locks + the iteration row  -> task 0501 (gated
+    //                                                       rows; they need a
+    //                                                       panel-gate
+    //                                                       mechanism first)
+    //         `reverse`                                  -> no owner yet; an
+    //                                                       undocumented
+    //                                                       boolean whose
+    //                                                       behavior was never
+    //                                                       measured at all
+    //
+    // Two rows are absent ON PURPOSE rather than pending, and both stay absent:
+    // an iteration/pass-count row (the reference overwrites that attribute with
+    // 1 at the start of every Smooth press, so publishing it would CREATE a
+    // divergence — see `config/forms/topology_pen.yaml`'s own note and
+    // `applySmoothPasses`), and the boundary/corner locks (measured inert on
+    // the path we implement, but that measurement is path-conditional — task
+    // 0501 owns re-deciding them, so shipping them "inert" here is exactly what
+    // must not happen).
+    override Param[] params() {
+        return [
+            Param.bool_("middle", "Split at the Middle", &addLoopMiddle_, false),
+            Param.intEnum_("mode", "Mode", cast(int*)&penMode_, penModeTable,
+                           cast(int)PenMode.Move),
+            Param.bool_("loop",  "Edge Loop",  &edgeLoop_,  false),
+            Param.bool_("slide", "Edge Slide", &edgeSlide_, false),
+            Param.float_("smoothStrength", "Smooth Strength", &smoothStrength_,
+                         kSmoothStrengthDefault)
+                 .min(0.0f).max(4.0f).enforceBounds(),
+            Param.bool_("showVertex", "Show Vertex", &showVertex_, true),
+            Param.bool_("showEdge",   "Show Edge",   &showEdge_,   true),
+            Param.bool_("innerSnap", "Inner Snap", &innerSnap_, false),
+            Param.bool_("keepVertex", "Keep Vertices", &keepVertex_, false),
+            Param.float_("range", "Range", &fillRange_, kFillRangeDefault)
+                 .min(0.0f).enforceBounds(),
+            Param.bool_("quadOnly", "Quads Only", &fillQuadOnly_, true),
+            Param.bool_("backFace", "Backface", &backFace_, false),
+            // The operation context (S7a): transient, so the per-preset
+            // attribute cache never carries it into a fresh instance (M-H).
+            Param.float_("offsetX", "Offset X", &offsetX_, 0.0f).transient(),
+            Param.float_("offsetY", "Offset Y", &offsetY_, 0.0f).transient(),
+            Param.float_("offsetZ", "Offset Z", &offsetZ_, 0.0f).transient(),
+            Param.podArray_("stepKind", "Step Kind", &stepKind_),
+            Param.podArray_("stepVerts", "Step Vertices", &stepVerts_),
+            Param.podArray_("stepOrig", "Step Origins", &stepOrig_),
+        ];
+    }
+
+    // Attribute availability by mode (law L16, wave plan 8640 slice 8690):
+    // Strength only in Smoothing, Range / Quads Only only in Fill; every other
+    // row always. The panel greys a false row and the `tool.attr` door refuses
+    // its write.
+    override bool paramEnabled(string name) const {
+        switch (name) {
+            case "smoothStrength":    return penMode_ == PenMode.Smooth;
+            case "range", "quadOnly": return penMode_ == PenMode.Fill;
+            default:                  return true;
+        }
+    }
+
+    // Re-evaluation by step kind (wave plan 8640 S7b, §9.8 / §9.17.6; laws
+    // L17-L24, L30): an INTERACTIVE write of an attribute the last press's kind
+    // reads (`kReapply`) re-applies that press inside the write's own row;
+    // every other write is attribute-only. A headless `tool.attr` re-applies
+    // nothing (captured: such a write moves no geometry).
+    override void onParamChanged(string name) {
+        super.onParamChanged(name);
+        if (interactiveParamEdit) reapplyLastStep(name);
+    }
+
+    package(vibe3d.editing.tools.interactive.tools.edit.topology_pen) void reapplyLastStep(string name) {
+        import std.algorithm.searching : canFind;
+        // No `stepOpen_` term: a press resets the descriptor at its open
+        // (`pressOpensOperation`), so a held press reads `None` here anyway.
+        if (cast(uint)stepKind() > PenStepKind.max) return;
+        // A foreign row above the press (a recording command) ends the gesture
+        // link on its first observation, whatever the write: the clear lands in
+        // this write's own row, so the next write (which follows this session's
+        // row) still reads `None`, and undoing the write restores the link (L58).
+        if (!lastStepIsNewest()) { noteStepDescriptor(PenStepKind.None, null, null); return; }
+        const row = kReapply[stepKind()];
+        if (!row.reads.canFind(name)) return;
+        final switch (row.shape) {
+            case ReapplyShape.attributeOnly:  return;
+            case ReapplyShape.carriedT:       reapplyCarried();    return;
+            case ReapplyShape.rerunFromBasis: rerunStepFromBasis(); return;
+            case ReapplyShape.basisOnly:      restoreStepBasis();  return;
+        }
+    }
+
+    // The descriptor indexes the mesh its press left, so it applies only while
+    // a row of THIS session is the newest history entry. A recording command
+    // keeps the pen armed (L57) and writes a foreign row above it, after which
+    // its indices may name other geometry: the write is then attribute-only
+    // and clears the descriptor (L58, capture C6: every later write moves nothing).
+    // Unbound (no session token, a white-box rig): the descriptor stands.
+    private bool lastStepIsNewest() {
+        const token = sessionRecordToken();
+        if (history is null || token == 0) return true;
+        const u = history.undoEntries();
+        return u.length != 0 && u[$ - 1].cmd.sessionToken() == token;
+    }
+
+    // carriedT: each carried vertex at `nearestBG(stepOrig_i + offset)` on the
+    // CURRENT mesh — the nearest-foot query, never a camera ray — and exactly
+    // at `stepOrig_i` when all three channels are zero (L24 Z-exact).
+    private void reapplyCarried() {
+        import std.math : isFinite;
+        auto m = mesh;
+        if (m is null || stepVerts_.length == 0 || stepVerts_.length != stepOrig_.length)
+            return;
+        foreach (vi; stepVerts_) if (vi >= m.vertices.length) return;
+        const off = Vec3(offsetX_, offsetY_, offsetZ_);
+        if (!isFinite(off.x) || !isFinite(off.y) || !isFinite(off.z)) return;
+        const to = carriedTargets(stepOrig_, off);
+        // 9494: the panel carries the press baseline through the same shared
+        // corner-order partner write as Move (carried_offset OFFSET_PANEL).
+        import vibe3d.editing.selection.query.symmetry : writeMovePositions;
+        import vibe3d.editing.pipeline.evaluation.toolpipe.stages.symmetry : liveSymmetryStage;
+        const stage = liveSymmetryStage();
+        const sp = stage !is null && stage.enabled ? stage.publishedPacket() : null;
+        writeMovePositions(*m, sp, stepVerts_, to);
+        m.commitChange(MeshEditScope.Position);
+        m.syncSelection();
+        if (gpu_ !is null) { gpu_.upload(*m); refreshDisplay(m, gpu_); }
+    }
+
+    // basisOnly: the press image comes back (Add Loop, L20; Fill, L30).
+    private bool restoreStepBasis() {
+        auto m = mesh;
+        if (m is null || !basis_.filled) return false;
+        basis_.restore(*m);
+        resyncSession();   // the restore may drop the press's faces/edges
+        m.syncSelection();
+        if (gpu_ !is null) { gpu_.upload(*m); refreshDisplay(m, gpu_); }
+        return true;
+    }
+
+    // rerunFromBasis: the press image, then the kind's kernel at the written
+    // value. Smooth is the one kind of this shape (L21); its descriptor carries
+    // the press's pass count as its one entry.
+    private void rerunStepFromBasis() {
+        if (stepVerts_.length != 1 || !restoreStepBasis()) return;
+        applySmoothPasses(cast(int)stepVerts_[0]);
+    }
+
+    override void activate() {
+        lastHit_    = ConstrainHitPacket.init;
+        lastTarget_ = HoverTarget.init; placementSnap_ = SnapResult.init;
+        // Slide decline diagnostics are a per-press RECORD, so they must not
+        // survive into a fresh activation — a stale "no_continuation" from a
+        // previous session would be read as this session's own outcome (the
+        // classic cross-test bleed). Cleared on the way out too, below.
+        slideDecline_     = SlideDecline.None;
+        slideDeclineSeed_ = -1;
+        // Arm the application-wide snap enable for the life of this tool, as
+        // every shipped route to the reference's pen does (`armStartupSnap`).
+        // BEFORE the CONS composition below and its two early returns, not
+        // after: a user-locked CONS must not decide whether snapping arms —
+        // they are independent stages and the reference arms unconditionally.
+        armStartupSnap();
+        auto cs = liveConstrainStage();
+        if (cs is null) return;
+        // SF-1: a pre-existing EXPLICIT user lock (constrain.toggle /
+        // tool.pipe.attr constrain enabled true) must survive this tool
+        // activating — do not touch CONS at all in that case, so neither
+        // the user's enabled/geometry choice nor the lock itself is
+        // clobbered. Only compose CONS+Point when it is NOT already
+        // user-locked; that composition stays unlocked (CONS.onParamChanged
+        // no longer locks — review fix SF), so resetTransientPipeStages()
+        // cleanly reverts it on the next tool switch.
+        if (cs.userLocked) return;
+        cs.setAttr("enabled", "true");
+        cs.setAttr("geometry", "point");
+    }
+
+    final PreparedTopologyPenActivationImage buildPreparedActivation()
+            const nothrow @nogc {
+        PreparedTopologyPenActivationImage image;
+        image.expectedHit = lastHit_; image.expectedTarget = lastTarget_; image.expectedPlacementSnap = placementSnap_;
+        image.expectedDecline = slideDecline_;
+        image.expectedDeclineSeed = slideDeclineSeed_;
+        image.valid = true; return image;
+    }
+    final string preparedSnapArmOwner() const pure nothrow @nogc {
+        return kSnapArmOwner;
+    }
+    final bool preparedActivationLocalMatches(
+            in PreparedTopologyPenActivationImage image) const nothrow @nogc {
+        return image.valid && lastHit_ == image.expectedHit &&
+            lastTarget_ == image.expectedTarget && placementSnap_ == image.expectedPlacementSnap &&
+            slideDecline_ == image.expectedDecline &&
+            slideDeclineSeed_ == image.expectedDeclineSeed;
+    }
+    final void installPreparedActivation(
+            ref PreparedTopologyPenActivationImage image) nothrow @nogc {
+        lastHit_ = ConstrainHitPacket.init; lastTarget_ = HoverTarget.init; placementSnap_ = SnapResult.init;
+        slideDecline_ = SlideDecline.None; slideDeclineSeed_ = -1;
+        image.valid = false;
+    }
+    final PreparedSessionActivateEffect prepareActivate(PreparedRecordContext context) {
+        if (context is null) return PreparedSessionActivateEffect(
+            preparedToolStateOwner, PreparedActivateKind.TopologyPen, false);
+        scope(failure) context.discard();
+        auto owner = PreparedTopologyPenActivationOwner.prepare(this);
+        bool ok = owner !is null && context.prepareTopologyPenActivation(owner) &&
+            context.markNoHistoryInstall();
+        if (!ok) context.discard();
+        return PreparedSessionActivateEffect(preparedToolStateOwner,
+            PreparedActivateKind.TopologyPen, ok);
+    }
+
+    override bool prepareDoorActivate(PreparedRecordContext context, Layer,
+            ulong, ulong) {
+        return prepareActivate(context).accepted;
+    }
+
+    version(unittest) final void seedPreparedActivationForTest() nothrow @nogc {
+        lastHit_.hit = true; lastHit_.layer = 7; lastTarget_.kind = HoverTargetKind.Edge;
+        lastTarget_.edge = 9; slideDecline_ = SlideDecline.NoContinuation;
+        slideDeclineSeed_ = 11;
+    }
+    version(unittest) final bool preparedActivationInstalledForTest()
+            const nothrow @nogc {
+        return lastHit_ == ConstrainHitPacket.init &&
+            lastTarget_ == HoverTarget.init && slideDecline_ == SlideDecline.None &&
+            slideDeclineSeed_ == -1;
+    }
+    version(unittest) final void mutatePreparedActivationForTest() nothrow @nogc {
+        ++slideDeclineSeed_;
+    }
+
+    final PreparedTopologyPenDeactivateImage buildPreparedDeactivate(
+            PreparedRecordContext context) {
+        PreparedTopologyPenDeactivateImage image;
+        image.expectedHit = lastHit_; image.expectedTarget = lastTarget_; image.expectedPlacementSnap = placementSnap_;
+        image.expectedDecline = slideDecline_;
+        image.expectedDeclineSeed = slideDeclineSeed_;
+        image.expectedDragSnap = dragSnap_;
+        image.expectedMoveArmed = moveArmed_;
+        image.expectedGrabbedVert = grabbedVert_;
+        image.expectedMoveElem = moveElem_;
+        image.expectedMoveVerts = moveVerts_.dup;
+        image.expectedMoveBase = moveBase_.dup;
+        image.expectedMoveDirty = moveDirty_;
+        image.expectedMoveWelded = moveWelded_;
+        image.expectedMoveFrame = moveFrame_;
+        image.expectedMoveGeneration = moveFrame_ is null ? 0 : moveFrame_.generation;
+        // No history here (plan 8646): the session's close records an open
+        // press step before this door runs (`ToolSession.close`).
+        image.valid = true; return image;
+    }
+
+    final bool preparedDeactivateLocalMatches(
+            ref const PreparedTopologyPenDeactivateImage image) const
+            nothrow @nogc {
+        return image.valid && lastHit_ == image.expectedHit &&
+            lastTarget_ == image.expectedTarget && placementSnap_ == image.expectedPlacementSnap &&
+            slideDecline_ == image.expectedDecline &&
+            slideDeclineSeed_ == image.expectedDeclineSeed &&
+            dragSnap_ == image.expectedDragSnap &&
+            moveArmed_.armed == image.expectedMoveArmed.armed &&
+            grabbedVert_ == image.expectedGrabbedVert &&
+            moveElem_ == image.expectedMoveElem &&
+            moveVerts_ == image.expectedMoveVerts &&
+            moveBase_ == image.expectedMoveBase &&
+            moveDirty_ == image.expectedMoveDirty &&
+            moveWelded_ == image.expectedMoveWelded &&
+            moveFrame_ is image.expectedMoveFrame &&
+            (moveFrame_ is null ? 0 : moveFrame_.generation) == image.expectedMoveGeneration;
+    }
+
+    final void installPreparedDeactivate(
+            ref PreparedTopologyPenDeactivateImage image) nothrow @nogc {
+        if (!image.valid) return;
+        lastHit_ = ConstrainHitPacket.init; lastTarget_ = HoverTarget.init; placementSnap_ = SnapResult.init;
+        slideDecline_ = SlideDecline.None; slideDeclineSeed_ = -1;
+        dragSnap_ = SnapPacket.init;
+        moveArmed_.armed = false; grabbedVert_ = -1;
+        moveElem_ = MoveElem.None; moveVerts_ = null; moveBase_ = null;
+        moveDirty_ = moveWelded_ = false; moveFrame_ = null;
+        image.clear();
+    }
+
+    final SnapStage preparedSnapStageForDeactivate() { return liveSnapStage(); }
+
+    final PreparedDeactivateEffect prepareDeactivate(PreparedRecordContext context) {
+        if (context is null) return PreparedDeactivateEffect(
+            preparedToolStateOwner, PreparedDeactivateKind.TopologyPen, false);
+        scope(failure) context.discard();
+        auto owner = PreparedTopologyPenDeactivateOwner.prepare(this, context);
+        bool ok = owner !is null && context.markNoHistoryInstall();
+        if (ok) ok = context.prepareTopologyPenDeactivate(owner);
+        if (!ok) context.discard();
+        return PreparedDeactivateEffect(preparedToolStateOwner,
+            PreparedDeactivateKind.TopologyPen, ok);
+    }
+
+    override bool prepareDoorDeactivate(PreparedRecordContext context, Layer,
+            ulong, ulong) {
+        return prepareDeactivate(context).resourceAccepted;
+    }
+
+    override void deactivate() {
+        // A press still open at a drop/switch: the session's close has already
+        // recorded it as it stands (`ToolSession.close`), so this end is a
+        // no-op when bound; it only clears the pen's own step state. No new
+        // targets are computed and nothing is welded — there is no event.
+        if (stepOpen_) closePressStep();
+        heldMask_ = inertButtons_ = 0;
+        resetAllGestureArms();
+        lastHit_    = ConstrainHitPacket.init;
+        lastTarget_ = HoverTarget.init; placementSnap_ = SnapResult.init;
+        slideDecline_     = SlideDecline.None;
+        slideDeclineSeed_ = -1;
+        // Per-gesture snap snapshot — a tool switch mid-drag ends the gesture,
+        // so it must not survive into the next activation any more than the
+        // decline diagnostics above do. The guide's registration is the same
+        // per-gesture state and goes with it (task 0523): a guide left in the
+        // service's registry after its tool is gone would keep admitting
+        // against a mesh nobody is editing.
+        dragSnap_ = SnapPacket.init;
+        unregisterSnapGuide();
+        // And hand the application-wide snap enable back to whatever had it
+        // before this tool was activated — the drop half of the reference's
+        // own save/restore pair (`armStartupSnap`), after the step's end above.
+        disarmStartupSnap();
+    }
+
+    override bool onMouseMotion(ref const SDL_MouseMotionEvent e, ref VectorStack vts) {
+        readHit(vts);
+        // The Tri ghost's neighbour, once per cursor move (the ghost draws
+        // every frame and only reads it); the release re-asks at its own pixel.
+        if (dragArmed_ && classifiedCase_ == BuildCase.Tri) {
+            Viewport vp = viewportOf(vts);
+            ghostTriN_ = triNeighbourAt(e.x, e.y, vp);
+        }
+        // While a drag-build is armed, this keeps `lastHit_` tracking the
+        // CONS-snapped cursor point for the in-progress ghost preview
+        // (draw(), below) — no other state changes during the drag; the
+        // build itself only fires on release.
+
+        // Generic Hover-Highlight (doc/topopen_hover_highlight_plan.md Phase
+        // 3): resolve the always-on indicator state BEFORE the armed-gesture
+        // branches below — a gesture ghost (once armed) takes precedence
+        // over the generic indicator (`draw()`'s own `!anyGestureArmed()`
+        // gate mirrors this). REV1 FIX-1 (KILLER): the over-mesh gate is the
+        // OR of `pickPrimaryFace` (front-most face pick — the "hovering the
+        // middle of a big face" case, Pinned Decision 2) with a FINITE-
+        // threshold proximity hit on either `findSourceVertex` or
+        // `findRingSeedEdge` (the faceless/bare-edge founding-state case) —
+        // a SEPARATE pass from `computeHoverIndicator`'s own `∞`-threshold
+        // RESOLUTION scan below, never the same call reused for both
+        // purposes. Never `return true` — the hover must not consume the
+        // motion (place/build/etc. still happen on button-up; the existing
+        // handler already returns `false` at the tail when idle).
+        if (anyGestureArmed()) {
+            hoverOverMesh_   = false;   // gesture ghosts take precedence
+            hoverGrabElem_   = MoveElem.None;
+            hoverGrabIndex_  = -1;
+            fillRing_        = null;   // Fill mode continuation: same precedence rule
+            fillRadiusValid_ = false;  // Fill radius overlay: same precedence rule
+        } else {
+            Viewport vp = viewportOf(vts);
+            hoverOverMesh_ = overPrimaryMesh(e.x, e.y, vp);
+            if (hoverOverMesh_) {
+                computeHoverIndicator(e.x, e.y, vp);
+                // The grab target, from the press's own resolver. Whenever
+                // `hoverOverMesh_` holds this resolves something: that gate
+                // is the OR of the very three terms `resolveGrabTarget`
+                // tries, at the same thresholds.
+                hoverGrabElem_ = resolveGrabTarget(e.x, e.y, vp, hoverGrabIndex_,
+                                                   pickOcclusionOf(vts), null, ToolQueryIntent.legacyHover);
+            } else {
+                hoverNearestVert_ = hoverNearestEdge_ = hoverBoundaryFace_ = -1;
+                hoverBoundary_    = false;
+                hoverGrabElem_    = MoveElem.None;
+                hoverGrabIndex_   = -1;
+            }
+
+            // Fill mode V1 (task 0477 continuation, doc/topopen_fill_plan.md
+            // Phase 5, MANDATORY opponent fix #2): computed UNCONDITIONALLY
+            // here — NOT nested inside `if (hoverOverMesh_)` above — because
+            // `hoverOverMesh_` requires a pick within `topoPenPressPickPx`,
+            // which is FALSE when hovering the CENTER of an empty gap cell:
+            // exactly the defining Fill-mode case (no vertex/edge/face is
+            // anywhere near the cursor). Nesting it in that block would
+            // make the preview never render for that scenario.
+            //
+            // TASK 0488: the seed is resolved ONCE for this event and shared
+            // with the radius overlay below. Two independent seed queries per
+            // motion could disagree, and each one is a full unbounded scan
+            // plus a BVH pick — so sharing is both the correctness argument
+            // and the cheap one.
+            immutable int fillSeed =
+                (penMode_ == PenMode.Fill) ? fillSeedEdge(e.x, e.y, vp) : -1;
+            fillRing_ = (fillSeed >= 0)
+                      ? fillRingFromSeed(cast(uint)fillSeed, e.x, e.y, vp) : null;
+
+            // Fill mode radius overlay (task 0477 continuation, derived
+            // law — see `fillRadiusPx_`'s own doc comment for provenance):
+            // resolved alongside `fillRing_` above, same unconditional
+            // sibling gate and the same rationale — an empty-gap hover has
+            // no vertex/edge/face within `topoPenPressPickPx`, yet a nearby
+            // border edge still legitimately sizes the circle. Recomputed
+            // every motion event, so the cached radius tracks the cursor;
+            // `draw()` re-polls the LIVE cursor pixel for the circle's
+            // CENTER (not this event's cached (e.x,e.y)), matching the
+            // law's "re-polled every redraw" cursor semantics.
+            //
+            // TASK 0488: the seed is now `fillSeedEdge` — the SAME border
+            // edge the candidate search runs from — instead of a separate
+            // press-pick-bounded nearest-border-edge query. Two queries for
+            // one gesture could disagree, and did: at the bare centre of a
+            // gap the search resolved a ring while the circle silently
+            // refused to draw, because the old seed was gated at
+            // `topoPenPressPickPx` and Fill's press has no reach at all. The
+            // circle's ARITHMETIC is untouched (the measured hover radius,
+            // not the `range`-multiplied gather radius) — only which edge
+            // sizes it.
+            fillRadiusValid_ = false;
+            {
+                auto m = mesh;
+                if (fillSeed >= 0 && m !is null && fillSeed < cast(int)m.edges.length) {
+                    // Pixel (§1.1): the radius is a distance from the cursor
+                    // to the DRAWN endpoints of the seed edge, so the two
+                    // local vertices go through the aiming space.
+                    const AimViewport vpAim = aimSpace(vp, primaryModelSpace());
+                    ImVec2 pa, pb;
+                    if (projectLocalPt(m.vertices[m.edges[fillSeed][0]], vpAim, pa)
+                     && projectLocalPt(m.vertices[m.edges[fillSeed][1]], vpAim, pb)) {
+                        fillRadiusPx_    = fillHoverRadiusPx(cast(float)e.x, cast(float)e.y, pa, pb);
+                        fillRadiusValid_ = true;
+                    }
+                }
+            }
+        }
+
+        // Move-family LIVE drag (task 0484). Alone among this tool's
+        // gestures, Move mutates the mesh DURING the drag rather than
+        // previewing it with a ghost: the element deforms the geometry under
+        // the cursor, which is what the reference does and what makes a
+        // multi-vertex grab readable at all (a ghost line cannot show an edge
+        // or a polygon dragging its incident faces along with it).
+        //
+        // Still ONE undo step: the press step the session records at release
+        // (`closePressStep`). The targets are absolute
+        // (always recomputed from `moveBase_`), so an event stream of any
+        // density lands in exactly the same place — and the release recomputes
+        // them once more for its OWN pixel, which is what actually decides
+        // where the gesture ends. Consumes, mirroring every armed branch
+        // below.
+        if (moveArmed_) {
+            Viewport vp = viewportOf(vts);
+            applyMoveTargets(moveTargets(e.x, e.y, vp), vts, liveSearch(e.x, e.y));
+            noteMoveOffset();
+            return true;
+        }
+
+        // P6 (doc/topopen_p6_addloop_plan.md Phase 3): while an Add Loop
+        // gesture is armed, track the ratio off THIS motion event's cursor
+        // — the only mid-drag feedback, since commit is deferred to
+        // release. Consumes (unlike the build/move ghosts above, which
+        // never claim motion) so the drag reads as this tool's own,
+        // mirroring the armed-gesture contract elsewhere in this class.
+        if (addLoopArmed_) {
+            Viewport vp = viewportOf(vts);
+            addLoopRatio_ = ratioFromCursor(e.x, e.y, vp);
+            return true;
+        }
+
+        // P7 (doc/topopen_p7_slide_plan.md Phase 2), re-based on the measured
+        // law: while a Slide gesture is armed, recompute the ONE shared
+        // scalar off THIS motion event's cursor, press->current (NOT
+        // accumulated — the law commits the last evaluation, not a sum).
+        // The only mid-drag feedback, since commit is deferred to release.
+        // Consumes, mirroring the Add Loop branch above. Unlike V1 this needs
+        // no per-endpoint work at all: both endpoints share the scalar, and a
+        // held-fixed endpoint (`slideNbrA_`/`slideNbrB_ < 0`) simply never
+        // consumes it (neither `commitSlide` nor the draw ghost reads a rail
+        // it does not have).
+        if (slideArmed_) {
+            Viewport vp = viewportOf(vts);
+            if (slideVertex_ >= 0) {
+                // A failed evaluation leaves `slideAxis_` -1 (its `out` init).
+                vertexSlideTarget(e.x, e.y, vp, slideVertexTarget_, slideAxis_, slideDeltaK_);
+            } else if (slideOverBg_) {
+                Vec3 off;
+                if (edgeSlideStep(e.x, e.y, vp, off)) {
+                    auto m = mesh;
+                    if (m !is null && slideEndA_ < cast(int)m.vertices.length
+                        && slideEndB_ < cast(int)m.vertices.length) {
+                        const to = carriedTargets([m.vertices[slideEndA_], m.vertices[slideEndB_]], off);
+                        slideEdgeTargetA_ = to[0];
+                        slideEdgeTargetB_ = to[1];
+                    }
+                }
+            } else {
+                slideDeltaK_ = slideDeltaFromDrag(e.x, e.y, vp);
+            }
+            return true;
+        }
+
+        // P8 (doc/topopen_p8_smooth_plan.md Phase 3, re-based on the measured
+        // pass-count law — see `kSmoothPassStridePx`): while a Smooth gesture
+        // is armed, recompute the ONE signed scalar the law reads off THIS
+        // motion event's cursor, press->current in x (NOT accumulated — the
+        // count follows where the cursor IS, so a backtrack lowers it again,
+        // and y is ignored outright). `smoothLastX_`/`_Y_` keep tracking the
+        // live cursor purely for `draw()`'s armed-ring affordance. No
+        // mid-drag mutation/preview beyond that cheap affordance (deferred
+        // commit, same rationale as every other armed gesture above).
+        // Consumes, mirroring the Add Loop/Slide branches above.
+        if (smoothArmed_) {
+            smoothDragDx_ = e.x - smoothStartX_;
+            smoothLastX_ = e.x;
+            smoothLastY_ = e.y;
+            return true;
+        }
+
+        // P9 (doc/topopen_p9_split_plan.md Phase 3): while a Split gesture is
+        // armed, resolve the CURRENT snap-target vertex C off THIS motion
+        // event's cursor — the only mid-drag feedback (the ghost preview,
+        // draw() below) and the source of the "snap to a non-adjacent vertex"
+        // affordance, since commit is deferred to release. `-1` (no vertex
+        // under the cursor) is a normal, valid state — the ghost preview
+        // simply tracks the raw cursor instead. Consumes, mirroring the Add
+        // Loop/Slide/Smooth branches above.
+        if (splitArmed_) {
+            Viewport vp = viewportOf(vts);
+            splitTargetVert_ = resolveSplitTargetVert(e.x, e.y, vp, splitSourceVert_);
+            return true;
+        }
+
+        // P10 (doc/topopen_p10_moveloop_plan.md Phase 4): while a Move Loop
+        // gesture is armed, just track the live cursor for `draw()`'s ghost
+        // preview — the shared screen-delta itself is always recomputed from
+        // the RELEASE event's own pixel at commit time
+        // (`onMouseButtonUp`/`perVertexTargets`), never from this cached
+        // value, so no re-snap work happens here. Consumes, mirroring the
+        // Add Loop/Slide/Smooth/Split branches above.
+        if (moveLoopArmed_) {
+            moveLoopCurX_ = e.x;
+            moveLoopCurY_ = e.y;
+            Viewport vp = viewportOf(vts);
+            noteLoopOffset(e.x - moveLoopStartX_, e.y - moveLoopStartY_, vp);
+            return true;
+        }
+
+        // P11 (doc/topopen_p11_duploop_plan.md Phase 3): while a Dup Loop
+        // gesture is armed, just track the live cursor for `draw()`'s ghost
+        // preview — the shared screen-delta itself is always recomputed
+        // from the RELEASE event's own pixel at commit time
+        // (`onMouseButtonUp`/`commitDupLoop`), never from this cached
+        // value, so no extrude/re-snap work happens here. Consumes,
+        // mirroring the Move Loop branch above.
+        if (dupLoopArmed_) {
+            dupLoopCurX_ = e.x;
+            dupLoopCurY_ = e.y;
+            return true;
+        }
+
+        // Task 0485: same cursor tracking for the single-edge duplicate — the
+        // ghost's only input; the committed delta always comes from the
+        // RELEASE event's own pixel (`dupEdgeUp`), never from this cache.
+        if (dupEdgeArmed_) {
+            dupEdgeCurX_ = e.x;
+            dupEdgeCurY_ = e.y;
+            return true;
+        }
+
+        // P12 (doc/topopen_p12_smoothloop_plan.md Phase 2): while a
+        // Smooth+Loop gesture is armed, accumulate cursor travel off the
+        // RUNNING last position — the ORIGINAL, unmeasured pacing the
+        // whole-mesh Smooth branch (P8) used before its law was measured, and
+        // deliberately forked here rather than followed (see
+        // `kSmoothLoopPassStridePx`) — click=1 pass, a longer drag =
+        // more passes (`onMouseButtonUp`'s Smooth+Loop branch derives the
+        // pass count from THIS running total) — and update
+        // `smoothLoopCurX_`/`_Y_` to the SAME running position for
+        // `draw()`'s cursor-ring ghost (Move Loop's `moveLoopCurX_` role):
+        // no separate "last" field needed, since the running position IS
+        // the live cursor after each motion event. No mid-drag
+        // mutation/preview beyond `draw()`'s cheap affordance (deferred
+        // commit, mirroring P8). Consumes, mirroring every other
+        // armed-gesture branch above.
+        if (smoothLoopArmed_) {
+            smoothLoopDragPx_ += hypot(cast(float)(e.x - smoothLoopCurX_),
+                                      cast(float)(e.y - smoothLoopCurY_));
+            smoothLoopCurX_ = e.x;
+            smoothLoopCurY_ = e.y;
+            return true;
+        }
+        return false;   // never consumes — placement/build happens on button-up, not motion
+    }
+
+    override void update(ref VectorStack vts) {
+        readHit(vts);
+    }
+
+    final PreparedTopologyPenUpdateImage buildPreparedUpdate(ref VectorStack vts) {
+        PreparedTopologyPenUpdateImage image;
+        image.valid = true; image.expectedHit = lastHit_;
+        image.expectedTarget = lastTarget_; image.expectedPlacementSnap = placementSnap_; image.nextHit = lastHit_;
+        image.nextTarget = lastTarget_; image.nextPlacementSnap = placementSnap_;
+        if (auto packet = vts.get!ConstrainHitPacket()) {
+            image.hasPacket = true; image.nextHit = *packet;
+            Viewport vp = viewportOf(vts);
+            if (auto subject = vts.get!SubjectPacket())
+                if (subject.cursorValid)
+                    image.nextTarget = resolveHoverTarget(image.nextHit, vp,
+                        topoPenPressPickPx(vp), backgroundSourcesFull(),
+                        subject.cursorX, subject.cursorY, subject.pickOcclusion);
+            if (auto subject = vts.get!SubjectPacket())
+                if (subject.cursorValid && !moveArmed_)
+                    image.nextPlacementSnap = placementElection(image.nextHit.point,
+                        subject.cursorX, subject.cursorY, vp, snapPacketOf(vts));
+        }
+        return image;
+    }
+    final bool preparedUpdateMatches(in PreparedTopologyPenUpdateImage image)
+            const nothrow @nogc {
+        return image.valid && lastHit_ == image.expectedHit &&
+            lastTarget_ == image.expectedTarget && placementSnap_ == image.expectedPlacementSnap;
+    }
+    final void installPreparedUpdate(ref PreparedTopologyPenUpdateImage image)
+            nothrow @nogc {
+        if (!image.valid) return;
+        lastHit_ = image.nextHit; lastTarget_ = image.nextTarget;
+        placementSnap_ = image.nextPlacementSnap; image.clear();
+    }
+    final PreparedTopologyPenUpdateEffect prepareUpdate(ref VectorStack vts,
+            PreparedRecordContext context) {
+        if (context is null) return PreparedTopologyPenUpdateEffect(
+            preparedToolStateOwner, PreparedTopologyPenUpdateKind.None, false);
+        scope(failure) context.discard();
+        auto owner = PreparedTopologyPenUpdateOwner.prepare(this, vts);
+        auto kind = owner is null ? PreparedTopologyPenUpdateKind.None :
+            owner.effectKind();
+        bool ok = owner !is null && context.prepareTopologyPenUpdate(owner) &&
+            context.markNoHistoryInstall();
+        if (!ok) context.discard();
+        return PreparedTopologyPenUpdateEffect(preparedToolStateOwner, kind, ok);
+    }
+
+    override bool prepareDoorInitialPose(ref VectorStack vts,
+            PreparedRecordContext context, Layer,
+            ulong, ulong) {
+        return prepareUpdate(vts, context).accepted;
+    }
+    version(unittest) final void mutatePreparedUpdateForTest() nothrow @nogc {
+        ++lastHit_.layer;
+    }
+    version(unittest) final bool preparedUpdateForTest(
+            in ConstrainHitPacket hit, in HoverTarget target) const nothrow @nogc {
+        return lastHit_ == hit && lastTarget_ == target;
+    }
+
+    // ---------------------------------------------------------------------
+    // The MEASURED snap-candidate filter (task 0496, `innerSnap`)
+    //
+    // The reference's snap query does not merely rank candidates by distance —
+    // it REJECTS them per candidate before the distance compare ever runs, and
+    // with `innerSnap` at its default OFF the rejected set is the mesh
+    // INTERIOR: an edge candidate must have at most one incident polygon, and
+    // a vertex candidate must touch at least one such edge. Rejecting rather
+    // than de-prioritising is the load-bearing part: an interior vertex 2px
+    // from the cursor must not shadow a border vertex 10px away, it must be
+    // invisible to the query.
+    //
+    // ONE deliberate, named extrapolation. The measured predicate is "exactly
+    // one incident polygon", which also excludes FACE-LESS geometry (an
+    // isolated vertex, a bare wire edge). vibe3d builds exactly that as a
+    // normal intermediate state — `classifySource` treats a bare edge as an
+    // ongoing retopo state, and the "no degenerate line polygon" divergence in
+    // doc/topopen_p3_plan.md means the reference's own retopo never produces
+    // it, so it is outside the measured domain rather than covered by it.
+    // These predicates therefore exclude the INTERIOR (>= 2 polygons) and
+    // leave wire geometry snappable. The boundary is pinned by its own test:
+    // change it only with a measurement, not with a hunch.
+    // ---------------------------------------------------------------------
+
+
+    /// The guide this tool registers for the duration of a gesture. One
+    /// object for the tool's lifetime, re-pointed at each gesture's mesh and
+    /// policy — the REGISTRATION is what is per-gesture, not the allocation
+    /// (the reference re-adds the same object on every move of one drag and
+    /// the registry dedups it, which is our registry's behaviour too).
+    package(vibe3d.editing.tools.interactive.tools.edit.topology_pen) PenSnapGuide snapGuide_;
+
+    private PenSnapGuide snapGuide() {
+        if (snapGuide_ is null) snapGuide_ = new PenSnapGuide();
+        return snapGuide_;
+    }
+
+    /// The primary mesh, or null when this tool has no source bound yet —
+    /// `mesh` itself CALLS the delegate and would fault on one. Every query
+    /// path already guards `meshSrc_ is null` before touching it; the guide
+    /// paths run BEFORE those guards (they aim the guide, then query), so
+    /// they need the guarded form.
+    private Mesh* meshOrNull() { return meshSrc_ is null ? null : meshSrc_(); }
+
+    /// Gesture start: point the guide at this gesture's mesh + policy and
+    /// register it with the service. Idempotent at both ends — the registry
+    /// dedups, and `removeGuide` on an unregistered guide is a no-op — so a
+    /// malformed DOWN-DOWN-UP sequence cannot leave a double registration or
+    /// strand one.
+    package(vibe3d.editing.tools.interactive.tools.edit.topology_pen) void registerSnapGuide() {
+        auto g = snapGuide();
+        g.retarget(meshOrNull(), innerSnap_, backFace_);
+        if (auto st = liveSnapStage()) st.addGuide(g);
+    }
+
+    /// Gesture end. Also called by `deactivate` — a tool switch mid-drag ends
+    /// the gesture, and a guide that outlived its tool would keep answering
+    /// for a mesh nobody is editing.
+    package(vibe3d.editing.tools.interactive.tools.edit.topology_pen) void unregisterSnapGuide() {
+        if (snapGuide_ is null) return;
+        if (auto st = liveSnapStage()) st.removeGuide(snapGuide_);
+    }
+
+    // -----------------------------------------------------------------------
+    // STARTUP SNAP ARMING — activating this tool turns the application-wide
+    // snap enable ON, and dropping it hands the previous value back.
+    //
+    // MEASURED, and it is the ACTIVATION that does it, not the tool and not
+    // the composition. The reference's tool-activation command carries a
+    // fourth argument meaning "snap state at startup"; supplying it saves the
+    // current app-global snap state and writes the new one. Every one of the
+    // twelve shipped UI routes to its pen supplies it — the toolbar button,
+    // the HUD form, the system menu, the model-context template, the two tool
+    // bars, the three background-constraint variants. Three negative controls
+    // rule out the two obvious alternative attributions: a SIBLING retopology
+    // preset omits the argument (so it is deliberate and selective, not
+    // boilerplate); a pen preset that composes NO snap tool at all still arms
+    // (so it is not the composition); and the "bring your own snap preset"
+    // atom sits on presets that both do and do not compose one (so that is a
+    // different axis — which snap TYPES apply — and not an enable).
+    //
+    // WHICH IS WHY IT LIVES ON THE TOOL AND NOT ON A PRESET. We have exactly
+    // one route to this tool, its own factory id, and every route the
+    // reference has arms; putting the arming in `activate()` is therefore
+    // "every route arms" stated in the one place all our routes pass through.
+    // The moment a pen PRESET appears it inherits the arming for free, which
+    // is the behaviour the measurement asks for.
+    //
+    // WHAT IT COSTS, stated plainly because it is destructive and it is a
+    // DEFAULT: with the gate open, a Move drag that releases within the
+    // acceptance radius of another vertex ABSORBS the grab into it — one
+    // vertex for a vertex grab, both endpoints for an edge grab, all four for
+    // a loop grab. That is the whole of the change; the weld itself is not
+    // touched here and was already ported, tested and gated on exactly this
+    // flag. What limits it at OUR configuration is `innerSnap_`, which
+    // defaults OFF: the candidate set is BORDER vertices only, so this welds
+    // onto borders and not into the interior of a mesh. The reference's plain
+    // pen button is in precisely that configuration; its Drag Weld preset —
+    // the unqualified destructive one — additionally composes a vertex-mode
+    // snap tool and turns `innerSnap` on; ours is the `mesh.dragWeld` preset.
+    //
+    // THE SAVE/RESTORE PAIR IS THE STAGE'S, not ours — see
+    // `SnapStage.pushEnabled` for why the saved value cannot live on the tool
+    // (a scene reset resets the stage BEFORE it drops the tool, so a
+    // tool-owned value would be restored on top of the clean slate).
+    private void armStartupSnap() {
+        if (auto st = liveSnapStage()) st.pushEnabled(kSnapArmOwner, true);
+    }
+
+    /// The mirror, called from `deactivate` — our equivalent of the drop the
+    /// reference restores on. Inert if nothing was armed (no pipeline, or the
+    /// slot was cleared by a scene reset in between): the pop is keyed on
+    /// `kSnapArmOwner`, so an unmatched one writes nothing.
+    private void disarmStartupSnap() {
+        if (auto st = liveSnapStage()) st.popEnabled(kSnapArmOwner);
+    }
+
+    /// The pen's SNAP TARGET (task 0496): which existing primary-layer vertex
+    /// does a drag land on.
+    ///
+    /// A DIFFERENT QUERY from the press pick, with its own — much wider —
+    /// radius, and a different OWNER. The press pick reaches ~8px
+    /// (`topoPenPressPickPx`), a constant the tool owns; this one accepts at
+    /// the snapping service's inner range (`topoPenSnapAcceptPx`, 24px at the
+    /// default configuration), taken from the packet this gesture snapshotted
+    /// at press (`dragSnap_`). They were once fused behind a single 15px
+    /// constant, which was simultaneously too wide for the press and too
+    /// narrow for the landing. The candidate SET is the measured one too, and
+    /// it is no longer stated here: the admission rule lives on the gesture's
+    /// GUIDE (`PenSnapGuide.admits`), and this query consults that one copy.
+    ///
+    /// The one caller today is the Split gesture, whose target vertex C is by
+    /// its own definition the element the drag snaps to (and whose reference
+    /// commit is gated on that snap succeeding). Future snap-target consumers
+    /// (mid-drag Split feedback, Duplicate re-snap) must come through HERE
+    /// rather than call `weldTargetVertex` directly, so the candidate set AND
+    /// the radius stay stated in one place.
+    ///
+    /// Aims the guide before it asks it. The guide answers proximity for
+    /// whoever is querying, and the cursor is not something the service pushes
+    /// in (see `PenSnapGuide`'s block comment), so the query supplies it.
+    ///
+    /// GATED ON THE MASTER SNAP ENABLE (task 0523). Snapping off means no snap
+    /// target, which means no weld — the same answer the service gives every
+    /// other client, and the answer the reference gives this one. It is gated
+    /// through BOTH of the channels this tool has, which is why the check is
+    /// here and not only on the guide: the service's own gate covers the guide
+    /// (a disabled stage publishes nothing and never queries), and this covers
+    /// the tool's own resolver. The reference's pen tests the shared flag at
+    /// the very top of its own snap entry, exactly here, and returns no-snap.
+    ///
+    /// This was our long-standing divergence — the pen welded unconditionally,
+    /// alone among the snapping clients in this tree — and the reading that
+    /// would have made it parity is dead: the pen's guide declares no flags at
+    /// all, so it never claims the "ignore the global enable" bit, and in the
+    /// reference the master enable short-circuits above the guide walk where no
+    /// flag could reach it anyway.
+    ///
+    /// AND THE GATE IS OPEN OUT OF THE BOX, which is a change and a
+    /// user-visible one. `SnapStage.enabled` still SHIPS false — the field's
+    /// default is untouched and its six other consumers are unaffected — but
+    /// this tool ARMS it for the duration of its own activation and hands it
+    /// back on the drop (`armStartupSnap` / `disarmStartupSnap`). That is the
+    /// reference's mechanism, measured: every shipped route to its pen passes
+    /// "snap state at startup" on the activation command. So from here on a
+    /// pen drag that lands inside the acceptance radius WELDS, with no setting
+    /// touched by the user, and the Split gesture — which was a no-op until
+    /// somebody turned snapping on — now runs by default.
+    ///
+    /// `exclude` (task 0555) names vertices that may not be answered with —
+    /// the vertices the querying GESTURE is itself moving. Without it a
+    /// dragged vertex is its own nearest candidate at zero distance and every
+    /// query answers "you have landed on yourself" — the same self-snap the
+    /// transform path already excludes for, at `move.d:applySnapToDelta`. It is
+    /// the query's `excludeVerts`, the set a confined live publish leans on.
+    /// Split does not ask this query (it asks `resolveSplitTargetVert`).
+    package(vibe3d.editing.tools.interactive.tools.edit.topology_pen) int resolveSnapTargetVert(int mx, int my, const ref Viewport vp,
+                                      const(uint)[] exclude = null) {
+        if (!dragSnap_.enabled) return -1;
+        auto g = snapGuide();
+        g.retarget(meshOrNull(), innerSnap_, backFace_);
+        g.aimAt(vp, mx, my);
+        return weldTargetVertex(mx, my, vp,
+            SnapQueryPolicy(SnapPurpose.weld, SnapGuideScope.queryOwned), &g.admits, exclude);
+    }
+
+    /// The snap target at the pixel the LOCAL point `at` is drawn at (Pixel, §1.1):
+    /// the raw, unprojected position (K-W2b rule 3), shared by the live move and the
+    /// release's weld.
+    /// The pixel is the one containing the point: a raw target sits on its cursor
+    /// pixel's centre, and rounding would move the reach's edge by a pixel (K-W2c O).
+    private int rawSnapTarget(Vec3 at, const ref Viewport vp, const(uint)[] exclude) {
+        import std.math : floor;
+        const AimViewport vpAim = aimSpace(vp, primaryModelSpace());
+        ImVec2 pt;
+        if (!projectLocalPt(at, vpAim, pt)) return -1;
+        return resolveSnapTargetVert(cast(int)floor(pt.x + 1e-3f), cast(int)floor(pt.y + 1e-3f),
+                                     vp, exclude);
+    }
+
+    /// Split's target C (task 8690): the NEAREST admitted vertex within the
+    /// drag-snap acceptance, excluding only the pressed source `a` — the press
+    /// marks that one vertex and nothing else, so a nearer vertex of ANOTHER
+    /// polygon wins the target and `commitSplit`'s shared-polygon refusal
+    /// (`findCommonSplitFace`) then makes the release a no-op (capture
+    /// `split_pathA_commit_capture.md` §1.1/§1.4). Admission is a PRIVATE
+    /// guide at `interiorOk = true` (the captured chord reaches an interior
+    /// partner at every `innerSnap`, plan 8640 §9.14 [A2-8]) keeping the
+    /// master enable and the `backFace` half; the registered guide keeps
+    /// `innerSnap`. Motion (ghost preview) and release (commit) both ask this.
+    package(vibe3d.editing.tools.interactive.tools.edit.topology_pen) int resolveSplitTargetVert(int mx, int my, const ref Viewport vp, int a) {
+        if (!dragSnap_.enabled) return -1;
+        if (splitGuide_ is null) splitGuide_ = new PenSnapGuide();
+        auto g = splitGuide_;
+        g.retarget(meshOrNull(), /*interiorOk*/true, backFace_);
+        g.aimAt(vp, mx, my);
+        scope admit = delegate bool(SnapType t, int idx, int slot) nothrow {
+            if (t == SnapType.Vertex && idx == a) return false;
+            return g.admits(t, idx, slot);
+        };
+        return weldTargetVertex(mx, my, vp,
+            SnapQueryPolicy(SnapPurpose.weld, SnapGuideScope.queryOwned), admit);
+    }
+    private PenSnapGuide splitGuide_;
+
+    /// The WELD target (task 9407, capture K-T): `snap.editedVertexAt` on the
+    /// press-frozen packet at the accept radius. Query-owned weld admission (9513):
+    /// the registered guide cannot veto Split's private interior admission.
+    private int weldTargetVertex(int mx, int my, const ref Viewport vp,
+                                 SnapQueryPolicy queryPolicy, scope SnapAdmit admit, const(uint)[] exclude = null) {
+        auto m = mesh;
+        if (m is null) return -1;
+        return editedVertexAt(mx, my, vp, *m, primaryModelSpace(), dragSnap_,
+                              topoPenSnapAcceptPx(vp, dragSnap_), liveSnapGuides(queryPolicy), admit, exclude);
+    }
+
+    // -----------------------------------------------------------------------
+    // THE DESTRUCTIVE LANDING (task 0555).
+    //
+    // A Move-family drag does not only re-place its grab: with the
+    // application's element snapping ON, a grabbed vertex brought to within
+    // the snap ACCEPTANCE radius of another vertex is ABSORBED into it — the
+    // grab disappears and the target survives, at the target's own position.
+    // Measured (task 0545, reproduced across two boots) at all three grabs:
+    // a vertex grab loses one vertex, an EDGE grab loses BOTH of its
+    // endpoints — independently, each into its own target — and a LOOP grab
+    // loses all four of its. Outside the radius the two configurations are
+    // bit-identical, so the radius is the whole gate.
+    //
+    // WHAT GATES IT, and this is the part that was mis-attributed once: the
+    // shared, application-wide snap ENABLE — our `SnapPacket.enabled`, the
+    // packet `SnapStage` publishes to every snapping client — and NOT any pen
+    // attribute. The reference's own weld branch tests the return of the pen's
+    // snap query, and that query returns "no target" immediately unless the
+    // framework's global snap state is on; its `innerSnap`/`backFace` rows are
+    // read only inside the candidate-ADMISSION callback, where they choose
+    // WHICH element is found and never WHETHER the branch is reachable. Both
+    // of those are already wired that way here — the gate is
+    // `resolveSnapTargetVert`'s first line, the two attributes are
+    // `PenSnapGuide.admits` — so this landing needs no gate of its own beyond
+    // asking that one query.
+    //
+    // PER ELEMENT, NOT PER ANCHOR. Each moved vertex resolves its OWN target,
+    // at its OWN post-drag screen position, and welds into it alone; a vertex
+    // whose query comes back empty is simply left where the move put it. That
+    // is what makes an edge grab lose two vertices and a loop grab four, and
+    // it is forced by the measurement rather than chosen: a single query at a
+    // single cursor pixel returns a single element and cannot account for four
+    // absorptions in one gesture.
+    //
+    // SAME MESH, and this is READ rather than assumed. The third condition of
+    // the reference's weld branch compares the first machine word of the
+    // grabbed element's id against the snapped target's, and that word is the
+    // element's OWNER — the very pointer the tool holds for the mesh instance
+    // it is editing (measured on two independent welds, and on 40 of 40 slot
+    // samples the owner field equals it; corroborated statically, since the
+    // candidate-admission callback tests the same field against the same
+    // quantity). It is not a vtable and not a kind tag. So the gate reads:
+    // weld only if the target belongs to the SAME MESH as the grab.
+    //
+    // We satisfy it by CONSTRUCTION rather than by comparing: the query's admit
+    // (`PenSnapGuide.admits`) refuses every slot but 0 before the election, so
+    // a background layer can be a placement surface and never a weld target.
+    // If that admission is ever widened, an explicit owner check has to
+    // arrive with it — the reference's refusal arm (differing owners fall
+    // through to a plain Move) is read off the branch and has not been
+    // observed, so there is no measured behaviour to lean on there either.
+    //
+    // THE RADIUS IS IN THE ANSWER, not beside it. The reference parks the
+    // nearest element in its target slot BEFORE applying the acceptance radius
+    // and folds the radius into the query's RETURN only — on one recording ten
+    // evaluations had a target parked and only two were inside the radius, so
+    // a port that asks "is there a target?" instead of "did the query answer?"
+    // would have welded on the other EIGHT. Ours cannot make that mistake by
+    // shape: `weldTargetVertex` returns -1 unless the query SNAPPED (inside
+    // `topoPenSnapAcceptPx`), so the answer IS the radius-gated one.
+    //
+    // WHAT IS STILL OURS RATHER THAN MEASURED: the reference runs ONE query
+    // from the cursor and, when it answers, dispatches on the TYPE OF THE HIT
+    // (not of the grab) into a vertex / edge / polygon weld. That dispatch is
+    // inert here and reachable only through a decision taken elsewhere: this
+    // tool's snap query admits VERTICES ONLY (`PenSnapGuide.admits`, measured —
+    // a landing mid-span is a no-op, not a weld), so the hit type is invariably
+    // Vertex and the vertex weld is the only copy that can be selected. Anyone
+    // who widens that admission to edges or polygons must bring the matching
+    // weld with it and not leave this running per-vertex underneath.
+    //
+    // The remaining difference is the one the loop measurement forces: we
+    // resolve a target PER MOVED VERTEX, the reference resolves one per cursor.
+    // They agree on every cell that has been measured. They can differ where a
+    // grabbed edge's two endpoints come to rest near vertices of two DIFFERENT
+    // edges — we weld both, a single cursor hit reaches at most one of them.
+    //
+    // AT RELEASE, not per motion event, and that is a divergence in TIMING
+    // only. The reference re-evaluates its whole tool from the pre-gesture
+    // mesh on every drag event, so it can show the weld mid-drag and undo it
+    // by dragging away again; our Move writes vertex positions in place and
+    // owns no per-event rebuild, so a mid-drag topology edit would invalidate
+    // the very indices the rest of the drag is addressing. The committed
+    // result — which is what was measured — is identical either way.
+    // -----------------------------------------------------------------------
+
+    /// Resolve one weld target per moved vertex and absorb each into its own,
+    /// in a single mesh pass. Returns the number of vertices absorbed.
+    ///
+    /// `verts` are the vertices the gesture moved, in their CURRENT (post-move)
+    /// indices; their live positions are what the queries are aimed at, so this
+    /// must be called AFTER the move has been written and BEFORE the mesh is
+    /// snapshotted for undo.
+    ///
+    /// Every moved vertex is excluded from every query, not just its own: the
+    /// two endpoints of a dragged edge travel together and each sits well
+    /// inside the other's acceptance radius, so a self-set narrower than the
+    /// whole moving set would weld the grab into itself and delete it.
+    /// `at[i]`: vertex i's query point (the raw target); `sym`: see `symmetricWeldPairs`.
+    private size_t weldMovedVertices(const(uint)[] verts, const ref Viewport vp,
+                                     const(Vec3)[] at = null, const(SymmetryPacket)* sym = null) {
+        import vibe3d.editing.selection.query.symmetry : symmetricWeldPairs;
+        if (verts.length == 0) return 0;
+        // An EARLY-OUT on the shared enable, not the gate: the gate is
+        // `resolveSnapTargetVert`'s own first line, one per moved vertex. This
+        // spares a projection and a query per vertex in the (default) case
+        // where none of them can answer, and it is deliberately redundant —
+        // removing it changes no outcome.
+        if (!dragSnap_.enabled) return 0;
+        auto m = mesh;
+        if (m is null) return 0;
+        uint[2][] pairs;
+        foreach (i, vi; verts) {
+            if (vi >= m.vertices.length) continue;   // stale arm — defensive
+            if (moveElem_ == MoveElem.Edge && !moveEndpointSearch(SnapType.Edge,m.vertexPolygonCounts()[vi])) continue; // 9504: measured source support
+            immutable int t = rawSnapTarget(i < at.length ? at[i] : m.vertices[vi], vp, verts);
+            if (t >= 0) pairs ~= symmetricWeldPairs(*m, sym, cast(uint)t, vi);
+        }
+        if (pairs.length == 0) return 0;
+        return m.weldVertexPairs(pairs);
+    }
+
+    // P3 (doc/topopen_p3_plan.md): project every vertex of the PRIMARY
+    // layer's mesh and return the nearest within `topoPenPressPickPx`, or -1.
+    // O(V) per press — self-contained (no CONS, no new module), mirroring
+    // `projectPt`'s own screen-space-only contract.
+    // Generic Hover-Highlight (doc/topopen_hover_highlight_plan.md Phase 1
+    // item 4): `thresholdPx` defaults to `kTopoPenSnapAuto`, resolved to the
+    // view's own `topoPenPressPickPx(vp)` below, so every existing
+    // gesture caller (`onPlainLmbDown`, `onShiftLmbDown`, `onCtrlLmbDown`,
+    // the Split motion handler, etc. — none of which pass a 3rd argument)
+    // stays BYTE-IDENTICAL. The hover-resolve path (`onMouseMotion`, below)
+    // passes `float.infinity` for the unconditional nearest (RESOLUTION),
+    // and a finite value for the over-mesh GATE decision (REV1 FIX-1) — two
+    // distinct calls, never conflated.
+    // `admit(index, point)`: the press pick's visibility (`resolveGrabTarget`);
+    // the weld target is `weldTargetVertex`.
+    package(vibe3d.editing.tools.interactive.tools.edit.topology_pen) int findSourceVertex(int mx, int my, const ref Viewport vp,
+                                 float thresholdPx = kTopoPenSnapAuto,
+                                 scope bool delegate(int, Vec3) admit = null, float* reductionMetric = null) {
+        if (reductionMetric !is null) *reductionMetric = float.nan;
+        if (meshSrc_ is null) return -1;
+        auto m = mesh;
+        if (m is null) return -1;
+        if (thresholdPx < 0.0f) thresholdPx = topoPenPressPickPx(vp);
+        // Pixel (§1.1), built ONCE for the whole O(V) scan (§3).
+        const AimViewport vpAim = aimSpace(vp, primaryModelSpace());
+        int   best   = -1;
+        float bestD2 = float.infinity;
+        foreach (vi; 0 .. m.vertices.length) {
+            ImVec2 pt;
+            if (!projectLocalPt(m.vertices[vi], vpAim, pt)) continue;
+            float dx = pt.x - cast(float)mx, dy = pt.y - cast(float)my;
+            float d2 = dx * dx + dy * dy;
+            if (d2 >= bestD2) continue;
+            // `admit` (the press pick's visibility) sees only in-reach candidates.
+            if (admit !is null && (d2 > thresholdPx * thresholdPx
+                    || !admit(cast(int)vi, m.vertices[vi])))
+                continue;
+            bestD2 = d2; best = cast(int)vi;
+        }
+        if (best >= 0 && bestD2 <= thresholdPx * thresholdPx) {
+            if (reductionMetric !is null) *reductionMetric = bestD2;
+            return best;
+        }
+        return -1;
+    }
+
+    // Classify source vertex `a` for a drag-build (task 8720, plan P1; the
+    // captured laws R-closed and S-inTri, doc/measured_laws-style evidence in
+    // the wave plan's §9.17.2/§9.19.1 and the session-capture fixtures):
+    //   no incident edge                      -> Edge
+    //   every incident edge on >= 2 polygons  -> None: the press is a vertex
+    //                                            MOVE (`onShiftLmbDown` routes it)
+    //   one incident edge                     -> Tri with that neighbour
+    //   a triangle corner, two border edges   -> Quad across the two border
+    //                                            neighbours, every polygon KEPT
+    //   otherwise                             -> Tri; the neighbour is chosen at
+    //                                            release among the border ones
+    //                                            (`nAngleNeighbour`)
+    // A "border" edge lies on fewer than two polygons. Polygon incidence is
+    // counted per polygon over its sides (a full scan, not the vertex fan: the
+    // fan walk is not defined on the non-manifold rigs this rule was captured
+    // on). `quadP_` is the border neighbour whose polygon runs a -> P, so the
+    // new quad [P, a, Q, b] traverses each shared side against its polygon.
+    private BuildCase classifySource(int a) {
+        triN_ = quadP_ = quadQ_ = ghostTriN_ = -1;
+        triCands_ = null;
+        triCandDirs_ = null;
+        auto m = mesh;
+        if (m is null || a < 0 || a >= cast(int)m.vertices.length) return BuildCase.None;
+
+        auto en = m.edgeNeighbors(cast(uint)a);
+        if (en.length == 0) return BuildCase.Edge;
+
+        int[] border, dirs;
+        foreach (x; en) {
+            int polys, dir;
+            sideIncidence(m, cast(uint)a, x, polys, dir);
+            if (polys < 2) { border ~= cast(int)x; dirs ~= dir; }
+        }
+        if (border.length == 0) return BuildCase.None;   // R-closed: a vertex move
+
+        bool triCorner = false;
+        foreach (f; m.faces) {
+            if (f.length != 3) continue;
+            foreach (vv; f) if (vv == cast(uint)a) { triCorner = true; break; }
+            if (triCorner) break;
+        }
+        if (triCorner && border.length == 2) {
+            immutable bool swap = dirs[0] != 1 && dirs[1] == 1;
+            quadP_ = swap ? border[1] : border[0];
+            quadQ_ = swap ? border[0] : border[1];
+            return BuildCase.Quad;
+        }
+        triCands_    = border;
+        triCandDirs_ = dirs;
+        triN_        = border[0];   // replaced at release by `nAngleNeighbour`
+        return BuildCase.Tri;
+    }
+
+    // How many POLYGONS have a side joining `a` and `x` (each polygon counted
+    // once: a 2-point polygon [a, x] lists the side both ways and is still one
+    // polygon), and in which direction the last such polygon's first side
+    // runs: +1 when it lists a then x, -1 when x then a, 0 when no polygon has
+    // the side (a bare edge). Package-visible for its unit cell.
+    package(vibe3d.editing.tools.interactive.tools.edit.topology_pen) static void sideIncidence(const Mesh* m, uint a, uint x,
+                                      out int polys, out int dir) {
+        foreach (f; m.faces) {
+            immutable n = f.length;
+            foreach (k; 0 .. n) {
+                immutable uint u = f[k], w = f[(k + 1) % n];
+                if (u == a && w == x) { ++polys; dir = 1; break; }
+                if (u == x && w == a) { ++polys; dir = -1; break; }
+            }
+        }
+    }
+
+    // The Tri neighbour a drag from the armed source to mouse pixel (x, y)
+    // takes — ONE answer for the release (`buildUp`) and the ghost preview
+    // (`drawBuildGhost`, from the live cursor): both read the raw mouse delta,
+    // never the snapped hit, so the ghost names the neighbour the release
+    // will build. The drag's SURFACE delta is `hit(proj(a) + drag) −
+    // hit(proj(a))` (the registered convention: the source's own exact pixel,
+    // never the rounded press pixel, so a drag on the bisector stays a tie).
+    package(vibe3d.editing.tools.interactive.tools.edit.topology_pen) int triNeighbourAt(int x, int y, const ref Viewport vp) {
+        Vec3 h1;
+        if (!buildPressHitOk_ || !bgHitAtSourcePx(x - dragStartX_, y - dragStartY_, vp, h1))
+            return triN_;
+        return nAngleNeighbour(sourceVert_, h1 - buildPressHitW_, buildNormalW_);
+    }
+
+    // The background ray hit (WORLD) under the armed source's projected pixel
+    // shifted by (dx, dy); false with no background hit there
+    // (`backgroundRayHit`, a BVH query, so a drag over a dense background is
+    // not a scan per motion).
+    // At (0, 0) this is the delta's origin. Equivalent to the source's own
+    // position wherever the source lies on the background — every corpus
+    // source does, so a variant taking the source position as the origin
+    // cannot be told apart on that corpus (review mutation Y8).
+    private bool bgHitAtSourcePx(int dx, int dy, const ref Viewport vp, out Vec3 hit) {
+        auto m = mesh;
+        if (m is null || sourceVert_ < 0 || sourceVert_ >= cast(int)m.vertices.length) return false;
+        ImVec2 q;
+        if (!projectWorldPt(primaryModelSpace().toWorldPoint(m.vertices[sourceVert_]), vp, q))
+            return false;
+        return backgroundRayHit(q.x + dx, q.y + dy, vp, hit);
+    }
+
+    // The tangent-plane normal at source `a` (WORLD, unit): the area-weighted
+    // normal of a's own polygons; for a source on no polygon, the background
+    // normal at nearestBG(a) (`closestPointOnMeshes`); else zero (the plain 3D
+    // angle). Polygons FIRST, measured:
+    // on the session rig the background facet under v0 is not symmetric about
+    // the grid diagonal (its normal (-0.278, -0.289, 0.916)), which turns the
+    // captured bisector tie of K-chords (v4) into v1 (cos -0.7191 vs -0.7215);
+    // the grid's own normal keeps that tie exact (wave plan [A14-5]).
+    package(vibe3d.editing.tools.interactive.tools.edit.topology_pen) Vec3 sourceTangentNormal(int a) {
+        auto m = mesh;
+        if (m is null || a < 0 || a >= cast(int)m.vertices.length) return Vec3(0, 0, 0);
+        const ms = primaryModelSpace();
+        Vec3 sum = Vec3(0, 0, 0);
+        foreach (f; m.faces) {
+            bool has;
+            foreach (v; f) if (v == cast(uint)a) { has = true; break; }
+            if (!has || f.length < 3) continue;
+            foreach (k; 0 .. f.length)   // Newell: |sum| is twice the polygon's area
+                sum = sum + cross(ms.toWorldPoint(m.vertices[f[k]]),
+                                  ms.toWorldPoint(m.vertices[f[(k + 1) % f.length]]));
+        }
+        immutable float l = sqrt(dot(sum, sum));
+        if (l > 1e-12f) return sum * (1.0f / l);
+        auto sources = backgroundSourcesFull();
+        Vec3 foot, n;
+        int si, fi;
+        float d2;
+        if (sources.length > 0 && closestPointOnMeshes(ms.toWorldPoint(m.vertices[a]), sources,
+                                                       false, foot, n, si, fi, d2))
+            return n;
+        return Vec3(0, 0, 0);
+    }
+
+    // N-plane (captured, law L52 of the session capture: cell C4-B1o, which
+    // refuted the SCREEN-angle reading of L34's B1a/B1b): the triangle takes
+    // the border neighbour n whose WORLD edge `n − a` makes the smallest
+    // angle with the drag's SURFACE delta `deltaW` (BG hit at release − at
+    // press), both projected into the tangent plane at `a` (normal `nW`; a
+    // zero normal leaves them unprojected). In a front view the screen and
+    // plane angles agree, so B1a/B1b read the same. An exact tie (a drag on
+    // the bisector) takes the neighbour whose polygon runs x -> a, i.e. the
+    // source's predecessor: all three tie observations (K-chords, B2's first
+    // build, B3) chose it. `kTieCos` only absorbs float noise.
+    package(vibe3d.editing.tools.interactive.tools.edit.topology_pen) int nAngleNeighbour(int a, Vec3 deltaW, Vec3 nW) {
+        enum float kTieCos = 1e-4f;
+        auto m = mesh;
+        if (m is null || triCands_.length == 0) return triN_;
+        if (triCands_.length == 1) return triCands_[0];
+        Vec3 tangent(Vec3 v) { return v - nW * dot(v, nW); }
+        const ms = primaryModelSpace();
+        const Vec3 aw = ms.toWorldPoint(m.vertices[a]);
+        const Vec3 d = tangent(deltaW);
+        immutable float dl = sqrt(dot(d, d));
+        if (!(dl > 1e-9f)) return triN_;
+        int   best    = -1;
+        float bestCos = -float.infinity;
+        int   bestDir = 0;
+        foreach (i, x; triCands_) {
+            const Vec3 ev = tangent(ms.toWorldPoint(m.vertices[x]) - aw);
+            immutable float el = sqrt(dot(ev, ev));
+            if (!(el > 1e-12f)) continue;
+            immutable float c = dot(ev, d) / (el * dl);
+            immutable int dd = triCandDirs_[i];
+            if (best < 0 || c > bestCos + kTieCos
+                || (c > bestCos - kTieCos && dd == -1 && bestDir != -1)) {
+                best = x; bestCos = c; bestDir = dd;
+            }
+        }
+        return best >= 0 ? best : triN_;
+    }
+
+    // P9 (doc/topopen_p9_split_plan.md, kernel-reuse verdict): the ONLY new
+    // mesh-adjacent logic this phase adds — resolve WHICH face to pass to
+    // `mesh.splitFaceByVertices` as `faceIdx`. Scans `facesAroundVertex(a)`
+    // (reliable here — A and C are both existing ON-FACE vertices, unlike
+    // the bare/floating-edge verts `classifySource` above has to special-case)
+    // and returns the FIRST face that also contains C, non-adjacently in
+    // that face's winding — a deterministic non-manifold tie-break (stable
+    // iteration order). Returns -1 for every no-op condition: a/c invalid or
+    // equal, out of bounds, no shared face, or A/C adjacent (chord would be
+    // an existing edge) in every shared face.
+    //
+    // REV1 FIX-3 (MODERATE): `lo`/`hi` are the SORTED winding positions,
+    // computed BEFORE the adjacency reject — using the unsorted
+    // (posA, posC) pair directly would let a wrap-around adjacent pair (one
+    // endpoint at `len-1`, the other at `0`) evade BOTH reject terms
+    // (`hi==lo+1` and `lo==0 && hi==len-1`) whenever posA/posC happen to be
+    // passed in the "wrong" relative order, mis-classifying a real edge as
+    // splittable in non-manifold topology (a 3+-incident-face edge) where
+    // another shared face WOULD have offered a genuine split — this function
+    // would then silently return a face where the kernel itself rejects the
+    // split (0), dropping a legitimate split the caller can't tell apart
+    // from "no common face at all".
+    private int findCommonSplitFace(Mesh* m, int a, int c) {
+        if (m is null || a < 0 || c < 0 || a == c) return -1;
+        if (a >= cast(int)m.vertices.length || c >= cast(int)m.vertices.length) return -1;
+
+        foreach (fi; m.facesAroundVertex(cast(uint)a)) {
+            auto f = m.faces[fi];
+            int len = cast(int)f.length;
+            int posA = -1, posC = -1;
+            foreach (k, vv; f) {
+                if (vv == cast(uint)a) posA = cast(int)k;
+                if (vv == cast(uint)c) posC = cast(int)k;
+            }
+            if (posC < 0) continue;   // C not on this face -> not the shared one
+
+            int lo = posA < posC ? posA : posC;
+            int hi = posA < posC ? posC : posA;
+            bool adjacent = (hi == lo + 1) || (lo == 0 && hi == len - 1);
+            if (adjacent) continue;   // chord would be an existing edge here
+
+            return cast(int)fi;
+        }
+        return -1;
+    }
+
+    // ------------------------------------------------------------------
+    // FILL — the candidate rule (task 0488). Ported, not invented: every
+    // clause below is a MEASURED clause of the reference's own candidate
+    // search, taken from two independent readings (a live run that armed 13
+    // of 13 cells and produced the first observed Fill commit, and a
+    // recording off which the enumerator itself was read across 316
+    // candidate searches). Provenance, addresses and the per-cell tables
+    // live in the PRIVATE toolcard, never in this tracked source.
+    //
+    // This REPLACES the V1 rule (border-edge cell reconstruction with a
+    // mandatory real fourth side, picking the smallest screen-area
+    // cursor-containing cell). V1 was not a near-miss — it was a different
+    // algorithm, and it is refuted on the vertex SET by two rigs at once:
+    // the reference built a quad BRIDGING two topologically disconnected
+    // bars (a closing side that is not a mesh edge at all), and it put an
+    // ISOLATED vertex — one on no polygon whatsoever — in as a corner.
+    // V1's construction can produce neither.
+    //
+    // THE RULE, clause by clause:
+    //
+    //   SEEDS.  The pressed border edge's two endpoints occupy slots 0 and
+    //     1 and are NEVER distance-tested (0.0 in every measured row, 0
+    //     exceptions in 316 searches). "Pinned" is not a ranking special
+    //     case here and must not be implemented as one: the seeds are not
+    //     candidates at all, so eviction simply never looks at them.
+    //
+    //   GATHER RADIUS.  `range` × the hovered edge's own hover radius
+    //     (`fillHoverRadiusPx`), in screen pixels, centred on the CURSOR.
+    //     Read directly: the product is what the enumerator receives as its
+    //     radius argument. It is a GATHER radius and nothing else — it
+    //     never enters the ranking, which is why more reach changes nothing
+    //     once the four-nearest cap absorbs it.
+    //
+    //     ONE OPERATIONAL FACT, because it explains three sessions of
+    //     failure: the hover radius is max(dA, dB) over the edge's two
+    //     endpoints, so it is MINIMISED at the edge's MIDPOINT. Pressing an
+    //     edge in the middle — by far the most natural aim — gives this
+    //     gesture its smallest possible reach, and is the worst aim for it.
+    //     Aim near an ENDPOINT to reach more candidates.
+    //
+    //   QUALIFIER.  A vertex qualifies if it is ISOLATED (on no polygon at
+    //     all), or belongs to exactly one DEGENERATE polygon (≤ 2 corners),
+    //     or carries at least one BORDER edge. Read on 3135 evaluations
+    //     with ZERO candidates dropped at this gate. The isolated clause is
+    //     load-bearing: an isolated vertex is a legal corner, and V1 could
+    //     never produce one.
+    //
+    //   SCREEN-CROSSING REJECT.  For each SEED vertex, for each polygon
+    //     incident to that seed, for each edge of that polygon: reject the
+    //     candidate when the OPEN screen segment from the CURSOR to the
+    //     CANDIDATE properly crosses that edge (both intersection
+    //     parameters strictly inside (0,1)). This is NOT a footnote — the
+    //     recording has it firing on 73 % of qualified candidates and
+    //     changing the outcome of 77 % of searches. A distance ranking
+    //     without it picks different corners on three quarters of them.
+    //
+    //   RANKING.  The four nearest in 3-SPACE among the reject's SURVIVORS.
+    //     An eviction replaces the FARTHEST non-seed entry and only with
+    //     something strictly nearer; the count never grows past four. Both
+    //     the eviction rule and "never a seed" are read, not reasoned.
+    //
+    //   COUNT GATE.  Exactly four — or exactly three when `quadOnly` is
+    //     off, and the three-path runs NO shape test at all.
+    //
+    //   SHAPE TEST AND ORDER.  Exactly two cyclic orders are ever tried,
+    //     (0,1,2,3) then (0,1,3,2), so the pressed edge is ALWAYS a side of
+    //     the built polygon. The first that is convex IN SCREEN SPACE wins;
+    //     when the second wins the code SWAPS slots 2 and 3 IN PLACE, and
+    //     it is that array — verbatim — that becomes the polygon. The array
+    //     is ARRIVAL order mutated by eviction, never a sort (139 of 240
+    //     four-slot searches have slot 2 farther than slot 3), so a port
+    //     that sorts winds a different polygon.
+    //
+    // TWO THINGS THIS PORT DELIBERATELY DROPS, both of them ours:
+    //
+    //   * the mandatory real fourth side. The reference has no such
+    //     requirement and demonstrably bridges a gap with no closing edge.
+    //   * the clean no-op on a miss. A refusal in the reference is
+    //     DESTRUCTIVE — see `fillDown`.
+    //
+    // THE GATE AFTER THE CONVEXITY TEST is now READ (task 0528) and PORTED
+    // (task 0532) — see `ringRefusedByIncidentPolygon` below for the rule,
+    // the scope, and which of its clauses this corpus never exercised. It
+    // accepted 76 of 270 formed rings on the recording, so it is the strictest
+    // thing in this search, and it runs on the hover preview as well as the
+    // press because the reference calls it from this same shared search.
+    //
+    // THE ONE MODELLED TERM, named so it is not mistaken for a measurement:
+    // the ranking's 3-space distance is measured against the reference's own
+    // internal cursor MODEL point, which is not a quantity we can read. We
+    // use this tool's OWN established screen→layer mapping for it
+    // (`shiftedLocalPoint` — unproject the cursor onto the constant-view-
+    // depth plane through the seed edge's midpoint), reusing the convention
+    // every other gesture here already drags on rather than inventing a
+    // second one. It is exact for the fronto-parallel planar rigs the rule
+    // was measured on, and it is the term to revisit if a future reading
+    // ever exposes the reference's own point.
+    //
+    // ENUMERATION ORDER is ours (ascending vertex index); the reference's
+    // is a spatial structure's and was not read. It cannot change the
+    // ANSWER: the eviction rule leaves the same SET whatever the order, and
+    // the two-cyclic-order shape test then fixes the ring, so arrival order
+    // survives into the result only as which of the two non-seed corners
+    // sits in slot 2 before that test.
+    // ------------------------------------------------------------------
+
+    // Does the OPEN segment p1→p2 properly cross the OPEN segment q1→q2 —
+    // both parameters strictly inside (0,1)? Pure screen-space arithmetic,
+    // extracted so the reject's own predicate is unit-testable on hand
+    // numbers. Touching at an endpoint, collinear overlap and parallel are
+    // all FALSE: "properly" is the measured word, and it is what lets a
+    // candidate that is itself a corner of the tested polygon survive.
+    static bool segmentsProperlyCross(ImVec2 p1, ImVec2 p2, ImVec2 q1, ImVec2 q2) {
+        immutable float rx = p2.x - p1.x, ry = p2.y - p1.y;
+        immutable float sx = q2.x - q1.x, sy = q2.y - q1.y;
+        immutable float denom = rx * sy - ry * sx;
+        if (denom == 0.0f) return false;          // parallel or degenerate
+        immutable float wx = q1.x - p1.x, wy = q1.y - p1.y;
+        immutable float t = (wx * sy - wy * sx) / denom;
+        immutable float u = (wx * ry - wy * rx) / denom;
+        return t > 0.0f && t < 1.0f && u > 0.0f && u < 1.0f;
+    }
+
+    // The shape test: is the screen-space cycle a→b→c→d CONVEX? The four
+    // corner cross products must all carry the SAME sign. A zero corner
+    // (three collinear points) is neither sign and fails — which also keeps
+    // a degenerate cycle out of the build.
+    static bool screenQuadConvex(ImVec2 a, ImVec2 b, ImVec2 c, ImVec2 d) {
+        ImVec2[4] p = [a, b, c, d];
+        bool pos = false, neg = false;
+        foreach (i; 0 .. 4) {
+            immutable float ux = p[(i + 1) % 4].x - p[i].x;
+            immutable float uy = p[(i + 1) % 4].y - p[i].y;
+            immutable float vx = p[(i + 2) % 4].x - p[(i + 1) % 4].x;
+            immutable float vy = p[(i + 2) % 4].y - p[(i + 1) % 4].y;
+            immutable float cr = ux * vy - uy * vx;
+            if      (cr > 0.0f) pos = true;
+            else if (cr < 0.0f) neg = true;
+            else return false;                    // collinear corner
+        }
+        return pos != neg;
+    }
+
+    // Exact screen coincidence — x AND y, no epsilon. The measured word is
+    // "coincides", and the pairs it exempts are a polygon corner and a ring
+    // corner that are THE SAME VERTEX, which project bit-for-bit alike.
+    static bool samePixel(ImVec2 p, ImVec2 q) {
+        return p.x == q.x && p.y == q.y;
+    }
+
+    // THE RING GATE (task 0532; READ in task 0528, full provenance in the
+    // PRIVATE toolcard). It runs on the FORMED ring, after the convexity
+    // test, and it is the last word on whether the cell exists at all:
+    //
+    //   A ring is REFUSED if, for any polygon INCIDENT TO ONE OF THE RING'S
+    //   OWN VERTICES, either
+    //     (1) every ring vertex is a vertex of that polygon — a SUBSET test,
+    //         not an equality test; or
+    //     (2) a ring side PROPERLY crosses one of that polygon's edges in
+    //         screen space — both parameters strictly inside (0,1), with
+    //         endpoint-coincident pairs exempt.
+    //   Polygons of TWO OR FEWER corners are exempt from the whole gate.
+    //
+    // It accepted 76 of 270 formed rings on the recording; clause 1 accounts
+    // for all 194 refusals.
+    //
+    // SCOPE is load-bearing, and it is also the cheap reading: both clauses
+    // quantify over polygons incident to a ring vertex, NEVER over the whole
+    // mesh. A ring side may cross a distant face's edge freely.
+    //
+    // ORDER-FREE. Any eligible incident polygon that refuses short-circuits,
+    // and each is tested at most once, so the verdict is a pure OR over the
+    // eligible incident set — the traversal order below is ours and cannot
+    // change the answer.
+    //
+    // CLAUSE 1 IS NOT OUR DUPLICATE-FACE GUARD, and the difference is the
+    // whole point of porting this. `Mesh.makePolygonFromVerts`'s guard is
+    // length-gated (`f.length != idx.length` skips), so it fires only on
+    // ring == polygon. This fires on ring ⊆ polygon; the STRICT-subset rings
+    // are exactly what separates "subset" from "duplicate face" as the
+    // measured word (30 of the 194 recorded refusals, a 3-ring on a quad).
+    //
+    // DECODED-UNEXERCISED — named so none of it is read as confirmed:
+    //   * clause 2 fired ZERO times in the 270 recorded rings. It reached its
+    //     LAST comparison 133 times and every one of those crossings ran past
+    //     the incident edge's own extent. It is ported from the read, not
+    //     from a firing, and the sibling lane's lesson applies: the same
+    //     wording about the candidate-gather reject above became the dominant
+    //     filter one recording later.
+    //   * the ≤2-corner exemption never saw a line or point polygon on that
+    //     rig. Carried anyway because `commitFill` CREATES that situation on
+    //     our own substrate — `consumeDegenerateOnRing` deletes exactly
+    //     such polygons off the new ring — so it is reachable here in a way
+    //     it was not there.
+    //   * a ring strictly CONTAINING a smaller face was never formed. Clause
+    //     1 as written cannot refuse one, and nothing is invented for it.
+    //
+    // NOT PORTED, named rather than guessed: the eligibility test also reads
+    // one bit of a per-polygon type word. That bit is decoded as a bit test
+    // only — never identified, and constant across all 2356 recorded
+    // evaluations — so only the corner-count half is carried.
+    //
+    // OURS, not the reference's: a vertex that fails to PROJECT has no screen
+    // position, so the sides through it drop out of clause 2. The reference's
+    // transform has no failure branch; ours does, and every other screen-space
+    // predicate in this tool skips on it. Clause 1 is purely topological and
+    // is unaffected either way.
+    // Task 0619 Stage 4a: this is a screen-space predicate over PRIMARY-layer
+    // vertices, so its viewport parameter is the AIMING space (§1.1) — the
+    // caller composes it once (`fillRingFromSeed` already has one) and the
+    // TYPE is what stops a world viewport reaching a local vertex here. The
+    // function is `static`, so it cannot resolve a `ModelSpace` of its own;
+    // taking the composed viewport is also what keeps that honest.
+    static bool ringRefusedByIncidentPolygon(const(Mesh)* m, const(uint)[] ring,
+                                             const ref AimViewport vpAim) {
+        if (m is null || ring.length == 0) return false;
+
+        // The ring's own screen corners, once.
+        auto ringPix = new ImVec2[](ring.length);
+        auto ringOk  = new bool[](ring.length);
+        foreach (i, v; ring)
+            if (v < m.vertices.length)
+                ringOk[i] = projectLocalPt(m.vertices[v], vpAim, ringPix[i]);
+
+        foreach (const ref f; m.faces) {
+            if (f.length <= 2) continue;         // ELIGIBILITY (unexercised)
+
+            // INCIDENCE + clause 1's count in one walk: a polygon is tested
+            // only if it carries at least one of the ring's own vertices.
+            // The ring's entries are distinct by construction (the search
+            // drops a candidate already in the list), so this counts DISTINCT
+            // ring vertices.
+            bool   incident = false;
+            size_t matched  = 0;
+            foreach (v; ring) {
+                bool inFace = false;
+                foreach (u; f) if (u == v) { inFace = true; break; }
+                if (inFace) { incident = true; ++matched; }
+            }
+            if (!incident) continue;
+
+            if (matched == ring.length) return true;          // CLAUSE 1
+
+            // CLAUSE 2 — every polygon edge against every ring side, wrapped
+            // on both. Reuses `segmentsProperlyCross`, the SAME predicate the
+            // candidate-gather reject runs, rather than a second copy of the
+            // arithmetic.
+            //
+            // The endpoint exemption in front of it is the reference's own,
+            // and it is carried for faithfulness rather than for effect: it is
+            // REDUNDANT on our substrate and measured to be so. Deleting it
+            // moves no test in this file, because coincident corners project
+            // to bit-identical pixels here, and the resulting parameters come
+            // out exactly 0 or 1 (or the denominator exactly 0), which strict
+            // (0,1) already rejects. Kept because the read has it explicitly,
+            // because it is free, and because it is the one thing standing
+            // between a shared corner and a spurious refusal if a future
+            // projection path ever stops being bit-exact. Do not "simplify" it
+            // away on the grounds that no test fails — that is recorded here
+            // precisely so the next reader does not have to re-derive it.
+            ImVec2 prev;
+            bool   prevOk = f[$ - 1] < m.vertices.length
+                         && projectLocalPt(m.vertices[f[$ - 1]], vpAim, prev);
+            foreach (t; 0 .. f.length) {
+                ImVec2 cur;
+                immutable bool curOk = f[t] < m.vertices.length
+                                    && projectLocalPt(m.vertices[f[t]], vpAim, cur);
+                if (prevOk && curOk)
+                    foreach (i; 0 .. ring.length) {
+                        immutable size_t j = (i + 1) % ring.length;
+                        if (!ringOk[i] || !ringOk[j]) continue;
+                        immutable ImVec2 a = ringPix[i], b = ringPix[j];
+                        if (samePixel(prev, a) || samePixel(prev, b)
+                         || samePixel(cur,  a) || samePixel(cur,  b)) continue;
+                        if (segmentsProperlyCross(a, b, prev, cur)) return true;
+                    }
+                prev = cur; prevOk = curOk;
+            }
+        }
+        return false;
+    }
+
+    // The SEED: which border edge this cursor pixel presses/hovers, or -1.
+    //
+    // Fill's press has NO reach radius — measured (task 0507), and it is why
+    // a press at the bare centre of a gap, 32 px from the nearest border
+    // edge where an ordinary selection click resolves nothing at all, still
+    // classifies as an edge press and caps the cell. So the scan below is
+    // unbounded on purpose; do NOT "unify" it onto `topoPenPressPickPx`.
+    //
+    // It is bounded by something else, and that too is measured: whatever
+    // ELSE is nearer wins the press, and only an EDGE press can fill.
+    //
+    //   * a VERTEX nearer than every border edge makes this a vertex press,
+    //     from which the reference's fill build is structurally unreachable
+    //     — read statically AND observed live (a press at a hole's centre
+    //     resolved an isolated vertex sitting inside the hole, and nothing
+    //     happened). Ties go to the vertex, matching both this tool's own
+    //     vertex→edge→face pick precedence and the reference's own
+    //     vertex-favouring arbitration.
+    //   * a POLYGON under the cursor likewise wins (a face the cursor is
+    //     inside is at distance zero), and Fill has no polygon path. Needs
+    //     `gpu_`'s BVH, so under a bare `dub test` this term is inert and
+    //     the vertex term carries the same cases — the identical limitation
+    //     `overPrimaryEdgeOrFace` documents.
+    //
+    // NOT PORTED, and named rather than guessed: the reference's press pick
+    // also classifies INTERIOR edges, and an interior-edge press in Fill
+    // mode would take the same destructive refusal path `fillDown`
+    // implements for a border edge. No cell ever pressed an interior edge in
+    // Fill mode, so that case is unmeasured and this scan simply does not
+    // consider interior edges.
+    package(vibe3d.editing.tools.interactive.tools.edit.topology_pen) int fillSeedEdge(int mx, int my, const ref Viewport vp) {
+        if (meshSrc_ is null) return -1;
+        auto m = mesh;
+        if (m is null) return -1;
+        if (pickPrimaryFace(mx, my, vp) >= 0) return -1;   // POLYGON press
+
+        immutable float cx = cast(float)mx, cy = cast(float)my;
+
+        // Pixel (§1.1), built ONCE for both the O(V) and the O(E) scan (§3).
+        const AimViewport vpAim = aimSpace(vp, primaryModelSpace());
+
+        float bestVertD = float.infinity;
+        foreach (vi; 0 .. m.vertices.length) {
+            ImVec2 pv;
+            if (!projectLocalPt(m.vertices[vi], vpAim, pv)) continue;
+            immutable float d = hypot(pv.x - cx, pv.y - cy);
+            if (d < bestVertD) bestVertD = d;
+        }
+
+        // `edgePolygonCounts` rather than `isEdgeBorder`: the same predicate
+        // (exactly one incident polygon) off the counter that cannot
+        // undercount a non-manifold fan, hoisted once for the whole scan.
+        const int[] polyCount = m.edgePolygonCounts();
+        int   bestEdge  = -1;
+        float bestEdgeD = float.infinity;
+        foreach (ei, e; m.edges) {
+            if (ei >= polyCount.length || polyCount[ei] != 1) continue;
+            ImVec2 pa, pb;
+            if (!projectLocalPt(m.vertices[e[0]], vpAim, pa)) continue;
+            if (!projectLocalPt(m.vertices[e[1]], vpAim, pb)) continue;
+            float t;
+            immutable float d = closestOnSegment2D(cx, cy, pa.x, pa.y, pb.x, pb.y, t);
+            if (d < bestEdgeD) { bestEdgeD = d; bestEdge = cast(int)ei; }
+        }
+        if (bestEdge < 0) return -1;
+        if (bestVertD <= bestEdgeD) return -1;   // VERTEX press — no fill path
+        return bestEdge;
+    }
+
+    // The candidate search itself, run from the seed `fillSeedEdge` resolved.
+    // Returns the ring VERBATIM in the order the shape test accepted (4
+    // corners, or 3 when `quadOnly` is off), or `null` when any gate refuses.
+    // The hover preview and the commit both call this — the reference's own
+    // draw path runs the identical search, so the highlight and the build
+    // obey ONE rule and can never disagree.
+    package(vibe3d.editing.tools.interactive.tools.edit.topology_pen) uint[] findFillRing(int mx, int my, const ref Viewport vp) {
+        immutable int seedEi = fillSeedEdge(mx, my, vp);
+        if (seedEi < 0) return null;
+        return fillRingFromSeed(cast(uint)seedEi, mx, my, vp);
+    }
+
+    private uint[] fillRingFromSeed(uint seedEi, int mx, int my, const ref Viewport vp) {
+        auto m = mesh;
+        if (m is null || seedEi >= m.edges.length) return null;
+        immutable uint seedA = m.edges[seedEi][0];
+        immutable uint seedB = m.edges[seedEi][1];
+        if (seedA >= m.vertices.length || seedB >= m.vertices.length) return null;
+        if (seedA == seedB) return null;   // malformed edge — two slots, one vertex
+
+        immutable float cx = cast(float)mx, cy = cast(float)my;
+        // Pixel (§1.1), built ONCE at function entry and reused by every
+        // scan below AND by `ringRefusedByIncidentPolygon` at the tail (§3).
+        const AimViewport vpAim = aimSpace(vp, primaryModelSpace());
+        ImVec2 pSeedA, pSeedB;
+        if (!projectLocalPt(m.vertices[seedA], vpAim, pSeedA)) return null;
+        if (!projectLocalPt(m.vertices[seedB], vpAim, pSeedB)) return null;
+
+        // GATHER radius = range × the hover radius. `range` 0 leaves nothing
+        // but the seeds reachable, so the count gate refuses — the measured
+        // "below the threshold the gesture refuses" branch, at its extreme.
+        immutable float reachPx =
+            fillRange_ * fillHoverRadiusPx(cx, cy, pSeedA, pSeedB);
+
+        // The cursor's 3-space point — the ONE modelled term, see the block
+        // comment above. Task 0619: both operands of the RANKING distance
+        // below are now in the SAME space. They were not: `m.vertices[v]` is
+        // local and this point used to be a world ray met against a local
+        // anchor, so under any layer transform the ranking compared two
+        // different frames — a quantity in no space at all.
+        //
+        // WHICH space the ranking should run in, once they agree, is a
+        // JUDGEMENT and not a measurement: the gather and the crossing reject
+        // are already screen-space, and only this last tie-break is 3D. LOCAL
+        // is chosen because that is where `m.vertices[v]` lives and because it
+        // is the smaller change; under a non-uniform scale a WORLD ranking
+        // would order the survivors differently. The reference's own cursor
+        // model point is unreadable (see above), so no capture settles it.
+        immutable Vec3 seedMid = (m.vertices[seedA] + m.vertices[seedB]) * 0.5f;
+        immutable Vec3 cursorPt = shiftedLocalPoint(seedMid, mx, my, vp);
+
+        // The screen segments the crossing reject tests against: every edge
+        // of every polygon incident to EITHER seed, gathered once. The
+        // reference walks seed → polygon → edge and marks polygons visited;
+        // what that marking changes is UNREAD, but it cannot change this
+        // boolean — testing one polygon twice yields the same answer — so the
+        // union is equivalent for the predicate's purposes.
+        ImVec2[2][] barriers;
+        foreach (const ref f; m.faces) {
+            bool touchesSeed = false;
+            foreach (v; f) if (v == seedA || v == seedB) { touchesSeed = true; break; }
+            if (!touchesSeed || f.length < 2) continue;
+            foreach (k; 0 .. f.length) {
+                immutable uint u0 = f[k], u1 = f[(k + 1) % f.length];
+                if (u0 >= m.vertices.length || u1 >= m.vertices.length) continue;
+                ImVec2 q0, q1;
+                if (!projectLocalPt(m.vertices[u0], vpAim, q0)) continue;
+                if (!projectLocalPt(m.vertices[u1], vpAim, q1)) continue;
+                barriers ~= [q0, q1];
+            }
+        }
+
+        // Per-vertex polygon count + the single incident polygon when there
+        // is exactly one — the qualifier's first two clauses read straight
+        // off `faces[]`, hoisted once (never re-walked per candidate).
+        auto npoly    = new uint[](m.vertices.length);
+        auto onlyFace = new int[](m.vertices.length);
+        onlyFace[] = -1;
+        foreach (fi, const ref f; m.faces)
+            foreach (v; f)
+                if (v < npoly.length) {
+                    if (npoly[v] == 0) onlyFace[v] = cast(int)fi;
+                    ++npoly[v];
+                }
+
+        // The qualifier's third clause: carries at least one BORDER edge.
+        const int[] polyCount = m.edgePolygonCounts();
+        auto borderVert = new bool[](m.vertices.length);
+        foreach (ei, e; m.edges)
+            if (ei < polyCount.length && polyCount[ei] == 1) {
+                if (e[0] < borderVert.length) borderVert[e[0]] = true;
+                if (e[1] < borderVert.length) borderVert[e[1]] = true;
+            }
+
+        uint[4]  slot;
+        float[4] dist;
+        slot[0] = seedA; slot[1] = seedB;
+        dist[0] = 0.0f;  dist[1] = 0.0f;
+        enum size_t kSeedCount = 2;
+        size_t n = kSeedCount;
+
+        foreach (vi; 0 .. m.vertices.length) {
+            immutable uint v = cast(uint)vi;
+
+            // Already in the list — the enumerator re-offers the seeds, and
+            // this drop is what the reference does with them, BEFORE the
+            // qualifier ever runs.
+            bool already = false;
+            foreach (k; 0 .. n) if (slot[k] == v) { already = true; break; }
+            if (already) continue;
+
+            ImVec2 pv;
+            if (!projectLocalPt(m.vertices[v], vpAim, pv)) continue;
+            if (hypot(pv.x - cx, pv.y - cy) > reachPx) continue;
+
+            // QUALIFIER — isolated, or degenerate-polygon-only, or border.
+            bool qualifies = false;
+            if (npoly[v] == 0) qualifies = true;
+            else if (npoly[v] == 1 && onlyFace[v] >= 0
+                     && m.faces[onlyFace[v]].length <= 2) qualifies = true;
+            else qualifies = borderVert[v];
+            if (!qualifies) continue;
+
+            // SCREEN-CROSSING REJECT.
+            bool blocked = false;
+            foreach (ref seg; barriers)
+                if (segmentsProperlyCross(ImVec2(cx, cy), pv, seg[0], seg[1])) {
+                    blocked = true;
+                    break;
+                }
+            if (blocked) continue;
+
+            // RANKING — four nearest in 3-space among the survivors.
+            immutable float d = (m.vertices[v] - cursorPt).length;
+            if (n < 4) {
+                slot[n] = v; dist[n] = d; ++n;
+            } else {
+                // Replace the FARTHEST non-seed entry, and only with
+                // something strictly nearer. Seeds are never scanned, which
+                // is the whole of "pinned".
+                size_t worst = size_t.max;
+                float  worstD = d;
+                foreach (k; kSeedCount .. 4)
+                    if (dist[k] > worstD) { worstD = dist[k]; worst = k; }
+                if (worst != size_t.max) { slot[worst] = v; dist[worst] = d; }
+            }
+        }
+
+        // COUNT GATE.
+        if (fillQuadOnly_) { if (n != 4) return null; }
+        else               { if (n != 4 && n != 3) return null; }
+
+        // n == 3 runs NO shape test at all — measured on two independent
+        // rigs, two boots, two cameras. It does NOT skip the ring gate below:
+        // 30 of the recording's 194 refusals were a 3-ring.
+        uint[] ring;
+        if (n == 3) {
+            ring = slot[0 .. 3].dup;
+        } else {
+            ImVec2[4] sp;
+            foreach (k; 0 .. 4)
+                if (!projectLocalPt(m.vertices[slot[k]], vpAim, sp[k])) return null;
+
+            if (screenQuadConvex(sp[0], sp[1], sp[2], sp[3])) {
+                ring = slot[0 .. 4].dup;
+            } else if (screenQuadConvex(sp[0], sp[1], sp[3], sp[2])) {
+                immutable uint tmp = slot[2]; slot[2] = slot[3]; slot[3] = tmp;
+                ring = slot[0 .. 4].dup;
+            } else {
+                return null;
+            }
+        }
+
+        // THE RING GATE (task 0532) — the last gate, on the FORMED ring, in
+        // the order the build would use. It lives HERE and not in
+        // `commitFill` because the reference calls it from this shared search:
+        // 270 calls on the recording, at most 6 of them presses. So the HOVER
+        // PREVIEW (`fillRing_`) obeys the same verdict as the press, and the
+        // highlight can never offer a cell the press then refuses to build.
+        //
+        // A refusal returns `null`, which routes `fillDown` into the already-
+        // ported destructive fall-through (arm Move on the pressed edge) — the
+        // same fall-through the recording shows for a press that fails to arm.
+        if (ringRefusedByIncidentPolygon(m, ring, vpAim)) return null;
+        return ring;
+    }
+
+    // The NON-VERTEX half of the over-mesh GATE: true when the cursor is
+    // over an EXISTING element of the primary layer that is NOT a vertex —
+    // an edge within `topoPenPressPickPx` (`findRingSeedEdge`) or a face under
+    // the cursor (`pickPrimaryFace`, front-most BVH pick, which covers the
+    // "middle of a big face, nowhere near its rim" case an edge scan alone
+    // misses).
+    //
+    // Extracted so the gate has exactly ONE definition, shared by its two
+    // consumers (previously `onMouseMotion` inlined the only copy):
+    //   * the Generic Hover-Highlight indicator's visibility gate
+    //     (`overPrimaryMesh` below, `onMouseMotion`) — what the user SEES
+    //     highlighted under the cursor;
+    //   * the plain-LMB press's place-vs-decline decision
+    //     (`onPlainLmbDown`) — what a press at that same pixel DOES.
+    // Those two answers have to come from the same predicate: a press that
+    // lands on an element the indicator is actively highlighting must not
+    // be treated as a press on empty space (that mismatch is exactly the
+    // stray-vertex defect `onPlainLmbDown` documents).
+    //
+    // `pickPrimaryFace` needs `gpu_` (its BVH is keyed on the GPU mesh's
+    // upload version) and answers -1 without it, so under a bare `dub test`
+    // (no GL, no `gpu_`) only the edge term is live — deliberate: the face
+    // term is exercised by the HTTP tests, which have a real upload.
+    private bool overPrimaryEdgeOrFace(int mx, int my, const ref Viewport vp) {
+        return findRingSeedEdge(mx, my, vp, topoPenPressPickPx(vp)) >= 0
+            || pickPrimaryFace(mx, my, vp) >= 0;
+    }
+
+    // The FULL over-mesh GATE (REV1 FIX-1 of doc/topopen_hover_highlight_plan.md,
+    // preserved verbatim as an OR of the same three terms — only the
+    // short-circuit order changed, which no caller can observe): the vertex
+    // term plus `overPrimaryEdgeOrFace` above. A FINITE threshold on both
+    // projection scans, deliberately a SEPARATE pass from
+    // `computeHoverIndicator`'s own `∞`-threshold RESOLUTION scan — this
+    // decides WHETHER the cursor is over the mesh, that decides WHAT to draw.
+    private bool overPrimaryMesh(int mx, int my, const ref Viewport vp) {
+        return findSourceVertex(mx, my, vp, topoPenPressPickPx(vp)) >= 0
+            || overPrimaryEdgeOrFace(mx, my, vp);
+    }
+
+    // Phase-2 input-dispatch migration (doc/topopen_input_dispatch_phase2_plan.md):
+    // `bindings()`/`onInputResetAll()` are now the LIVE dispatch table/reset
+    // hook — `onMouseButtonDown`/`onMouseButtonUp` below route every press
+    // through the base's `dispatchInput()` state machine instead of the
+    // (now deleted) `GestureSlot`/`resolveGestureSlot` switch.
+    override const(InputBinding)[] bindings() const { return kTopoPenBindings; }
+
+    // The `ResetScope.AllButtons` hook: fires before every LEFT-button
+    // gesture-DOWN handler (each LEFT row in `kTopoPenBindings` is
+    // `ResetScope.AllButtons`). Phase-3 dispatch cleanup
+    // (doc/topopen_input_dispatch_phase2_plan.md §Phase 3) removed the now-redundant
+    // duplicate `resetAllGestureArms()` call the LEFT-button trio's own
+    // handlers used to make at their own top — this hook is the sole path
+    // that fires it on a LEFT Down now.
+    override void onInputResetAll() { resetAllGestureArms(); }
+
+    // Dispatch entry point: `dispatchInput` resolves (button, live modifier
+    // mask) via `kTopoPenBindings`, arms the resolved action on THIS button,
+    // and calls `onToolAction(a, Down, ...)` — which routes to the same
+    // `on*Down` method `resolveGestureSlot`'s old `final switch` used to call
+    // directly. All 12 grid slots are present in `kTopoPenBindings` since task
+    // 0499; every Alt combo is still ABSENT, so `resolveToolAction` answers
+    // `PassThrough` for it and `dispatchInput` returns `false` without ever
+    // calling `onToolAction`.
+    override bool onMouseButtonDown(ref const SDL_MouseButtonEvent e,
+                                    ref VectorStack vts) {
+        // Take the gesture's snap configuration BEFORE dispatching: whichever
+        // gesture this press turns out to arm, it runs on the ranges that were
+        // live when the button went down (see `dragSnap_`). Unconditional and
+        // free of any arm bool — the capture must happen even for a press that
+        // goes on to decline, because `resetAllGestureArms()` runs INSIDE the
+        // dispatch below and would otherwise be a place to lose it.
+        dragSnap_ = snapPacketOf(vts);
+        pressVp_ = viewportOf(vts);
+        // Task 0523: and register this gesture's snapping guide, on the same
+        // unconditional press-to-release window and for the same reason. The
+        // registration is NOT gated on the master snap enable — the service's
+        // own gate short-circuits above the guide walk (a disabled `SnapStage`
+        // publishes nothing and never queries), which is where the reference
+        // puts it too: its master-enable test sits above the guide loop, not
+        // inside the guide.
+        registerSnapGuide();
+        // Every BOUND chord press is consumed and is one step (law L5), whatever
+        // its handler answers: the step opens here, before the handler runs, so
+        // a commit-on-Down gesture (Remove) is inside it. An unbound chord (every
+        // Alt combination) is not the pen's and passes through.
+        immutable InputButton btn = toButton(e.button);
+        immutable ubyte mods = toMods(SDL_GetModState());
+        immutable ToolAction a = btn == InputButton.None ? PassThrough
+            : resolveToolAction(bindings(), btn, mods);
+        if (a == PassThrough) return false;
+        immutable ov = kChordOv[cast(TopoPenChord) a];
+        openPressStep(e.button, ov.mode == ModeOv.FromUser ? penMode_
+                                                           : modeOfOverride(ov.mode));
+        heldMask_ |= penButtonBit(e.button);
+        dispatchInput(btn, mods, InputPhase.Down, e, vts);
+        return true;
+    }
+
+    /// The pen's bit for SDL button `b` (1..8), the router's layout.
+    private static ubyte penButtonBit(ubyte b) pure nothrow @safe @nogc {
+        return (b >= 1 && b <= 8) ? cast(ubyte)(1u << (b - 1)) : 0;
+    }
+
+    /// Open the press step (plan 8646 [R3-1]): the ONLY code that begins a pen
+    /// step, called from `onMouseButtonDown` (and by the white-box rig's
+    /// `penStep` bracket). A press while a step is open ENDS the earlier
+    /// gesture first (L56, wave plan §9.27 [A15-1]): its arms are cleared, its
+    /// step closes as the mesh stands (a deferred commit never ran, so that
+    /// row is unchanged; a live Move keeps what it wrote), and its button
+    /// turns inert. The new button then opens its own step. The carrier starts
+    /// as the chord mode's default.
+    package(vibe3d.editing.tools.interactive.tools.edit.topology_pen) bool openPressStep(ubyte button, PenMode chordMode) {
+        if (stepOpen_) {
+            resetAllGestureArms();
+            resetAllArmed();
+            inertButtons_ |= penButtonBit(stepButton_);
+            closePressStep();
+        }
+        // The pressed button is live (a same-button re-press included).
+        inertButtons_ &= cast(ubyte)~penButtonBit(button);
+        sessionStepBegins(PressKind.plain);
+        basis_ = sessionStepOpenImage();
+        // Unbound, or not the instance the session tracks: our own capture.
+        if (!basis_.filled) {
+            auto m = mesh;
+            basis_ = m is null ? MeshSnapshot.init : MeshSnapshot.capture(*m);
+        }
+        noteDefaultStep(chordMode);
+        stepOpen_   = true;
+        stepButton_ = button;
+        return true;
+    }
+
+    /// End the press step: the ONLY code that ends a pen step, called from
+    /// `onMouseButtonUp` (its own button, after the release's handler) and
+    /// `deactivate`. The session records the row (or, when it already ended
+    /// the step at a close, does nothing).
+    package(vibe3d.editing.tools.interactive.tools.edit.topology_pen) void closePressStep() {
+        if (!stepOpen_) return;
+        sessionStepEnds();
+        stepOpen_ = false;
+    }
+
+    /// The carrier and label of the row this press will write — set where a
+    /// gesture commits (or arms, for Move), read at the step's end.
+    private void noteStep(MeshSessionEdit delegate() factory, string label) {
+        stepFactory_ = factory;
+        stepLabel_   = label;
+    }
+
+    private void noteDefaultStep(PenMode mode) {
+        final switch (mode) {
+        case PenMode.Move:      noteStep(factories_.move,    "Topology Move");     break;
+        case PenMode.Duplicate: noteStep(factories_.build,   "Topology Build");    break;
+        case PenMode.Remove:    noteStep(factories_.remove,  "Topology Remove");   break;
+        case PenMode.Split:     noteStep(factories_.split,   "Topology Split");    break;
+        case PenMode.AddLoop:   noteStep(factories_.addLoop, "Topology Add Loop"); break;
+        case PenMode.Point:     noteStep(factories_.place,   "Topology Place");    break;
+        case PenMode.Fill:      noteStep(factories_.fill,    "Topology Fill");     break;
+        case PenMode.Smooth:    noteStep(factories_.smooth,  "Topology Smooth");   break;
+        }
+    }
+
+    // ---- TopologyStepClient: the session's view of the press step ---------
+    // A parameter write on an idle pen is its own row, carried by `attr`
+    // (plan 8646 §9.5); while a press is open it joins that press.
+    override Mesh* topologyStepMesh() { return mesh; }
+    override MeshSnapshot topologyStepBasis() { return basis_; }
+    override Command topologyStepCarrier() {
+        auto f = stepOpen_ ? stepFactory_ : factories_.attr;
+        if (f is null) { noteGestureCarrierMismatch(); return null; }
+        return f();
+    }
+    override bool recordTopologyStep(Command cmd) {
+        settleMove();   // a switch mid-drag ends the step here, with no release
+        return recordGestureEdit(cmd, GestureRecordMode.Plain);
+    }
+
+    // The end of a move that wrote positions, however it ends (release, second
+    // button, switch, cancel): ONE unconfined publish re-arms the watchers its
+    // confined steps held.
+    private void settleMove() {
+        if (!moveDirty_) return;
+        moveDirty_ = false;
+        if (auto m = meshOrNull()) m.commitChange(MeshEditScope.Position);
+    }
+    override string topologyStepLabel() {
+        return stepOpen_ ? stepLabel_ : "Topology Attribute";
+    }
+    override void setTopologyDormant(bool dormant) {}
+    // Not reached: the session rebases only the captured model's tools.
+    override void rebaseTopologyStep(MeshSnapshot basis) { basis_ = basis; }
+    override void restoreTopologyStep(in AttrImage attrs, MeshSnapshot basis) {
+        basis_ = basis;
+        restoreRecordedAttrs(attrs);
+        resyncSession();
+    }
+
+    // REV1 FIX-1 (opponent objection 1, cross-arm coupling — doc/topopen_p7_slide_plan.md
+    // "REV1"): the single source of truth for "clear every gesture's armed
+    // state", called at the TOP of every LEFT-button gesture-DOWN handler
+    // (`onPlainLmbDown`/`onShiftLmbDown`/`onCtrlLmbDown`) BEFORE that press
+    // (maybe) re-arms exactly one of P3 build / P4 Move-Place / P7 Slide —
+    // and by `resyncSession()` (an external history navigation). The former
+    // per-handler partial resets (the old NIT-2 pattern: each handler only
+    // cleared ITS OWN fields) left every OTHER arm group untouched, so a
+    // replayed/malformed DOWN-DOWN-UP sequence for the LEFT button (two
+    // presses under different modifier states, no intervening UP) could
+    // strand two arm groups simultaneously true; the eventual release would
+    // then fire the FIRST-checked committer (`onMouseButtonUp`'s
+    // `dragArmed_`-before-`placeArmed_`/`moveArmed_`-before-`slideArmed_`
+    // order) against indices captured at a STALE press — a silent
+    // wrong-vertex mutation recorded as a legitimate undo entry. Pure safety
+    // hardening: a real press/hold/release cycle only ever has ONE arm group
+    // true at a time already (gesture identity is pinned at DOWN), so
+    // clearing all of them before re-arming exactly one changes nothing for
+    // legitimate input.
+    //
+    // A press of a DIFFERENT button while one is held ENDS the held gesture
+    // (L56, wave plan §9.27 [A15-1], reversing REV1 FIX-1's "the two land in
+    // one press step"): `openPressStep` calls this helper and drops every
+    // button's dispatch slot before the new button's handler runs, closes the
+    // earlier step as the mesh stands and makes that button inert. So the
+    // MIDDLE-button handlers (`onCtrlMmbDown`/`onShiftMmbDown`) need no reset
+    // of their own for a cross-button chord: no arm of another button
+    // survives into them. A same-slot MIDDLE re-press is still guarded by Add
+    // Loop's own top-of-handler reset, and a SUCCESSFUL Remove/Add-Loop
+    // mutation still goes through `resyncSession()` on its commit path.
+    package(vibe3d.editing.tools.interactive.tools.edit.topology_pen) void resetAllGestureArms() {
+        // EVERY arm bit, from the compiler's own list (task 0705): each field
+        // declared `GestureArm` is disarmed here, so a gesture added later is
+        // cleared by this helper without anyone remembering to say so. The
+        // per-gesture PAYLOAD below (seeds, cached index runs, drag
+        // accumulators) is still spelled out by hand — that part is not one
+        // uniform shape and each block documents its own reason for the value
+        // it resets to.
+        static foreach (m; kGestureArmFields)
+            __traits(getMember, this, m) = GestureArm.init;
+
+        // Mode router (task 0483) — the per-press record of WHICH gesture the
+        // unmodified-LMB slot resolved to. Neutral value first, so a press
+        // that declines leaves behind an UP leg that is a guarded no-op
+        // rather than a stale mode's commit.
+        gestureOn_[]    = PenGesture.PlaceOrMove;
+        // P3 build (doc/topopen_p3_plan.md)
+        sourceVert_     = -1;
+        classifiedCase_ = BuildCase.None;
+        triN_ = quadP_ = quadQ_ = ghostTriN_ = -1;
+        triCands_ = null;
+        triCandDirs_ = null;
+        // P4 Move/Place (doc/topopen_p4_plan.md) + the task-0484 element grab.
+        // `clearMoveArm` drops the live drag's base positions and its
+        // first-write snapshot WITHOUT recording anything — correct for every
+        // caller of this helper: a same-slot re-press starts a fresh gesture,
+        // and `resyncSession` runs when an external history navigation has
+        // already replaced the mesh this drag was editing, so there is no
+        // "before" left that a recorded entry could mean anything against.
+        clearMoveArm();
+        // P6 Add Loop (doc/topopen_p6_addloop_plan.md)
+        addLoopSeed_    = -1;
+        // P7 Slide (doc/topopen_p7_slide_plan.md)
+        slideSeed_   = -1;
+        slideVertex_ = -1;
+        slideAxis_   = -1;
+        slideEndA_ = slideEndB_ = -1;
+        slideNbrA_ = slideNbrB_ = -1;
+        slideAnchor_ = Vec3(0, 0, 0);
+        slideDeltaK_ = 0.0f;
+        slideOverBg_ = false;
+        slidePathPx_ = 0.0f;
+        // P8 Smooth (doc/topopen_p8_smooth_plan.md)
+        smoothDragDx_ = 0;
+        // P9 Split (doc/topopen_p9_split_plan.md) — cleared here so the
+        // LEFT-button trio's own reset closes a stray split arm too (e.g. an
+        // external history navigation via `resyncSession`, below); the
+        // MIDDLE-button `onPlainMmbDown` uses its own narrow self-reset.
+        splitSourceVert_ = -1;
+        splitTargetVert_ = -1;
+        // P10 Move Loop (doc/topopen_p10_moveloop_plan.md) — cleared here so
+        // the LEFT-button trio's own reset (and `resyncSession`, below) close
+        // a stray move-loop arm too; `onMoveLoopRmbDown` (the RIGHT-button
+        // handler) uses its own narrow self-reset.
+        moveLoopSeed_  = -1;
+        moveLoopVerts_ = null;
+        // P11 Dup Loop (doc/topopen_p11_duploop_plan.md) — cleared here so
+        // the LEFT-button trio's own reset (and `resyncSession()`, below)
+        // close a stray dup-loop arm too; `onDupLoopShiftRmbDown` (the
+        // Shift+RMB handler) uses its own narrow self-reset.
+        dupLoopSeed_  = -1;
+        dupLoopEdges_ = null;
+        // Duplicate EDGE (task 0485) — the Shift+LMB sibling; cleared here
+        // for the same reason as every LEFT-button arm above.
+        dupEdgeSeed_  = -1;
+        dupEdgeEdges_ = null;
+        // P12 Smooth+Loop (doc/topopen_p12_smoothloop_plan.md) — cleared
+        // here so the LEFT-button trio's own reset (and `resyncSession()`,
+        // below) close a stray smooth-loop arm too; `onSmoothLoopRmbDown`
+        // (the Shift+Ctrl+RMB handler) uses its own narrow self-reset.
+        smoothLoopSeed_   = -1;
+        smoothLoopVerts_  = null;
+        smoothLoopDragPx_ = 0.0f;
+    }
+
+    // MINOR-3 (doc/topopen_hover_highlight_plan.md REV1): the single source
+    // of truth for "is ANY gesture currently armed" — the OR of every arm
+    // flag `resetAllGestureArms()` (immediately above) clears. The two
+    // helpers travel together, and since task 0705 they travel over the SAME
+    // derived list (`kGestureArmFields`): this predicate cannot see a
+    // different set of arms than the reset clears, because neither of them
+    // names an arm.
+    //
+    // MAINTENANCE CONTRACT (now enforced by the compiler, not by this
+    // comment): a new gesture's arm flag is declared `GestureArm` and that is
+    // the whole contract — it is OR'd in here and cleared over there by
+    // construction. What this comment used to say, and what the code used to
+    // require, was that the flag be added to THREE hand-written lists (this
+    // OR, the reset's assignments, and a Tier-A pin unittest) plus two prose
+    // enumerations. Those five had already drifted: the prose above said "9"
+    // in one paragraph and "10" in the next, the pin test listed 10, and
+    // `dupEdgeArmed_` (task 0485) was in none of them although it was in the
+    // OR — i.e. the guard everybody trusted was pinning 10 of 11 flags.
+    package(vibe3d.editing.tools.interactive.tools.edit.topology_pen) bool anyGestureArmed() const {
+        static foreach (m; kGestureArmFields)
+            if (__traits(getMember, this, m).armed) return true;
+        return false;
+    }
+
+    // The Mode router (task 0483) — the ONE place the Mode dropdown, the
+    // Edge Loop flag and the Edge Slide flag turn into a gesture. Every
+    // branch delegates to a handler that ALREADY exists for the equivalent
+    // modifier chord, so a mode and its chord run byte-identical code:
+    //
+    //     mode        loop=0            loop=1              measured chord
+    //     ----------- ----------------- ------------------- ----------------------
+    //     Move        move (or slide)   move loop           LMB   / RMB
+    //     Duplicate   build             dup loop            Shift+LMB / Shift+RMB
+    //     Remove      remove            remove (loop on an  Ctrl+MMB
+    //                                   edge-latched press)
+    //     Split       split             split               MMB
+    //     AddLoop     add loop          add loop            Shift+MMB
+    //     Point       place-or-move     place-or-move-loop  (no chord)
+    //     Fill        fill              fill                (no chord)
+    //     Smooth      smooth            smooth loop         Shift+Ctrl+LMB / Shift+Ctrl+RMB
+    //
+    // Remove is the one row whose loop column is conditional, and the table
+    // cannot express why: the flag is read by the primitive Remove chooses
+    // from the PRESSED ELEMENT'S CLASS, not by the router. See `removeDown`.
+    //
+    // The chords themselves are untouched and remain ABSOLUTE: they resolve
+    // through `kTopoPenBindings` to their own action whatever this dropdown
+    // says, so the modeless chord workflow keeps working unchanged and a
+    // mode is never able to shadow it.
+    //
+    // The resolved action is RECORDED in `gestureOn_` so the matching
+    // RELEASE (`lmbModeUp`) reaches the same gesture's commit leg even if
+    // the dropdown is written mid-drag (`tool.attr` is reachable over HTTP
+    // at any time) — resolving the mode a second time at release would
+    // otherwise commit a gesture nobody armed.
+    package(vibe3d.editing.tools.interactive.tools.edit.topology_pen) bool onPlainLmbDown(ref const SDL_MouseButtonEvent e, ref VectorStack vts) {
+        return runPenMode(penMode_, edgeLoop_, edgeSlide_, false, InputButton.Left, e, vts);
+    }
+
+    // THE mode dispatcher (task 0487) — the one place a resolved
+    // (mode, loop, slide) triple turns into a gesture. Every chord reaches it:
+    // the chord contributes its overrides (`kChordOv`), the user's dropdown and
+    // flags supply the rest, and this runs the result. Before this refactor the
+    // ten chords each named a gesture outright, so a chord could not compose
+    // with the dropdown at all.
+    //
+    // `btn` is the physical button the gesture is booked against, taken from
+    // the chord's own slot rather than from the event — a release then reaches
+    // the same gesture's commit leg, per button, so a MIDDLE chord fired
+    // during a held LEFT drag cannot redirect the LEFT release.
+    //
+    // The gesture is stamped AFTER the delegated handler returns, never
+    // before: a commit-on-DOWN gesture (Remove) runs `resyncSession()` inside
+    // its own handler, which calls `resetAllGestureArms()` and would wipe a
+    // record written up front. Stamping last makes the field describe the
+    // press that just happened, whatever the handler did along the way.
+    private bool runPenMode(PenMode mode, bool loop, bool slide, bool axis, InputButton btn,
+                            ref const SDL_MouseButtonEvent e, ref VectorStack vts) {
+        final switch (mode) {
+        case PenMode.Move:
+            return moveOrPlaceDown(e, vts, false, loop, slide, axis, btn);
+        case PenMode.Point:
+            return moveOrPlaceDown(e, vts, true, loop, slide, axis, btn);
+        case PenMode.Duplicate:
+            // Two variants, one implementation each, both on this path: the
+            // loop variant gathers and trims (`onDupLoopShiftRmbDown`), the
+            // plain one takes the pressed edge alone. Both carry the border
+            // gate (task 0486 C-0). Measured BIT-IDENTICAL to the Shift+LMB /
+            // Shift+RMB chords respectively, which is why those chords are
+            // just (mode=Duplicate, loop=...) rows now.
+            if (loop) return stamp(onDupLoopShiftRmbDown(e, vts), PenGesture.DupLoop, btn);
+            return stamp(onShiftLmbDown(e, vts), PenGesture.Build, btn);
+        case PenMode.Remove:
+            // ONE branch, and it is inside the handler rather than here (task
+            // 0494): the loop flag is read by the EDGE primitive alone, so a
+            // Remove press that latches a polygon or a vertex runs the same
+            // thing with the flag on or off. Stamping a separate
+            // "remove loop" gesture here would therefore mislabel two thirds of
+            // the presses. Commits on DOWN and arms nothing.
+            return stamp(removeDown(e, vts, loop), PenGesture.Remove, btn);
+        case PenMode.Split:
+            return stamp(onPlainMmbDown(e, vts), PenGesture.Split, btn);
+        case PenMode.AddLoop:
+            return stamp(onShiftMmbDown(e, vts), PenGesture.AddLoop, btn);
+        case PenMode.Smooth:
+            if (loop) return stamp(onSmoothLoopRmbDown(e, vts), PenGesture.SmoothLoop, btn);
+            return stamp(onShiftCtrlLmbDown(e, vts), PenGesture.Smooth, btn);
+        case PenMode.Fill:
+            return fillDown(e, vts, btn);
+        }
+    }
+
+    // Record `a` as the gesture this press resolved to and pass `consumed`
+    // straight through — the router's one-liner for "delegate, then stamp".
+    private bool stamp(bool consumed, PenGesture g, InputButton btn) {
+        if (btn != InputButton.None) gestureOn_[btn] = g;
+        return consumed;
+    }
+
+    // Fill OWNS the plain-LMB slot and NEVER falls through to place. The
+    // build commits on DOWN (like Remove): the ring is fully determined by
+    // the DOWN pixel, there is no drag to defer.
+    //
+    // A REFUSAL IS DESTRUCTIVE (task 0488, measured — and this is the single
+    // most surprising thing this port changes). vibe3d shipped a clean no-op
+    // on a miss. The reference does not: when the candidate search refuses,
+    // the press falls through to GRABBING THE PRESSED BORDER EDGE and moving
+    // it — the measured refusals displaced the edge's two vertices onto the
+    // background-constraint plane, to within 0.05 % of that plane's own
+    // offset, undone in a single step. That retroactively explains a run of
+    // earlier observations filed as "the nearest vertex moved but no facet
+    // appeared": they were not failures to reach the engine, they were this
+    // branch.
+    //
+    // Ported as an ARM, not as an immediate write: the miss arms this tool's
+    // own Move gesture on the pressed border edge, so the drag and the
+    // release run the Move law already measured for an edge grab (one shared
+    // screen delta, per-vertex nearest-foot re-snap to the background, ONE
+    // undo entry at release, and Move's own 3px click-vs-drag gate). That
+    // reuses a measured law instead of inventing a second one for this
+    // branch, and it keeps the refusal undoable in exactly one step, which
+    // the measurement also reports.
+    //
+    // Still always consumed, either way — no other mode's place/move may
+    // fire underneath an active Fill-mode click.
+    private bool fillDown(ref const SDL_MouseButtonEvent e, ref VectorStack vts,
+                          InputButton btn) {
+        // `PlaceOrMove` is also the slot whose UP leg runs `finishMove`, so
+        // the destructive-refusal arm below needs no new gesture tag.
+        stamp(true, PenGesture.PlaceOrMove, btn);
+        Viewport vp = viewportOf(vts);
+
+        immutable int seedEi = fillSeedEdge(e.x, e.y, vp);
+        if (seedEi < 0) return true;   // no border-edge press at all — nothing to fill OR move
+
+        auto ring = fillRingFromSeed(cast(uint)seedEi, e.x, e.y, vp);
+        if (ring.length >= 3) { commitFill(ring); return true; }
+
+        armMoveOnEdge(cast(uint)seedEi, e, pickOcclusionOf(vts));
+        return true;
+    }
+
+    // P2/P4 (doc/topopen_p2_plan.md, doc/topopen_p4_plan.md, Design A), now
+    // the Move / Point modes' shared DOWN leg: a plain (unmodified) LEFT
+    // press disambiguates HERE, at press time, between grabbing an existing
+    // primary-layer vertex (Move) and placing a new one on the background
+    // surface (Place) — reusing P3's `findSourceVertex` (the SAME
+    // `topoPenPressPickPx` screen-space threshold, over the PRIMARY mesh only;
+    // the background is the snap reference, never grabbed). Neither outcome
+    // commits here: both are armed only, and the actual mutation happens on
+    // RELEASE (`onMouseButtonUp`) at THAT event's own CONS-snapped hit — a
+    // stationary click's DOWN+UP pixel pair therefore still yields exactly
+    // one placement/no mutation, same as the pre-P4 DOWN-commit behavior
+    // (byte-identity gate, P4 step 1).
+    //
+    // `placeOnEmpty` is what separates the two modes, and it is the ONLY
+    // thing that does: Point places a vertex on an empty-space press, Move
+    // declines it (the reference's Move mode has nothing to move there;
+    // placing is Point's job). A press that lands on GEOMETRY runs the same
+    // move family in both — which is the reference's own definition of its
+    // Point mode ("if you click any geometry component in this mode, then
+    // the tool works as in the Move mode").
+    //
+    // "Place" means EMPTY SPACE, not merely "no vertex resolved": a press
+    // that lands on the primary layer's existing EDGE or FACE arms neither
+    // gesture and is DECLINED (see the geometry branch below for the full
+    // rationale) — it is a press on an element this tool has no plain-LMB
+    // gesture for, never a placement. So the handler claims the event for
+    // both of its own outcomes, and only for those.
+    private bool moveOrPlaceDown(ref const SDL_MouseButtonEvent e, ref VectorStack vts,
+                                 bool placeOnEmpty, bool loop, bool slide, bool axis,
+                                 InputButton btn) {
+        stamp(true, PenGesture.PlaceOrMove, btn);
+
+        // Edge Loop / Edge Slide resolve FIRST, above the on-geometry gate —
+        // each routes to the very handler its equivalent chord routes to, and
+        // those handlers do their OWN pick and their OWN decline bookkeeping.
+        // Checking them after the gate (as an earlier draft of task 0487 did)
+        // silently swallowed that bookkeeping: a Ctrl+LMB press with no edge in
+        // range never reached `onCtrlLmbDown`, so `slideDecline_` kept reading
+        // "none" where it must read "no_edge" — the diagnostic channel task
+        // 0482 added on purpose, and the regression the suite caught. Resolving
+        // them here also keeps both byte-identical to the pre-refactor chords,
+        // which went straight to their handler whatever was under the cursor.
+        //
+        // Edge Loop wins when both are set: there is no slide-a-whole-loop
+        // gesture in this tool, so a loop press is the only one of the two that
+        // can be honoured.
+        if (loop)  return stamp(onMoveLoopRmbDown(e, vts), PenGesture.MoveLoop, btn);
+        if (slide)
+            return stamp(onCtrlLmbDown(e, vts), PenGesture.Slide, btn);
+
+        Viewport vp = viewportOf(vts);
+        int grabbed;
+        const other = queryPressTarget(e.x, e.y, vp, pickOcclusionOf(vts), vts.get!SubjectPacket());
+        const kind = grabTargetElement(other, grabbed);
+        if (kind != MoveElem.None) return armMoveOn(kind, grabbed, e, axis, pickOcclusionOf(vts));
+        if (other.source >= 0 && other.owner.mesh !is mesh) return false;
+        if (findSourceVertex(e.x, e.y, vp) >= 0 || overPrimaryEdgeOrFace(e.x, e.y, vp)) return false;
+        if (axis) return false;   // an axis move has nothing to place
+
+        // Empty space. Only Point mode places here; Move mode has nothing to
+        // move and declines, exactly like every other miss in this tool.
+        if (!placeOnEmpty) return false;
+
+        placeArmed_ = true;
+        return true;
+    }
+
+    // Tool presses elect a foreground candidate with the shared 8 px cascade
+    // and ordinary-FACE facing/border admission (9528, K-PG). The read-only
+    // result retains its source; this bound-primary tool only authors its mesh.
+    package(vibe3d.editing.tools.interactive.tools.edit.topology_pen) MoveElem resolveGrabTarget(int mx, int my, const ref Viewport vp, out int index,
+                                       bool occlusion, const(SubjectPacket)* subject = null,
+                                       ToolQueryIntent intent = ToolQueryIntent.pressQuery) {
+        import vibe3d.editing.selection.query.hover_state : kCascadeVertex, kCascadeEdge, kCascadePolygon;
+        index = -1;
+        const hit = queryPressTarget(mx, my, vp, occlusion, subject, intent);
+        return grabTargetElement(hit, index);
+    }
+
+    package(vibe3d.editing.tools.interactive.tools.edit.topology_pen) MoveElem grabTargetElement(vibe3d.editing.selection.query.hover_state.ToolPressTarget hit, out int index) {
+        import vibe3d.editing.selection.query.hover_state : kCascadeVertex, kCascadeEdge, kCascadePolygon;
+        index = -1;
+        // Querying foreground sources does not widen this tool's bound authoring mesh.
+        if (hit.source < 0 || hit.owner.mesh !is mesh) return MoveElem.None;
+        index = hit.index;
+        switch (hit.kind) {
+            case kCascadeVertex: return MoveElem.Vertex;
+            case kCascadeEdge: return MoveElem.Edge;
+            case kCascadePolygon: return MoveElem.Face;
+            default: return MoveElem.None;
+        }
+    }
+
+    package(vibe3d.editing.tools.interactive.tools.edit.topology_pen) auto queryPressTarget(int mx, int my, const ref Viewport vp, bool occlusion,
+                                  const(SubjectPacket)* subject = null,
+                                  ToolQueryIntent intent = ToolQueryIntent.pressQuery) {
+        import vibe3d.editing.selection.query.hover_state : ToolPressSource, ToolPressTarget, ToolPressPolicy,
+            LegacyPressGather, toolPressSourcesResolver, toolPressAt;
+        const m = mesh;
+        if (m is null) return ToolPressTarget.init;
+        auto primary = ToolPressSource(m, primaryModelSpace());
+        const sources = intent == ToolQueryIntent.legacyHover || toolPressSourcesResolver is null
+            ? [primary] : toolPressSourcesResolver();
+        int legacyIndex = cast(int)sources.length;
+        foreach (si, src; sources) if (src.mesh is m) { primary.layer = src.layer; legacyIndex = cast(int)si; break; }
+        ToolPressPolicy policy;
+        policy.sources = sources;
+        policy.facing = subject !is null && subject.pickFacing;
+        policy.occlusion = occlusion;
+        policy.facesDrawn = subject is null ? gpu_ !is null && occlusion : subject.pickFacesDrawn;
+        policy.reach = topoPenPressPickPx(vp);
+        policy.intent = intent; policy.legacySource = primary;
+        policy.legacy = (const(bool)[] ordinaryV, const(bool)[] ordinaryE, const(bool)[] ordinaryF) {
+            return legacyPressGather(mx, my, vp, occlusion, primary, ordinaryV, ordinaryE, ordinaryF, legacyIndex);
+        };
+        return toolPressAt(mx, my, vp, policy);
+    }
+
+    // The c35 gather is restricted before reduction; its integer reach and local
+    // visibility points precede the shared half-pixel cascade (9528 amendment).
+    package(vibe3d.editing.tools.interactive.tools.edit.topology_pen) auto legacyPressGather(int mx, int my, const ref Viewport vp, bool occlusion,
+            vibe3d.editing.selection.query.hover_state.ToolPressSource primary, const(bool)[] ordinaryV = null,
+            const(bool)[] ordinaryE = null, const(bool)[] ordinaryF = null, int source = 0) {
+        import vibe3d.editing.selection.query.hover_state : LegacyPressGather, ToolPressTarget, pickDistances,
+            kCascadeVertex, kCascadeEdge, kCascadePolygon;
+        const m = mesh;
+        LegacyPressGather result;
+        if (m is null) return result;
+        bool shown(Vec3 p) { return !occlusion || pressVisible(p, vp); }
+        scope admitV = (int i, Vec3 p) => (ordinaryV is null || !ordinaryV[i]) && !m.isVertexHidden(i) && shown(p);
+        Vec3 edgePoint = Vec3(0, 0, 0);
+        scope admitE = (int i, Vec3 p) {
+            if ((ordinaryE !is null && ordinaryE[i]) || m.isEdgeHidden(i) || !shown(p)) return false;
+            edgePoint = p; return true;
+        };
+        float vertexMetric = float.nan, edgeMetric = float.nan;
+        const vi = findSourceVertex(mx, my, vp, kTopoPenSnapAuto, admitV, &vertexMetric);
+        const ei = findRingSeedEdge(mx, my, vp, kTopoPenSnapAuto, admitE, &edgeMetric);
+        const fi = occlusion ? pickPrimaryFace(mx, my, vp) : -1;
+        const aim = aimSpace(vp, primary.space);
+        bool at(uint v, out float[2] q) {
+            ImVec2 p;
+            if (!projectLocalPt(m.vertices[v], aim, p)) return false;
+            q = [p.x, p.y]; return true;
+        }
+        float[2] pv; float[2][2] pe;
+        const face = fi >= 0 && fi < cast(int)m.faces.length && m.faces[fi].length >= 3
+            && (ordinaryF is null || !ordinaryF[fi]);
+        result.distances = pickDistances(mx, my, vi >= 0 && at(vi, pv) ? &pv : null,
+            ei >= 0 && at(m.edges[ei][0], pe[0]) && at(m.edges[ei][1], pe[1]) ? &pe : null, face);
+        if (vi >= 0) result.vertex = ToolPressTarget(kCascadeVertex, vi, source, primary.space.toWorldPoint(m.vertices[vi]), primary, vertexMetric);
+        if (ei >= 0) result.edge = ToolPressTarget(kCascadeEdge, ei, source, primary.space.toWorldPoint(edgePoint), primary, edgeMetric);
+        if (face) result.polygon = ToolPressTarget(kCascadePolygon, fi, source, Vec3.init, primary);
+        return result;
+    }
+
+    private bool pressVisible(Vec3 pLocal, const ref Viewport vp) {
+        auto m = mesh;
+        if (m is null) return true;
+        if (removePick_ is null) removePick_ = new BvhPick();
+        const ms = primaryModelSpace();
+        const AimViewport vpAim = aimSpace(vp, ms);
+        ImVec2 q;
+        if (!projectLocalPt(pLocal, vpAim, q)) return true;
+        Vec3 org, dir;
+        screenPointToRay(q.x, q.y, vp, org, dir);
+        immutable Vec3 pw = ms.isIdentity ? pLocal : ms.toWorldPoint(pLocal);
+        immutable float tElem = dot(pw - org, dir) / dot(dir, dir);
+        SurfaceHit h;
+        if (!removePick_.pickSurfaceRay(org, dir, *m, ms, h)) return true;
+        return h.t >= tElem - 1e-4f * (1.0f + tElem);
+    }
+
+    // The hover indicator element `draw()` actually paints: the RESOLVED grab
+    // target (`hoverGrabElem_`) filtered by the two display toggles (task
+    // 0499). `draw()` switches on THIS, never on `hoverGrabElem_` directly, so
+    // the toggle cannot be honoured in one of the two places and forgotten in
+    // the other — and so a unittest can pin the drawn outcome without an ImGui
+    // draw list.
+    //
+    // Display-only, by construction: this never feeds `armMoveElement`, so a
+    // hidden indicator still grabs exactly the same element on a press.
+    // Hiding the marker does not disable the grab — that would be a behavior
+    // claim nothing measured.
+    //
+    // `MoveElem.Face` passes through unfiltered: the reference has two
+    // toggles, not three, and inventing a `showPolygon` here would be exactly
+    // the kind of guessed knob task 0499 exists to refuse.
+    package(vibe3d.editing.tools.interactive.tools.edit.topology_pen) MoveElem hoverIndicatorElem() const {
+        final switch (hoverGrabElem_) {
+        case MoveElem.Vertex: return showVertex_ ? MoveElem.Vertex : MoveElem.None;
+        case MoveElem.Edge:   return showEdge_   ? MoveElem.Edge   : MoveElem.None;
+        case MoveElem.Face:   return MoveElem.Face;
+        case MoveElem.None:   return MoveElem.None;
+        }
+    }
+
+    // The border-run TRIM (task 0486, measured — implementer contract C-4 in
+    // toolcards/topology_pen/dragweld_dupedge_loopscope_capture.md, PRIVATE).
+    //
+    // The gather and the COMMITTED SET are two different sets, and only the
+    // gather was ported. `Mesh.selectLoopEdges` is the right gather — its
+    // border branch walking the whole open boundary is what the reference's
+    // own gather does, confirmed edge-for-edge on a 12-edge perimeter. What
+    // was missing is the filter the reference applies between gathering and
+    // committing, and only when the pressed edge is a BORDER edge:
+    //
+    //     4x4 grid, top border seed:  gather 12 (whole perimeter) -> commit 3
+    //     flat annulus, outer border: gather  8 (closed ring)     -> commit 8
+    //
+    // So it is a no-op on a CLOSED boundary and only bites on an OPEN one —
+    // which is exactly why a port that never trims looks correct on a cylinder
+    // and duplicates the entire perimeter of a retopo patch. That 12-vs-3 is
+    // the owner-reported "it takes all edges".
+    //
+    // The rule: keep the seed, walk the border chain outward from BOTH of its
+    // endpoints, and stop at the first chain-end vertex with a single incident
+    // polygon (a patch corner). The annulus is unchanged because its boundary
+    // has no such vertex — which also refutes any GEOMETRIC co-linearity
+    // phrasing of the rule: that boundary turns 45 degrees at every vertex and
+    // still survives whole. The predicate is topological.
+    //
+    // "One incident polygon" and "valence 2" are the SAME test here, and that
+    // is a structural fact, not a property of the rigs the capture happened to
+    // use. The trim only ever evaluates a vertex it reached ALONG A BORDER EDGE
+    // (the seed is border-gated by `armDuplicateOnEdge` /
+    // `onDupLoopShiftRmbDown`, and every hop below is filtered by
+    // `isEdgeBorder`), so that vertex's dart fan is OPEN — and an open fan
+    // yields corners+1 edges (`VertexEdgeRange` emits the extra open-end edge)
+    // against corners faces (`VertexFaceRange`):
+    //
+    //     vertexValence(v) == polyCount(v) + 1     for every vertex the walk
+    //                                              can reach
+    //
+    // so `polyCount <= 1` and `vertexValence == 2` coincide identically.
+    // Combinatorially (this also covers an unordered-fan enumerator): every
+    // polygon at v occupies exactly two of v's edge slots, so
+    // 2*polyCount(v) == sum over e at v of |faces(e)|; at valence 2 each
+    // incident polygon must use BOTH of v's edges, hence
+    // |faces(e1)| == |faces(e2)| == polyCount(v), and the edge the walk
+    // arrived on is a border edge with exactly one face, so polyCount == 1.
+    // The converse is immediate. The polygon-count phrasing is the one coded
+    // because the reference's own branching is on the polygon count.
+    //
+    // CAVEAT, and it is a real one: the equivalence holds for the DART-FAN
+    // degree only. A degree read off the raw `edges[]` array
+    // (`Mesh.edgeNeighbors`) separates the two phrasings, because a face-less
+    // edge is listed in `edges[]` but owns no dart — and this tool creates
+    // face-less edges itself (`BuildCase.Edge` in `buildFromSource`). A wire
+    // spur on a patch corner reads raw degree 3 while the fan reads valence 2.
+    // Wire is not even needed to separate them: two quads meeting at ONE
+    // vertex read raw degree 4 there against fan valence 2, because the fan
+    // sees only one of the two fans. Do NOT "simplify" the stop test onto that
+    // enumerator: the reference behaviour on either shape is unmeasured. The
+    // equivalence and both separating shapes are pinned by a unittest in the
+    // package's test module.
+    package(vibe3d.editing.tools.interactive.tools.edit.topology_pen) int[] trimBorderRunAroundSeed(const(int)[] gathered, int seed) {
+        auto m = mesh;
+        if (m is null || seed < 0 || seed >= cast(int)m.edges.length) return null;
+
+        // Only edges the gather already returned may survive — the trim
+        // narrows a set, it never invents an edge the walk did not reach.
+        bool[int] inSet;
+        foreach (ei; gathered) inSet[ei] = true;
+        if ((seed in inSet) is null) return [seed];
+
+        size_t polyCount(uint vi) {
+            size_t n = 0;
+            foreach (fi; m.facesAroundVertex(vi)) ++n;
+            return n;
+        }
+
+        int[] run = [seed];
+        bool[int] taken;
+        taken[seed] = true;
+
+        foreach (endpoint; [m.edges[seed][0], m.edges[seed][1]]) {
+            uint cur  = endpoint;
+            int  came = seed;
+            while (true) {
+                if (polyCount(cur) <= 1) break;   // chain-end corner -> stop this direction
+                int next = -1;
+                foreach (ei; m.edgesAroundVertex(cur)) {
+                    immutable int e2 = cast(int) ei;
+                    if (e2 == came) continue;
+                    if ((e2 in inSet) is null) continue;
+                    if ((e2 in taken) !is null) continue;
+                    if (!(*m).isEdgeBorder(cast(uint) e2)) continue;
+                    next = e2;
+                    break;
+                }
+                if (next < 0) break;
+                taken[next] = true;
+                run ~= next;
+                auto ep = m.edges[next];
+                cur  = (ep[0] == cur) ? ep[1] : ep[0];
+                came = next;
+            }
+        }
+        return run;
+    }
+
+    // The Duplicate slot's EDGE outcome (task 0486, contract C-0/C-1/C-4).
+    // `loopFlag` is the slot's effective Edge Loop: `edgeLoop_` for Shift+LMB,
+    // forced true for Shift+RMB (C-1 — the chord stores the literal 1 and
+    // never reads the attribute, measured both directions).
+    //
+    // C-0 gates everything else here: Duplicate requires a BORDER edge. On an
+    // interior edge the reference silently runs MOVE instead — so a Shift+LMB
+    // there is a 2-vertex element move and a Shift+RMB there is a move-loop,
+    // NOT a declined press and NOT a duplicate. This is the gate that makes
+    // the rest of the contract coherent, and it was found only because the
+    // capture recorded the engine's own guard value per press.
+    private bool armDuplicateOnEdge(ref const SDL_MouseButtonEvent e, ref VectorStack vts,
+                                    const ref Viewport vp, int seed, bool loopFlag) {
+        auto m = mesh;
+        if (m is null || seed < 0 || seed >= cast(int)m.edges.length) return false;
+
+        if (!(*m).isEdgeBorder(cast(uint) seed)) {
+            // Interior seed -> the Move family, per the effective loop flag.
+            if (loopFlag) return stamp(onMoveLoopRmbDown(e, vts), PenGesture.MoveLoop,
+                                       InputButton.Left);
+            return stamp(armMoveElement(e, vts, vp), PenGesture.PlaceOrMove, InputButton.Left);
+        }
+
+        // The LOOP variant is `onDupLoopShiftRmbDown`'s job (gather + trim);
+        // this path is the single pressed edge, so there is exactly one
+        // implementation of each and no chance of the two drifting apart.
+        int[] edges = [seed];
+
+        dupEdgeSeed_   = seed;
+        dupEdgeEdges_  = edges;
+        dupEdgeStartX_ = dupEdgeCurX_ = e.x;
+        dupEdgeStartY_ = dupEdgeCurY_ = e.y;
+        dupEdgeArmed_  = true;
+        return true;
+    }
+
+    // Resolve the element under a Move-family press and arm it (task 0484).
+    // `srcVert` is the caller's already-computed `findSourceVertex` result,
+    // passed in rather than recomputed so the pick runs exactly once per
+    // press. Returns false — arming nothing — when no element resolves.
+    //
+    // The edge/face picks here repeat the two `overPrimaryEdgeOrFace` just
+    // ran for the caller's on-geometry gate. Deliberately NOT folded into one
+    // pass: the gate answering true while this returns false — a degenerate
+    // (<3 corner) face, a stale index — must stay a DECLINE, and folding them
+    // would turn exactly that case into a fall-through to Place, which is the
+    // stray-vertex defect 0482 closed. One extra edge scan and one BVH pick,
+    // per PRESS (never per motion event), buys that guarantee.
+    private bool armMoveElement(ref const SDL_MouseButtonEvent e, ref VectorStack vts,
+                                const ref Viewport vp, bool axis = false) {
+        auto m = mesh;
+        if (m is null) return false;
+
+        int index;
+        immutable MoveElem kind = resolveGrabTarget(e.x, e.y, vp, index, pickOcclusionOf(vts), vts.get!SubjectPacket());
+        if (kind == MoveElem.None) return false;
+        return armMoveOn(kind, index, e, axis, pickOcclusionOf(vts));
+    }
+
+    // Fill's destructive refusal (task 0488) grabs a border edge the search
+    // ALREADY resolved, not one a fresh pick would find, so the arm is
+    // factored out of `armMoveElement` above rather than duplicated: one
+    // definition of what "the Move gesture is now armed on this element"
+    // means, so the two entry points can never drift.
+    private bool armMoveOnEdge(uint ei, ref const SDL_MouseButtonEvent e, bool occlusion = false) {
+        auto m = mesh;
+        if (m is null || ei >= m.edges.length) return false;
+        return armMoveOn(MoveElem.Edge, cast(int)ei, e, false, occlusion);
+    }
+
+    private bool armMoveOn(MoveElem kind, int index, ref const SDL_MouseButtonEvent e,
+                           bool axis = false, bool occlusion = false) {
+        auto m = mesh;
+        if (m is null) return false;
+
+        uint[] verts;
+        final switch (kind) {
+        case MoveElem.Vertex:
+            if (index < 0 || index >= cast(int)m.vertices.length) return false;
+            verts = [cast(uint) index];
+            break;
+        case MoveElem.Edge:
+            if (index < 0 || index >= cast(int)m.edges.length) return false;
+            verts = [m.edges[index][0], m.edges[index][1]];
+            break;
+        case MoveElem.Face:
+            if (index < 0 || index >= cast(int)m.faces.length) return false;
+            verts = m.faces[index].dup;
+            break;
+        case MoveElem.None: return false;
+        }
+        if (verts.length == 0) return false;
+
+        // A face's corner list can name the same vertex twice on a
+        // malformed polygon; moving one twice is harmless but recording it
+        // twice in `moveBase_` is not (the second copy would carry a
+        // stale base). Deduplicate, preserving order.
+        uint[] uniq;
+        foreach (vi; verts) {
+            if (vi >= m.vertices.length) return false;   // stale pick — arm nothing
+            bool seen = false;
+            foreach (u; uniq) if (u == vi) { seen = true; break; }
+            if (!seen) uniq ~= vi;
+        }
+
+        moveElem_    = kind;
+        moveVerts_   = uniq;
+        moveFrame_ = new EvaluatedMoveWeld(*m, uniq, innerSnap_, occlusion);
+        moveBase_.length = uniq.length;
+        foreach (i, vi; uniq) moveBase_[i] = m.vertices[vi];
+        moveAnchor_  = pressAnchor(kind, index, e.x, e.y, pressVp_);
+        moveStartX_  = e.x;
+        moveStartY_  = e.y;
+        moveDirty_   = false;
+        moveAxisLock_ = axis;
+        moveAxis_    = -1;
+        moveArmed_   = true;
+        grabbedVert_ = (kind == MoveElem.Vertex) ? cast(int) uniq[0] : -1;
+        // The arm decides the row (Fill's refusal ends as a Move, plan 8646
+        // [R2-4]), whether or not the drag then moves anything.
+        noteStep(factories_.move, "Topology Move");
+        return true;
+    }
+
+    // The grab point of a Move press, local (K-SC2 rule 2, E_q1/E_q3): the
+    // element point UNDER the press pixel — a vertex itself, the edge point
+    // nearest the press ray, the polygon's plane under it (rule 2's "probably
+    // the same" for a polygon); the corner mean when that ray misses.
+    package(vibe3d.editing.tools.interactive.tools.edit.topology_pen) Vec3 pressAnchor(MoveElem kind, int index, int px, int py, const ref Viewport vp) {
+        auto m = mesh;
+        if (kind == MoveElem.Vertex) return moveBase_[0];
+        if (kind == MoveElem.Edge) {
+            const a = m.vertices[m.edges[index][0]], b = m.vertices[m.edges[index][1]];
+            return a + (b - a) * ratioOnSegment(px, py, vp, a, b);
+        }
+        const Vec3 mean = meanOf(moveBase_);
+        Vec3 o, d, hit;
+        screenPointToLocalRay(cast(float) px, cast(float) py, vp, primaryModelSpace(), o, d);
+        return rayPlaneIntersect(o, d, mean, m.faceNormal(cast(uint) index), hit) ? hit : mean;
+    }
+
+    // Where the armed moving set belongs for a cursor at (px,py) — the ONE
+    // place the Move law lives, so the live preview and the release commit
+    // can never drift apart (task 0484). Every element kind is one RIGID drag
+    // of its grab point (`moveAnchor_`, the point under the press) by `grabOffset`,
+    // then the constraint's geometry pass on each moved vertex
+    // (`carriedTargets`; K-DW, K-SC rules 3-4). A click moves nothing (K-noop).
+    //
+    // Always computed from `moveBase_`, never from the live positions, so N
+    // motion events produce the same answer as one — no compounding.
+    package(vibe3d.editing.tools.interactive.tools.edit.topology_pen) Vec3[] moveTargets(int px, int py, const ref Viewport vp) {
+        immutable int dx = px - moveStartX_, dy = py - moveStartY_;
+        moveOffset_ = Vec3(0, 0, 0);
+        placementSnap_ = SnapResult.init;
+        Vec3 off, snapCenter;
+        if (releaseIsClick(dx, dy) || !grabOffset(moveAnchor_, dx, dy, vp, off, movePerspectiveGuideAccepted_, true, &snapCenter))
+            return moveBase_.dup;
+        if (moveAxisLock_) off = onElectedAxis(off);
+        moveOffset_ = off;
+        auto targets = carriedTargets(moveBase_, off);
+        if (!moveAxisLock_ && moveElem_ == MoveElem.Vertex && targets.length == 1) {
+            uint[] exclude = moveVerts_.dup;
+            float sx, sy, sz;
+            if (projectToWindowFull(snapCenter, vp, sx, sy, sz))
+                placementSnap_ = placementElection(snapCenter,
+                    cast(int)sx, cast(int)sy, vp, dragSnap_, exclude);
+            // Ordinary placement is source-aware; Ctrl keeps its component guide
+            // and axis/geometry order. Welding remains a separate edited-mesh client.
+            if (placementSnap_.snapped)
+                targets[0] = primaryModelSpace().toLocalPoint(placementSnap_.worldPos);
+        }
+        return targets;
+    }
+
+    // The axis move (K-FH rule 5, cells KFH_TS_V/E/VSK/ESK): the first
+    // evaluation past the click gate elects the world axis of the offset's
+    // largest |component|, a tie going to the HIGHER axis (`edgeSlideAxis`);
+    // every evaluation then keeps that one world channel of `offLocal`, none
+    // while nothing is elected (a zero offset: ours, gap row 628).
+    private Vec3 onElectedAxis(Vec3 offLocal) {
+        const ms = primaryModelSpace();
+        const Vec3 aW = ms.toWorldPoint(moveAnchor_);
+        const Vec3 dW = ms.toWorldPoint(moveAnchor_ + offLocal) - aW;
+        if (moveAxis_ < 0) moveAxis_ = edgeSlideAxis(dW, kEdgeSlideTieEps);
+        const Vec3 kW = Vec3(moveAxis_ == 0 ? dW.x : 0.0f, moveAxis_ == 1 ? dW.y : 0.0f,
+                             moveAxis_ == 2 ? dW.z : 0.0f);
+        return ms.toLocalPoint(aW + kW) - moveAnchor_;
+    }
+
+    // Requested component guides precede world-axis election; accepted
+    // perspective point guides skip the legacy recast, then the independent
+    // geometry pass consumes H+Offset (9528, perspective guide amendment).
+    package(vibe3d.editing.tools.interactive.tools.edit.topology_pen) bool grabOffset(Vec3 anchorLocal, int dx, int dy, const ref Viewport vp,
+                            out Vec3 offLocal) {
+        bool accepted;
+        return grabOffset(anchorLocal, dx, dy, vp, offLocal, accepted, false);
+    }
+
+    package(vibe3d.editing.tools.interactive.tools.edit.topology_pen) bool grabOffset(Vec3 anchorLocal, int dx, int dy, const ref Viewport vp,
+                            out Vec3 offLocal, out bool acceptedPerspective, bool perspectiveGuideRequested,
+                            Vec3* snapCenter = null) {
+        const ms = primaryModelSpace();
+        HandleDrag grab;
+        grab.press(ms.toWorldPoint(anchorLocal), 0, 0);
+        bool skip;
+        auto cs = liveConstrainStage();
+        import vibe3d.editing.tools.interactive.drag : ComponentGuideResolver;
+        import vibe3d.util.spatial.spatial : isOrtho;
+        const env = cs is null ? typeof(cs.guideEnvironment(false, vp)).init
+                               : cs.guideEnvironment(moveAxisLock_ && (isOrtho(vp) || perspectiveGuideRequested), vp);
+        const guidedRoute = cs !is null && env.supported();
+        bool acceptedGuide;
+        scope ComponentGuideResolver guide;
+        if (guidedRoute) guide = (Vec3 u) {
+            const result = cs.componentGuide(u, env);
+            acceptedGuide = result.acceptedMask != 0;
+            return result;
+        };
+        Vec3 toW = grab.client(dx, dy, DragFrame(DragKind.viewPlane), vp, skip, guide);
+        if (skip) return false;
+        acceptedPerspective = acceptedGuide && !isOrtho(vp);
+        if (snapCenter !is null) *snapCenter = toW;
+        // 9504: inventory does not compose a constraint. Free movement presets
+        // retain element depth; an explicit enabled handle constraint still applies.
+        if ((!guidedRoute || (!isOrtho(vp) && !acceptedGuide))
+            && (!hasFlag(ToolFlag.NoBackgroundConstraint) || (cs !is null && cs.enabled && cs.handle))) {
+            float qx, qy, qz;
+            Vec3 hitW;
+            if (projectToWindowFull(toW, vp, qx, qy, qz) && backgroundRayHit(qx, qy, vp, hitW)) toW = hitW;
+        }
+        offLocal = ms.toLocalPoint(toW) - anchorLocal;
+        return true;
+    }
+
+    // Every carried vertex at `base_i + offset` through the constraint's
+    // geometry pass (`passLocal`, K-SC rule 4); exactly `base` at a zero
+    // offset (L24 Z-exact). The drag kernels and the re-apply share it.
+    private Vec3[] carriedTargets(const(Vec3)[] base, Vec3 offLocal) {
+        const bool zero = offLocal.x == 0 && offLocal.y == 0 && offLocal.z == 0;
+        auto t = new Vec3[](base.length);
+        const sources = zero ? null : passSources();
+        foreach (i, b; base) t[i] = zero ? b : passLocal(b, b + offLocal, sources);
+        return t;
+    }
+
+    // The background snapshot the geometry pass reads, fetched ONCE per
+    // commit by the caller; empty when the pass is the identity (geometry off,
+    // the constraint disabled, no background), so a caller can skip it.
+    private const(BackgroundSource)[] passSources() {
+        auto cs = liveConstrainStage();
+        if (cs !is null && (!cs.enabled || cs.geom == ConstrainGeom.Off)) return null;
+        return backgroundSourcesFull();
+    }
+
+    // The constraint's geometry pass (`ConstrainStage.pass`, in the press's
+    // view) over a primary-LOCAL point `local` placed from `fromLocal`, local
+    // again: Point the nearest foot, Screen the view re-cast, off the point
+    // itself; a pipeline-less pen runs its own composition, Point. `sources`
+    // is the caller's `passSources()`; empty, the point comes back untouched.
+    // The ONE after-placement pass of this tool.
+    private Vec3 passLocal(Vec3 fromLocal, Vec3 local, const(BackgroundSource)[] sources) {
+        if (sources.length == 0) return local;
+        const ms = primaryModelSpace();
+        const Vec3 w = ms.toWorldPoint(local), motion = w - ms.toWorldPoint(fromLocal);
+        if (auto cs = liveConstrainStage()) return ms.toLocalPoint(cs.pass(w, pressVp_, motion, sources));
+        const ConstrainPacket point = { enabled: true, geom: ConstrainGeom.Point };
+        return ms.toLocalPoint(constrainPoint(w, motion, pressVp_, sources, point));
+    }
+
+    private static Vec3 meanOf(const(Vec3)[] ps) {
+        Vec3 c = Vec3(0, 0, 0);
+        foreach (p; ps) c = c + p;
+        return ps.length ? c * (1.0f / ps.length) : c;
+    }
+
+    // Apply `targets` to the armed moving set in place — the live half of the
+    // drag (task 0484). No history: the press step records once, at release.
+    // Sets `moveDirty_` so a gesture that never actually moved anything welds
+    // nothing. A step publishes CONFINED (task 9493): the moving set and its
+    // partners are the snap exclusion, so the pair table stays the press-time one;
+    // the move's end (`settleMove`) publishes once unconfined. `search` (a live
+    // step, `liveSearch`) snaps members from their RAW targets; the release writes
+    // the raw targets and its weld query absorbs what would snap (a snapped write
+    // would degenerate the target's own polygons before that query judges them).
+    package(vibe3d.editing.tools.interactive.tools.edit.topology_pen) void applyMoveTargets(const(Vec3)[] targets, ref VectorStack vts,
+                                  bool search = false) {
+        auto m = mesh;
+        if (m is null || targets.length != moveVerts_.length) return;
+        if (moveFrame_ !is null && dragSnap_.enabled && !moveAxisLock_) {
+            applyEvaluatedMove(targets, vts);
+            return;
+        }
+        foreach (vi; moveVerts_)
+            if (vi >= m.vertices.length) return;   // stale arm — defensive
+
+        enum float kMoveEps = 1e-4f;   // stationary-grab / all-on-surface no-move guard
+        bool changed = false;
+        foreach (i, vi; moveVerts_)
+            if ((targets[i] - m.vertices[vi]).length > kMoveEps) { changed = true; break; }
+        if (!changed) return;
+
+        // A member snaps from its RAW target (K-W2b rule 3; K-EE: an edge member
+        // searches only with single-polygon support); once one snaps the others stay at their base (K-W2c
+        // rule 4); otherwise an on-plane one is projected. In CORNER order, each
+        // written position mirrored onto its visible partner, last write wins (rule 1).
+        import vibe3d.editing.selection.query.symmetry : mirrorPosition, projectOnPlane;
+        auto sp = vts.get!SymmetryPacket();
+        if (sp && sp.pairOf.length != m.vertices.length) sp = null;
+        const Viewport vp = viewportOf(vts);
+        uint[] exclude = moveVerts_.dup;
+        if (sp) foreach (vi; moveVerts_) if (sp.pairOf[vi] >= 0) exclude ~= sp.pairOf[vi];
+        auto t = new int[](moveVerts_.length);
+        bool snapped = false;
+        foreach (i, vi; moveVerts_) {
+            const bool ask = search && moveEndpointSearch(moveElem_ == MoveElem.Edge ? SnapType.Edge : SnapType.Vertex,m.vertexPolygonCounts()[vi]);
+            t[i] = ask ? rawSnapTarget(targets[i], vp, exclude) : -1;
+            snapped = snapped || t[i] >= 0;
+        }
+        Vec3[] points;
+        foreach (i, vi; moveVerts_) {
+            const Vec3 w = t[i] >= 0 ? m.vertices[t[i]] : snapped ? moveBase_[i]
+                         : sp && sp.onPlane[vi] ? projectOnPlane(*sp, targets[i]) : targets[i];
+            points~=w;
+        }
+        import vibe3d.editing.selection.query.symmetry : writeMovePositions;
+        writeMovePositions(*m,sp,moveVerts_,points);
+        m.publishConfinedChange(MeshEditScope.Position);
+        moveDirty_ = true;
+
+        m.syncSelection();
+        if (gpu_ !is null) gpu_.upload(*m);
+        refreshDisplay(m, gpu_);
+    }
+
+    private void applyEvaluatedMove(const(Vec3)[] targets, ref VectorStack vts) {
+        auto m = mesh;
+        // Resolve the press-owned population before restoring or publishing a frame.
+        if (!moveFrame_.ownsSource(moveVerts_,moveBase_)) return;
+        if (!moveFrame_.evaluated) {
+            bool changed;
+            foreach(i,p;targets) if((p-moveBase_[i]).length>1e-4f) changed=true;
+            if(!changed) return;
+        }
+        const vp = viewportOf(vts);
+        const type = moveElem_ == MoveElem.Vertex ? SnapType.Vertex
+                   : moveElem_ == MoveElem.Edge ? SnapType.Edge : SnapType.Polygon;
+        const ms = primaryModelSpace();
+        const raw = moveAnchor_ + moveOffset_;
+        Vec3 ro, rd;
+        screenPointToRay(moveStartX_+0.5f,moveStartY_+0.5f,vp,ro,rd);
+        const ray = ms.toLocalDir(rd);
+        moveFrame_.freezeSymmetry(vts.get!SymmetryPacket());
+        auto live = searchMoveElement(*m, ms, vp, moveAnchor_, type,
+            (SnapType t, int i) => admitsMoveElement(*m,t,i,moveFrame_.liveSource,
+                false,false,backFace_,ray),
+            (Vec3 p) => !moveFrame_.occlusion || pressVisible(p,vp), moveOffset_);
+        Vec3 handle = evaluatedMoveHandle(live,raw);
+        bool ownMirror;
+        if (moveElem_==MoveElem.Vertex) {
+            ownMirror=moveFrame_.mirrorCenter(targets[0],ms,vp,
+                topoPenSnapAcceptPx(vp,dragSnap_),handle);
+            if(!ownMirror) {
+                const target=rawSnapTarget(targets[0],vp,moveFrame_.liveSource);
+                handle=target>=0 ? m.vertices[target] : targets[0];
+            }
+        }
+        if (!moveFrame_.beginFrame(*m,handle)) return;
+        auto sp = moveFrame_.symmetry;
+        const frameRaw=moveElem_==MoveElem.Vertex ? targets.dup : carriedTargets(moveBase_,handle-moveAnchor_);
+        import vibe3d.editing.selection.query.symmetry : writeMovePositions;
+        writeMovePositions(*m,sp,moveVerts_,frameRaw);
+        m.publishConfinedChange(MeshEditScope.Position);
+        auto held = searchMoveElement(*m,ms,vp,handle,type,
+            (SnapType t, int i) => admitsMoveElement(*m,t,i,moveVerts_,
+                true,innerSnap_,backFace_,ray,sp,moveFrame_.marked),
+            (Vec3 p) => !moveFrame_.occlusion || pressVisible(p,vp));
+        uint[2][] pairs;
+        uint[2] sourceCorners = [0u,1u], targetSide = held.side;
+        const engages = heldMoveEngages(held) && (moveElem_ == MoveElem.Edge
+            || polygonMoveSides(*m,moveVerts_,moveBase_,cast(uint)held.index,
+                handle,sourceCorners,targetSide));
+        if (engages) {
+            const uint[2] sourceSide = [moveVerts_[sourceCorners[0]],moveVerts_[sourceCorners[1]]];
+            const positions = [moveBase_[sourceCorners[0]],moveBase_[sourceCorners[1]]];
+            pairs = pairedMoveEnds(positions,sourceSide,*m,targetSide);
+            const shift = ((m.vertices[pairs[0][0]]-positions[0])
+                         +(m.vertices[pairs[1][0]]-positions[1]))*0.5f;
+            Vec3[] points;
+            foreach(i,vi;moveVerts_) {
+                Vec3 point = moveBase_[i]+shift;
+                foreach(p;pairs) if(p[1]==vi) point=m.vertices[p[0]];
+                points~=point;
+            }
+            moveFrame_.write(*m,targets,points,false);
+        } else {
+            const off=handle-moveAnchor_;
+            auto rawTargets=moveElem_==MoveElem.Vertex ? targets.dup : carriedTargets(moveBase_,off);
+            auto points=rawTargets.dup;
+            auto found=new int[](moveVerts_.length);
+            bool snapped;
+            foreach(i,vi;moveVerts_) {
+                const support=m.vertexPolygonCounts()[vi];
+                const ask=held.index<0 && moveEndpointSearch(type,support);
+                found[i]=ownMirror ? sp.pairOf[vi] : ask ? rawSnapTarget(rawTargets[i],vp,moveFrame_.marked) : -1;
+                snapped=snapped || found[i]>=0;
+            }
+            foreach(i,vi;moveVerts_) {
+                if(found[i]>=0) {
+                    import vibe3d.editing.selection.query.symmetry : projectOnPlane;
+                    points[i]=ownMirror ? projectOnPlane(*sp,rawTargets[i]) : m.vertices[found[i]];
+                    pairs~=[cast(uint)found[i],vi];
+                }
+                else if(snapped) points[i]=moveBase_[i];
+                else if(sp.onPlane.length==m.vertices.length && sp.onPlane[vi]) {
+                    import vibe3d.editing.selection.query.symmetry : projectOnPlane;
+                    points[i]=projectOnPlane(*sp,points[i]);
+                }
+            }
+            moveFrame_.write(*m,rawTargets,points,snapped && !ownMirror);
+        }
+        m.publishConfinedChange(MeshEditScope.Position);
+        moveFrame_.weld(*m,pairs);
+        // A refused kernel absorption preserves free movement (loose geometry
+        // is still a valid Move subject). Never leave a refused snap written.
+        if(pairs.length && !moveFrame_.welded) moveFrame_.write(*m,frameRaw,frameRaw,false);
+        moveWelded_=moveFrame_.welded;
+        moveDirty_=true;
+        m.syncSelection();
+        if(gpu_ !is null) gpu_.upload(*m);
+        refreshDisplay(m,gpu_);
+    }
+
+    // The constrained position-only route retains endpoint searching. Edge
+    // source support, rather than cursor travel, decides eligibility (9504).
+    private bool liveSearch(int px, int py) const {
+        return moveElem_ == MoveElem.Vertex || moveElem_ == MoveElem.Edge;
+    }
+
+    // Close an armed Move: retain the evaluated frame, or apply FINAL targets
+    // at the release's own pixel when no motion was evaluated (task 0484).
+    // The press step records that result. Disarms on the way out.
+    private void finishMove(int px, int py, const ref Viewport vp, ref VectorStack vts) {
+        scope(exit) clearMoveArm();
+        if (!moveArmed_ || moveVerts_.length == 0) return;
+        bool evaluated = moveFrame_ !is null && moveFrame_.evaluated;
+        const targets = evaluated ? null : moveTargets(px, py, vp);
+        if (!evaluated) applyMoveTargets(targets, vts);
+        evaluated = moveFrame_ !is null && moveFrame_.evaluated;
+        noteMoveOffset();
+        // The destructive landing (task 0555), inside the same step. Gated on
+        // `moveDirty_`: a grab that never moved anything cannot have been
+        // "brought to within" anything, and welding on a bare click would eat
+        // any vertex that merely happened to sit inside the acceptance radius.
+        if (!evaluated && moveDirty_ && weldMovedVertices(moveVerts_, vp, targets, vts.get!SymmetryPacket())) {
+            moveWelded_ = true;
+            afterWeld();
+        }
+        // Every evaluated weld compacted element indices. Re-elect only the
+        // readout at the retained world point; this does not evaluate geometry.
+        if (moveWelded_ && placementSnap_.snapped) {
+            float sx,sy,sz;
+            if(projectToWindowFull(placementSnap_.worldPos,vp,sx,sy,sz))
+                placementSnap_=placementElection(placementSnap_.worldPos,
+                    cast(int)sx,cast(int)sy,vp,dragSnap_);
+        }
+        // The descriptor of this press (S7a), before the resync below clears
+        // the arm. A weld compacted the indices and absorbed the grabbed
+        // vertex: the moved set is then empty.
+        noteStepDescriptor(moveElem_ == MoveElem.Vertex ? PenStepKind.VertexMove
+                         : moveElem_ == MoveElem.Edge   ? PenStepKind.EdgeMove
+                                                        : PenStepKind.PolygonMove,
+                           moveWelded_ ? null : moveVerts_,
+                           moveWelded_ ? null : moveBase_);
+        // A weld changed the TOPOLOGY, so every index a sibling gesture
+        // cached may now name different geometry.
+        if (moveWelded_) resyncSession();
+    }
+
+    // The live Offset of a Move (S7a): for an edge or a polygon the shared
+    // offset its kernel applied (`moveOffset_`, L18: anchor + offset is ON the
+    // background); an accepted perspective guide publishes the elected offset,
+    // and other vertex routes publish travel since the press. Raw: no
+    // notification, no row.
+    private void noteMoveOffset() {
+        if (moveElem_ != MoveElem.Vertex || movePerspectiveGuideAccepted_) { writeOffset(moveOffset_); return; }
+        if(moveFrame_ !is null && moveFrame_.evaluated) { writeOffset(moveFrame_.offset); return; }
+        auto m = mesh;
+        if (m is null || moveVerts_.length == 0 || moveBase_.length != moveVerts_.length)
+            return;
+        Vec3 now = Vec3(0, 0, 0), was = Vec3(0, 0, 0);
+        foreach (i, vi; moveVerts_) {
+            if (vi >= m.vertices.length) return;
+            now = now + m.vertices[vi];
+            was = was + moveBase_[i];
+        }
+        writeOffset((now - was) * (1.0f / moveVerts_.length));
+    }
+
+    // The Move Loop's offset (L18, D19): the grab offset (`grabOffset`) of the PRESSED
+    // edge's midpoint (not the loop's); zero on a click. Written raw
+    // as the live Offset, and the release's kernel applies it.
+    private Vec3 loopOffset(int dx, int dy, const ref Viewport vp) {
+        auto m = mesh;
+        Vec3 off = Vec3(0, 0, 0);
+        if (m is null || moveLoopSeed_ < 0 || moveLoopSeed_ >= cast(int)m.edges.length
+            || releaseIsClick(dx, dy)) return off;
+        const e = m.edges[moveLoopSeed_];
+        if (!grabOffset((m.vertices[e[0]] + m.vertices[e[1]]) * 0.5f, dx, dy, vp, off))
+            return Vec3(0, 0, 0);
+        return off;
+    }
+
+    private void noteLoopOffset(int dx, int dy, const ref Viewport vp) {
+        writeOffset(loopOffset(dx, dy, vp));
+    }
+
+    private void writeOffset(Vec3 d) {
+        offsetX_ = d.x;
+        offsetY_ = d.y;
+        offsetZ_ = d.z;
+    }
+
+    // The press's descriptor, written at its end by the Move-family handler
+    // that ran (S7a): its kind, the moved vertices and their press-image
+    // positions — carried, never inferred from a mesh diff (R1-7).
+    private void noteStepDescriptor(PenStepKind kind, const(uint)[] verts,
+                                    const(Vec3)[] orig) {
+        stepKind_  = [kind];
+        stepVerts_ = verts.dup;
+        stepOrig_  = orig.dup;
+    }
+
+    /// Post-weld housekeeping shared by the two Move commit paths: the mesh
+    /// has been rebuilt and compacted underneath the display, so re-sync
+    /// selection and re-upload. `weldVertexPairs` has already fired its own
+    /// `commitChange(Geometry)`.
+    private void afterWeld() {
+        auto m = mesh;
+        if (m is null) return;
+        m.syncSelection();
+        // Both calls under the gpu guard — `commitMoveLoop`'s shape, not
+        // `applyMoveTargets`'s: `refreshDisplay` dereferences the GpuMesh
+        // unconditionally once the active-mesh resolver is unset, which is
+        // exactly the state a GL-free unit rig runs in.
+        if (gpu_ !is null) { gpu_.upload(*m); refreshDisplay(m, gpu_); }
+    }
+
+    // The session's view of the open press (plan 8646): an open step IS this
+    // tool's uncommitted edit — under L5 a held step always commits a row,
+    // moved or not (§9.25 [A13-3]). `tool.reset`
+    // (`EditSession.discardOpenEdit`) and a document replace (the disarm
+    // seam) cancel it before their drop: the press image comes back, the arms
+    // clear, the session's pending step ends and nothing is recorded.
+    override bool hasUncommittedEdit() const { return stepOpen_; }
+
+    override void cancelUncommittedEdit() {
+        discardOpenGesture();
+        sessionOperationEnded();
+        stepOpen_ = false;   // a later press must open its own step [R4-3]
+        heldMask_ = inertButtons_ = 0;
+    }
+
+    // Throw the open press's gesture away: the press image comes back, every
+    // arm clears and the display is re-uploaded. Shared by the cancel above and
+    // a release while another pen button is held (`onMouseButtonUp`), which
+    // then closes the step as an unchanged row.
+    private void discardOpenGesture() {
+        auto m = mesh;
+        if (m !is null && stepOpen_ && basis_.filled) basis_.restore(*m);
+        // The operation context goes back to the press's too: defaults, as
+        // the press opened it (S7a).
+        writeOffset(Vec3(0, 0, 0));
+        noteStepDescriptor(PenStepKind.None, null, null);
+        resetAllGestureArms();
+        if (m is null) return;
+        m.syncSelection();
+        if (gpu_ !is null) { gpu_.upload(*m); refreshDisplay(m, gpu_); }
+    }
+
+    // Drop the Move arm. Nothing is recorded here: the press step owns the
+    // row. A second button pressed while a LEFT Move drag is held ends the
+    // drag here (`openPressStep`): the Move's row keeps what it wrote up to
+    // that press and the second gesture is its own row (L56).
+    private void clearMoveArm() {
+        settleMove();
+        moveArmed_   = false;
+        grabbedVert_ = -1;
+        moveElem_    = MoveElem.None;
+        moveVerts_   = null;
+        moveBase_    = null;
+        moveDirty_   = false;
+        moveWelded_  = false;
+        moveFrame_ = null;
+    }
+
+    // P3 (doc/topopen_p3_plan.md), on the Shift+LMB "Duplicate" overlay slot
+    // (gesture_map.md table A #4 — corrected from the initial mode-less
+    // draft before this phase shipped): a Shift+LMB press landing on an
+    // existing primary-layer vertex arms a drag-build gesture (source picked
+    // LIVE per press — a deliberate divergence from the reference's
+    // arm-scan caching, see the plan's owner-decision #3); it does NOT
+    // place. The build itself commits on RELEASE (`onMouseButtonUp`),
+    // reading whatever CONS-snapped surface hit that later event carries. A
+    // Shift+LMB press that does NOT land on an existing vertex has no
+    // documented gesture (Duplicate always starts on a pre-highlighted
+    // element) — don't consume, matching the dispatch default.
+    package(vibe3d.editing.tools.interactive.tools.edit.topology_pen) bool onShiftLmbDown(ref const SDL_MouseButtonEvent e, ref VectorStack vts) {
+        // Phase-3 dispatch cleanup (doc/topopen_input_dispatch_phase2_plan.md §Phase 3,
+        // same rationale as `onPlainLmbDown` above): this row's
+        // `ResetScope.AllButtons` already fires `resetAllGestureArms()` via
+        // `dispatchInput`'s `onInputResetAll()` hook before this handler runs.
+
+        Viewport vp = viewportOf(vts);
+        // The press pick (`resolveGrabTarget`); a polygon has no Duplicate gesture.
+        int picked;
+        immutable MoveElem pressed = resolveGrabTarget(e.x, e.y, vp, picked, pickOcclusionOf(vts), vts.get!SubjectPacket());
+        immutable int src = pressed == MoveElem.Vertex ? picked : -1;
+        immutable int seedEi = pressed == MoveElem.Edge ? picked : -1;
+        if (src < 0) {
+            // Not a vertex — try an EDGE (task 0485). The reference's
+            // Duplicate mode "duplicates an edge as you drag it", and widens
+            // that to a whole loop only "with Edge Loop enabled or by
+            // dragging with the right mouse button": Shift+LMB on an edge is
+            // the ONE-edge case of the operation Shift+RMB already runs, so
+            // it arms here and commits through the same `commitDupEdges`
+            // kernel with a one-element list. Dragging an edge sideways
+            // therefore builds the quad between it and its duplicate — the
+            // single most common retopo stroke, and the one this slot used to
+            // decline outright.
+            immutable int ei = seedEi;
+            if (ei < 0) return false;   // neither vertex nor edge -> no documented gesture
+
+            // Task 0486 (contract C-1): this slot READS `edgeLoop_` — measured
+            // both ways on one seed (1 quad with the flag off, 3 with it on).
+            // Its Shift+RMB sibling does the opposite and ignores the flag.
+            return armDuplicateOnEdge(e, vts, vp, ei, edgeLoop_);
+        }
+
+        // R-closed (`classifySource`): a source whose every incident edge already
+        // lies on two polygons builds nothing — the reference runs the plain
+        // vertex MOVE on it (captured: the triangle-over-quad corner, and the
+        // hub-fan's fourth drag), so the press arms that gesture and its
+        // release and record are the move's own.
+        immutable BuildCase c = classifySource(src);
+        if (c == BuildCase.None) return armMoveOn(MoveElem.Vertex, src, e, false, pickOcclusionOf(vts));
+
+        sourceVert_     = src;
+        dragArmed_      = true;
+        dragStartX_     = e.x;
+        dragStartY_     = e.y;
+        classifiedCase_ = c;
+        // N-plane's two press-time terms: the BG ray hit at the source's own
+        // pixel (the surface delta's origin) and the source's tangent plane.
+        buildPressHitOk_ = bgHitAtSourcePx(0, 0, vp, buildPressHitW_);
+        buildNormalW_    = sourceTangentNormal(src);
+        ghostTriN_       = (c == BuildCase.Tri) ? triNeighbourAt(e.x, e.y, vp) : -1;
+        return true;   // consume; the build (if any) commits on release
+    }
+
+    // P5 (doc/topopen_p5_remove_plan.md D1): the front-most PRIMARY-layer
+    // face under (mx,my), via the tool's OWN `BvhPick` — positional,
+    // orientation-independent (a back-facing face is still hit; Remove is
+    // not a front-facing-only pick), -1 on a miss (cursor off every polygon
+    // silhouette). D1 rejected the screen-space face-bounds cache that used
+    // to live in `viewcache.d` for this (its backface cull-by-normal would
+    // wrongly reject a back-facing face); task 1930 deleted that module
+    // outright, so the BVH is now the only candidate anyway.
+    // Lazily constructs `removePick_` — mirrors
+    // `findSourceVertex`'s guard shape.
+    private int pickPrimaryFace(int mx, int my, const ref Viewport vp) {
+        if (meshSrc_ is null || gpu_ is null) return -1;
+        auto m = mesh;
+        if (m is null) return -1;
+        if (removePick_ is null) removePick_ = new BvhPick();
+        // Task 0617: this picks the PRIMARY layer (per the doc comment
+        // above), so it resolves the live primary ModelSpace through the
+        // same cross-module accessor http_providers.d uses — this module
+        // has no `Document` of its own.
+        import vibe3d.documents.model.document : primaryModelSpace;
+        return removePick_.pickFace(mx, my, vp, *m, *gpu_, primaryModelSpace());
+    }
+
+    // The Remove mode's DOWN leg (P5, doc/topopen_p5_remove_plan.md D2;
+    // REWRITTEN by task 0494) — remove-on-DOWN: one press removes exactly one
+    // thing and commits it, with no `onMouseButtonUp` involvement (that handler
+    // stays LEFT-only, so this is disjoint from the P3 build / P4 Move LMB
+    // arms) and no armed state of its own, so it naturally caps at one removal
+    // per press. A held drag emits no further removes — drag-sweep Remove is
+    // UNMEASURED and stays deferred. A miss is a clean no-op but the gesture is
+    // still CONSUMED (`return true`) either way, so a Remove press never falls
+    // through to camera/selection handling.
+    //
+    // WHAT IT REMOVES IS THE CLASS OF THE ELEMENT THE PRESS LATCHED — task
+    // 0494's headline, and the thing this handler used to get wrong. It used to
+    // call `pickPrimaryFace` and delete a polygon whatever the cursor was over.
+    // Measured on one 4x4 rig, three presses, the element class read out of the
+    // engine on each:
+    //
+    //     latched   primitive                                       V/E/F
+    //     --------  ---------------------------------------------   --------
+    //     polygon   delete the polygon, keep the orphans            16/24/8
+    //     edge      DISSOLVE it (its two polygons merge into one)   16/23/8
+    //     vertex    merge its whole fan, then drop the vertex       15/20/6
+    //
+    // So an edge-latched press provably never removes a polygon, and neither
+    // does a vertex-latched one. There is no border precondition on any of the
+    // three (unlike Duplicate, which has one).
+    //
+    // The resolver is `resolveGrabTarget` — the SAME one the hover highlight
+    // paints from and the Move grab presses through. That is not a convenience:
+    // the highlight is how the user aims a destructive click, so the two must
+    // answer with one function or the highlight names one element and the press
+    // eats another.
+    //
+    // `loop` reaches only the edge primitive, because that is the only one that
+    // reads it (the dispatcher does not) — a Remove press with Edge Loop on
+    // that lands on a polygon still removes exactly that polygon.
+    private bool removeDown(ref const SDL_MouseButtonEvent e, ref VectorStack vts,
+                            bool loop) {
+        Viewport vp = viewportOf(vts);
+        int idx;
+        final switch (resolveGrabTarget(e.x, e.y, vp, idx, pickOcclusionOf(vts), vts.get!SubjectPacket())) {
+        case MoveElem.Vertex: removeVertexAt(idx);      break;
+        case MoveElem.Edge:   removeEdgeAt(idx, loop);  break;
+        case MoveElem.Face:   removeFaceAt(idx);        break;
+        case MoveElem.None:   break;   // resolved nothing — clean no-op
+        }
+        return true;
+    }
+
+    // P6 (doc/topopen_p6_addloop_plan.md Phase 2): project every EDGE of the
+    // PRIMARY layer's mesh and return the nearest within `topoPenPressPickPx`, or
+    // -1 — mirrors `findSourceVertex` above (same threshold, same
+    // self-contained no-CONS/no-cache contract), but over edges: each
+    // endpoint is projected (skipping the edge if either end is behind the
+    // camera) and the cursor's distance to the screen-space SEGMENT (not
+    // just the endpoints) is measured via `closestOnSegment2D`. O(E) per
+    // press.
+    // Generic Hover-Highlight (doc/topopen_hover_highlight_plan.md Phase 1
+    // item 4): `thresholdPx` defaults to `kTopoPenSnapAuto` (resolved to the
+    // view's own `topoPenPressPickPx(vp)` below), same rationale as
+    // `findSourceVertex` above — every existing gesture caller stays
+    // byte-identical (none pass a 3rd argument); the hover path passes
+    // `float.infinity` for RESOLUTION and a finite value for the GATE.
+    //
+    // NO admission parameter, deliberately (task 0523). This query has exactly
+    // one kind of caller — a press-time PICK — and a press pick is not
+    // snapping: no guide is registered for it, no configured range is pushed
+    // into it. It used to carry a `borderOnly` twin of `findSourceVertex`'s,
+    // added for a snap-target consumer over EDGES that was never written; no
+    // caller ever passed it. A second, unowned copy of the pen's admission
+    // rule is precisely what moving that rule onto the gesture's guide is
+    // for, so it goes. A future edge snap-target asks the guide, as the
+    // vertex one now does.
+    package(vibe3d.editing.tools.interactive.tools.edit.topology_pen) int findRingSeedEdge(int mx, int my, const ref Viewport vp,
+                                 float thresholdPx = kTopoPenSnapAuto,
+                                 scope bool delegate(int, Vec3) admit = null, float* reductionMetric = null) {
+        if (reductionMetric !is null) *reductionMetric = float.nan;
+        if (meshSrc_ is null) return -1;
+        auto m = mesh;
+        if (m is null) return -1;
+        if (thresholdPx < 0.0f) thresholdPx = topoPenPressPickPx(vp);
+        // Pixel (§1.1), built ONCE for the whole O(E) scan (§3).
+        const AimViewport vpAim = aimSpace(vp, primaryModelSpace());
+        int   best   = -1;
+        float bestD  = float.infinity;
+        // The admit sees the edge's point nearest the cursor's eye ray (local).
+        Vec3 ro, rd;
+        if (admit !is null) {
+            const ms = primaryModelSpace();
+            screenPointToRay(mx + 0.5f, my + 0.5f, vp, ro, rd);
+            if (!ms.isIdentity) { ro = ms.toLocalPoint(ro); rd = ms.toLocalDir(rd); rd = rd * (1.0f / rd.length); }
+        }
+        foreach (ei, e; m.edges) {
+            ImVec2 pa, pb;
+            if (!projectLocalPt(m.vertices[e[0]], vpAim, pa)) continue;
+            if (!projectLocalPt(m.vertices[e[1]], vpAim, pb)) continue;
+            float t;
+            float d = closestOnSegment2D(cast(float)mx, cast(float)my,
+                                        pa.x, pa.y, pb.x, pb.y, t);
+            if (d >= bestD) continue;
+            if (admit !is null && (d > thresholdPx
+                    || !admit(cast(int)ei,
+                              closestPointOnSegmentToRay(m.vertices[e[0]], m.vertices[e[1]], ro, rd))))
+                continue;
+            bestD = d; best = cast(int)ei;
+        }
+        if (best >= 0 && bestD <= thresholdPx) {
+            if (reductionMetric !is null) *reductionMetric = bestD;
+            return best;
+        }
+        return -1;
+    }
+
+    // Generic Hover-Highlight (doc/topopen_hover_highlight_plan.md Phase 2):
+    // the pure, GL-free resolution of the always-on "what's under the
+    // cursor" indicator — resolves the nearest primary VERTEX and nearest
+    // primary EDGE simultaneously (Pinned Decision 2: the spec draws both a
+    // vertex marker AND an edge line at once, never one-or-the-other), plus
+    // the boundary-edge/hatch-face state. Deliberately separate from the
+    // over-mesh GATE (`onMouseMotion`, below) — this method resolves
+    // ELEMENTS only (projection math, no BVH/GL), so it stays pure and
+    // fully unit-testable (U1-U7). `∞` threshold on both scans: "under the
+    // cursor" here means "screen-nearest", not "within N px" — the gate
+    // decides WHETHER to show it, this method decides WHAT to show.
+    package(vibe3d.editing.tools.interactive.tools.edit.topology_pen) void computeHoverIndicator(int mx, int my, const ref Viewport vp) {
+        hoverNearestVert_  = findSourceVertex(mx, my, vp, float.infinity);
+        hoverNearestEdge_  = findRingSeedEdge(mx, my, vp, float.infinity);
+        hoverBoundary_     = false;
+        hoverBoundaryFace_ = -1;
+        if (hoverNearestEdge_ >= 0) {
+            auto m = mesh;
+            if (m !is null && hoverNearestEdge_ < cast(int)m.edges.length) {
+                // MINOR-4: `isEdgeBorder` is `n == 1` EXACTLY (one incident
+                // face) — a 0-face bare edge returns false (nothing to
+                // hatch there, correctly).
+                if ((*m).isEdgeBorder(cast(uint)hoverNearestEdge_)) {
+                    hoverBoundary_ = true;
+                    foreach (fi; m.facesAroundEdge(cast(uint)hoverNearestEdge_)) {
+                        hoverBoundaryFace_ = cast(int)fi;
+                        break;   // exactly one incident face by definition
+                    }
+                }
+            }
+        }
+    }
+
+    // P6 (doc/topopen_p6_addloop_plan.md Phase 2): the directed LAYER-LOCAL
+    // endpoints `ratioFromCursor` measures the `[0,1]` ratio against (task
+    // 0619 corrected "world-space" here — every `out` below is a raw
+    // `m.vertices[]` read) — MUST
+    // match the direction `insertEdgeLoops` treats as this seed edge's
+    // p-rail, or a drag toward one end lands the cut near the OTHER end.
+    // Copied verbatim from `tools.slice.loop_slice_tool.seedRail` (exact
+    // for the CLOSED-ring case this tool scopes to; see that function's own
+    // doc comment for the open-ring caveat, inherited unchanged here).
+    private void seedRail(uint seedEdge, out Vec3 a, out Vec3 b) {
+        auto m = mesh;
+        if (m is null) return;
+        uint firstFace = uint.max;
+        foreach (fi; m.facesAroundEdge(seedEdge)) { firstFace = fi; break; }
+        if (firstFace == uint.max) {
+            uint va = m.edges[seedEdge][0], vb = m.edges[seedEdge][1];
+            a = m.vertices[va]; b = m.vertices[vb];
+            return;
+        }
+        int j0 = m.findEdgeInFace(firstFace, m.edgeKeyOf(seedEdge));
+        auto face = m.faces[firstFace];
+        uint va = face[j0], vb = face[(j0 + 1) % face.length];
+        a = m.vertices[va];
+        b = m.vertices[vb];
+    }
+
+    // P6 (doc/topopen_p6_addloop_plan.md Phase 2), generalized by P7
+    // (doc/topopen_p7_slide_plan.md Phase 2 item 2): re-project the cursor
+    // onto an arbitrary segment `[a,b]` and recover the scalar `t` the
+    // caller wants — copied verbatim from `loop_slice_tool.onMouseMotion`'s
+    // scrub math (`screenPointToRay` -> `closestPointOnSegmentToRay` ->
+    // re-project onto the UNCLAMPED `ab` direction), then clamp to `[0,1]`
+    // (REV1 point (c): `closestPointOnSegmentToRay` already clamps its
+    // returned POINT to the segment, so this clamp is a defensive backstop,
+    // not the primary mechanism). Falls back to 0.5 on a degenerate
+    // (zero-length) segment. Its one caller is `ratioFromCursor` below,
+    // which passes the armed Add Loop rail (`seedRailA_`/`seedRailB_`).
+    // NOT used by Slide: Slide is a DELTA law
+    // (`slideDeltaFromDrag`), not an absolute cursor parameterisation, and
+    // has no `[0,1]` range at all.
+    //
+    // AIMING KIND: **Closest** (task 0619,
+    // doc/tool_aiming_item_transform_plan.md §1.3), and it is the ONE kind
+    // whose correct space is WORLD — deliberately the opposite of the
+    // RayPlane law `shiftedLocalPoint` below runs:
+    //
+    //   * the closest-approach election is NOT affine-invariant. Under a
+    //     non-uniform `M` the 3D-nearest point of the LOCAL rail to the local
+    //     ray maps to a DIFFERENT point than the 3D-nearest point of the
+    //     WORLD rail to the world ray. The user scrubs along the rail as it
+    //     is DRAWN, so world is the election the cursor means;
+    //   * the result converts back for FREE: what leaves here is a RATIO
+    //     along the rail, and an affine map preserves ratios along a line —
+    //     so the world `t` IS the local `t` `insertEdgeLoops` wants. No
+    //     back-transform, no new primitive;
+    //   * applying §1.2's "move it into local" law here compiles and is
+    //     invisible at identity AND under uniform scale. That is why the
+    //     parameters say `Local` and this comment says WORLD.
+    //
+    // The one caller (`ratioFromCursor`) passes `seedRailA_`/`seedRailB_`,
+    // which `seedRail` fills from raw `m.vertices[]` — LOCAL, whatever the
+    // comment at that field once said.
+    private float ratioOnSegment(int mx, int my, const ref Viewport vp,
+                                 Vec3 aLocal, Vec3 bLocal) {
+        const ms = primaryModelSpace();
+        Vec3 a = ms.toWorldPoint(aLocal);
+        Vec3 b = ms.toWorldPoint(bLocal);
+        Vec3 origin, dir;
+        screenPointToRay(cast(float)mx, cast(float)my, vp, origin, dir);
+        Vec3 hit = closestPointOnSegmentToRay(a, b, origin, dir);
+        Vec3  ab    = b - a;
+        float denom = dot(ab, ab);
+        if (denom <= 1e-12f) return 0.5f;
+        float t = dot(hit - a, ab) / denom;
+        if (t < 0.0f) t = 0.0f;
+        if (t > 1.0f) t = 1.0f;
+        return t;
+    }
+
+    private float ratioFromCursor(int mx, int my, const ref Viewport vp) {
+        return ratioOnSegment(mx, my, vp, seedRailA_, seedRailB_);
+    }
+
+    // Slide, THE MEASURED LAW — step 1 of 2: extract the drag's dominant
+    // world-axis component.
+    //
+    //     k = argmax_j |delta[j]|   ->   returns delta[k] (SIGNED)
+    //
+    // The reference's own move delta carries exactly one live component per
+    // evaluation (axis-aligned in 20/20 captured gestures), so there the
+    // argmax merely EXTRACTS that component rather than choosing between
+    // three. Our delta (`slideDeltaFromDrag`) is a free plane drag and is
+    // generally not axis-aligned, so the argmax is load-bearing here: it is
+    // the documented generalisation, and it is what makes the slide magnitude
+    // a single world-axis projection of the pointer travel rather than the
+    // full 3D drag length.
+    //
+    // Ties (two components equal in magnitude) resolve to the LOWEST axis
+    // index — arbitrary but deterministic, which is all a tie needs; the
+    // captured data never exercises one.
+    package(vibe3d.editing.tools.interactive.tools.edit.topology_pen) static float dominantAxisDelta(Vec3 delta) {
+        final switch (dominantAxisIndex(delta)) {
+            case 0: return delta.x;
+            case 1: return delta.y;
+            case 2: return delta.z;
+        }
+    }
+
+    /// WHICH axis `dominantAxisDelta` picked (0/1/2). Split out (task 0619)
+    /// so `slideDeltaFromDrag` can carry the elected step across spaces
+    /// without a second copy of the tie rule that could drift from this one.
+    /// `dominantAxisDelta` is defined in terms of it, so there is exactly one
+    /// argmax in the file.
+    private static int dominantAxisIndex(Vec3 delta) {
+        import std.math : abs;
+        float ax = abs(delta.x), ay = abs(delta.y), az = abs(delta.z);
+        if (ax >= ay && ax >= az) return 0;
+        if (ay >= az)             return 1;
+        return 2;
+    }
+
+    // Slide, THE MEASURED LAW — step 2 of 2: the endpoint's new position.
+    //
+    //     w      = unit(neighbor - x)      // the rail, directed AWAY from
+    //                                      // the grabbed edge
+    //     offset = -deltaK * w             // |offset| == |deltaK| EXACTLY
+    //     x'     = x + offset
+    //
+    // Properties this pins, each independently verified against the captured
+    // conformance set (see the "Slide law — REFERENCE PARITY CONFORMANCE"
+    // unittest in the package's test module):
+    //   * colinear — `x'` always lies on the infinite rail LINE through
+    //     `x`/`neighbor` (max relative perpendicular 2.4e-08 measured);
+    //   * UNBOUNDED — there is deliberately NO `[0,1]` clamp. A vertex
+    //     passes through its rail neighbour and keeps going; the measured
+    //     parameter ranged over [-8.53, +4.19]. The previous implementation
+    //     clamped, which is why this is a behaviour change and not just a
+    //     re-derivation;
+    //   * both endpoints of a grabbed edge share `deltaK` — only `w` differs
+    //     (max relative difference between the two endpoints' scalars:
+    //     1.7e-08), which is why `commitSlide` takes ONE scalar for both.
+    //
+    // On the rail direction: the source contract states `w` as "the edge
+    // direction as traversed in its polygon's winding". Measured against the
+    // conformance set that holds for only 16 of the 32 determinate endpoints,
+    // because a polygon walk arrives at one endpoint of the grabbed edge and
+    // departs from the other. `unit(neighbor - x)` — equivalently, that same
+    // winding direction taken ORIENTED AWAY FROM THE GRABBED EDGE — is
+    // 32/32. Getting this backwards inverts the gesture, so the conformance
+    // unittest asserts positions, not just magnitudes.
+    //
+    // Takes `deltaK` as a DOUBLE and runs in double throughout, rounding once
+    // on return. The captured targets are float-exact but the normalisation is
+    // not: float everywhere leaves the achievable error at 8.9e-08 against a
+    // 1e-7 tolerance, and even keeping only `deltaK` at float still costs
+    // 6.0e-08 — no useful margin either way. In double it is 3.3e-08, the
+    // float STORAGE granularity of the targets themselves, i.e. the floor. The
+    // interactive caller's own scalar is float (it comes out of float viewport
+    // math) and simply widens for free; the width exists so the API is not the
+    // thing that loses the precision. A degenerate (zero-length) rail leaves
+    // `x` untouched rather than emitting NaN, and a non-finite `deltaK` is
+    // rejected outright.
+    //
+    // static + pure so it's directly unit-testable without an app-wired
+    // instance, mirroring `findRingSeedEdge`/`seedRail`'s own
+    // self-contained-helper convention.
+    private static Vec3 slideEndpointPos(Vec3 x, Vec3 neighbor, double deltaK) {
+        import std.math : sqrt, isFinite;
+        if (!isFinite(deltaK)) return x;
+        const double rx = cast(double) neighbor.x - cast(double) x.x;
+        const double ry = cast(double) neighbor.y - cast(double) x.y;
+        const double rz = cast(double) neighbor.z - cast(double) x.z;
+        const double len = sqrt(rx * rx + ry * ry + rz * rz);
+        if (!(len > 1e-12)) return x;              // degenerate rail (also catches NaN)
+        const double s = -deltaK / len;
+        return Vec3(cast(float)(cast(double) x.x + rx * s),
+                    cast(float)(cast(double) x.y + ry * s),
+                    cast(float)(cast(double) x.z + rz * s));
+    }
+
+    // Slide — THE GAIN, and the one part of this law that is deliberately
+    // NOT the reference's.
+    //
+    // Returns the signed dominant-world-axis scalar the law consumes, for a
+    // pointer that has travelled from the PRESS pixel to `(mx, my)`. Computed
+    // press->current in one shot, never accumulated: the law commits the LAST
+    // evaluation's offset, not a sum over evaluations, and a ray-plane
+    // solution is affine in the pixel so press->current is exact.
+    //
+    // FROZEN DIVERGENCE — DECIDED, NOT OVERLOOKED. The reference's own
+    // pixel->world magnitude curve is SUPERLINEAR: 0.0013099 / 0.0014310 /
+    // 0.0015664 / 0.0017854 world units per pixel at 60 / 120 / 175 / 240 px
+    // of drag, i.e. ~36% growth over a 4x range. It is not a constant that
+    // could be encoded here. It was not chased because it is not a bounded
+    // leaf computation and, more importantly, not specific to this gesture at
+    // all — it is produced by shared transform-pipeline machinery selected at
+    // runtime by whichever transform / axis / action-centre stages are live,
+    // and the same conversion feeds that reference's whole Move family. So we
+    // keep OUR gain and match everything else — axis extraction, rail
+    // direction, the offset sign relative to the rail, no clamp — exactly.
+    //
+    // Our gain is `planeDragDelta`'s most-facing-world-plane drag through the
+    // grab anchor: the same free-move conversion vibe3d's own Move gizmo
+    // uses, LINEAR in the pixel. SANITY-CHECKED against the reference scale,
+    // on the reference's own captured camera: its recorded pixel size is
+    // 1.2422e-3 world units, its view direction is (-0.716, 0.316, -0.622),
+    // so the most-facing world plane is the X plane and a ray-plane drag
+    // against it stretches by 1/|fwd.x| = 1.396 — giving at most
+    // 1.2422e-3 * 1.396 = 1.735e-3 world units per pixel, and less than that
+    // once `dominantAxisDelta` takes a single component. The reference
+    // measured 1.31e-3 (60 px) to 1.79e-3 (240 px) on that same camera, so we
+    // sit inside its band across the whole sweep rather than merely near it.
+    // That check matters more than it used to: this change also removed the
+    // `[0,1]` clamp, so the implementation is no longer bounded and a
+    // badly-scaled gain now costs more than it did. Gain, clamp removal and
+    // sign are one change.
+    //
+    // ALSO FROZEN, and on purpose: which world axis the drag selects and with
+    // WHAT SIGN. That is produced by the same opaque call as the magnitude, so
+    // the capture pins only delta -> geometry, never pixels -> delta. There is
+    // no cursor-tracking rule to copy: measured over the 20 captured gestures
+    // the reference's own slide moves WITH the pointer in just 10 of them, and
+    // two gestures with exactly OPPOSITE pixel drags along the same rail
+    // (`C_C_p`/`C_C_m`) produced the SAME motion direction, because the
+    // reference picked a different world axis for each. Our literal reading —
+    // dominant axis of the free plane drag, sign as-is — reproduces that
+    // rail-orientation-dependent character rather than papering over it. A
+    // cursor-tracking convention (flip the scalar so the grab's primary
+    // endpoint follows the pointer) was considered and REJECTED: it is
+    // unmeasured, and it would introduce a full-magnitude sign flip as the
+    // drag rotates through perpendicular to the rail. If a UX call is later
+    // made to prefer tracking, THIS function is the only place it belongs —
+    // the law below it stays untouched either way.
+    //
+    // To reopen either: the evidence trail carries `delta` for every
+    // evaluation of every captured gesture, so the curve — and the axis
+    // choice — can be re-fit offline without re-driving anything.
+    //
+    // `skip` (projection failure — degenerate viewport, anchor behind the
+    // camera) yields 0, i.e. no slide this evaluation, rather than a garbage
+    // scalar.
+    // Task 0619 §1.5 (Landing) — the two spaces this crosses, and where.
+    //
+    // The ELECTION is a WORLD choice and stays one: `planeDragDelta` builds
+    // its pixel→world Jacobian at an anchor, against the most-facing WORLD
+    // plane, from the world viewport, and the user is dragging on screen. So
+    // the anchor is lifted: `slideAnchor_` is the grabbed edge's midpoint
+    // read from `m.vertices[]`, i.e. LOCAL, and feeding a local point to a
+    // world Jacobian measured the drag gain at the wrong depth and the wrong
+    // place on screen.
+    //
+    // The MAGNITUDE is consumed as a LOCAL length: `slideEndpointPos` moves a
+    // local vertex by exactly `|deltaK|` along a rail built from two more
+    // local vertices. So the elected world step is carried into local and its
+    // length taken there. The sign is carried through unchanged — this law's
+    // axis choice and sign are frozen reference behaviour (see the block
+    // comment on `dominantAxisDelta` above: two opposite pixel drags along
+    // one rail produced the same motion direction), so there is no principled
+    // re-derivation of the sign from the local frame either.
+    //
+    // RESIDUAL, stated rather than hidden: the carried length is exact only
+    // where the local rail is parallel to the elected axis; in general `M`
+    // scales the two differently. The law is a single scalar shared by two
+    // endpoints with different rails, so no per-rail conversion exists that
+    // preserves it. This is the smallest change that puts the scalar in the
+    // space its consumer measures in.
+    private float slideDeltaFromDrag(int mx, int my, const ref Viewport vp) {
+        const ms = primaryModelSpace();
+        bool skip;
+        Vec3 d = planeDragDelta(mx, my, slideStartX_, slideStartY_,
+                                3,                    // most-facing world plane
+                                ms.toWorldPoint(slideAnchor_), vp, skip);
+        if (skip) return 0.0f;
+        immutable float kWorld = dominantAxisDelta(d);
+        if (ms.isIdentity) return kWorld;   // byte-identical pre-0619 path
+
+        immutable int axis = dominantAxisIndex(d);
+        Vec3 stepWorld = Vec3(axis == 0 ? kWorld : 0.0f,
+                              axis == 1 ? kWorld : 0.0f,
+                              axis == 2 ? kWorld : 0.0f);
+        immutable float lenLocal = ms.toLocalDir(stepWorld).length;
+        return kWorld >= 0.0f ? lenLocal : -lenLocal;
+    }
+
+    // Slide, valence>2 endpoints: the DISTINCT polygon-continuation
+    // candidates at endpoint `x` of the grabbed edge `x-other`. For every
+    // face that lists `x-other` as a CONSECUTIVE corner pair, that face's
+    // other corner adjacent to `x` is one candidate — i.e. the edge that
+    // continues the grabbed edge around that same polygon. Deduplicated, so
+    // two faces naming the same continuation collapse to one entry.
+    //
+    // Deliberately keyed on faces containing the GRABBED EDGE, not merely
+    // faces containing `x`: "continuation" means the polygon walk steps
+    // across `x` from `other`, so a face that touches `x` but not the
+    // grabbed edge contributes nothing. O(total face corners); this runs
+    // only on the valence>2 branch below, twice per press and twice per
+    // release (the result is cached in `slideNbrA_`/`slideNbrB_` for the
+    // motion stream), so it is nowhere near a hot loop.
+    //
+    // Corner-ring degeneracies (`w == x` or `w == other`, i.e. a face that
+    // repeats a vertex) are skipped rather than reported as candidates —
+    // they name no usable rail.
+    package(vibe3d.editing.tools.interactive.tools.edit.topology_pen) static int[] continuationRailCandidates(Mesh* m, uint x, uint other) {
+        int[] cands;
+        foreach (fi; 0 .. m.faces.length) {
+            auto f = m.faces[fi];
+            const size_t n = f.length;
+            if (n < 3) continue;
+            foreach (k; 0 .. n) {
+                if (f[k] != x) continue;
+                const uint prev = f[(k + n - 1) % n];
+                const uint next = f[(k + 1) % n];
+                uint w;
+                if      (next == other) w = prev;
+                else if (prev == other) w = next;
+                else continue;                       // this corner isn't on the grabbed edge
+                if (w == x || w == other) continue;  // degenerate corner ring
+                bool seen = false;
+                foreach (c; cands) if (c == cast(int)w) { seen = true; break; }
+                if (!seen) cands ~= cast(int)w;
+            }
+        }
+        return cands;
+    }
+
+    // P7 (doc/topopen_p7_slide_plan.md, V1-scope Option B), extended by the
+    // Slide-law decode lane's valence>2 finding: the rail the endpoint `x`
+    // slides along, once the grabbed edge's OTHER endpoint `other` is
+    // excluded. Two regimes, by how many incident edges `x` has left:
+    //
+    //   0 remaining (grabbed-edge-only, valence-1) -> -1, held FIXED.
+    //   1 remaining (valence-2) -> that unique neighbor, via the raw
+    //     `edgeNeighbors` scan (P3 KILLER-1, the only adjacency that sees
+    //     bare/diagonal edges a loop-fan helper would miss — a bare edge
+    //     chain has no face at all, so this path must NOT go through the
+    //     polygon walk). Unchanged from V1.
+    //   2+ remaining (valence>2) -> the POLYGON-CONTINUATION rail: the edge
+    //     that continues the grabbed edge around the polygon the grabbed
+    //     edge belongs to (`continuationRailCandidates`). This replaces V1's
+    //     blanket hold-fixed for valence>2, which was measurably wrong. It
+    //     acts ONLY when that yields exactly ONE candidate, which is the
+    //     unambiguous case: there is a single polygon to continue around and
+    //     nothing left to choose.
+    //
+    // CORRECTION to this rule's original justification (the change that
+    // introduced it asserted the rail choice is drag-direction INDEPENDENT,
+    // citing 6/6): that generalisation is REFUTED. Later capture on a rig
+    // whose two candidates are NOT antiparallel shows the reference's choice
+    // at a MULTI-candidate endpoint switching with the sign of the drag's
+    // dominant component. The original six drags happened to share one sign,
+    // so they could not have detected it. Nothing here changes — the
+    // single-candidate case this code acts on was never the drag-dependent
+    // one — but the reason it is safe is that it is UNAMBIGUOUS, not that
+    // selection is drag-independent.
+    //
+    // OPEN CASES, still held FIXED because no measurement disambiguates them
+    // — a tie-break here would be a guess, and a guessed rail direction is
+    // worse than not moving:
+    //   * 2+ DISTINCT continuation candidates. The common shape is an
+    //     interior (2-face) grabbed edge: each of the two faces continues
+    //     across `x` in a different direction. Selection here is
+    //     SIGN-DEPENDENT and UNDETERMINED: the captured cases are reproduced
+    //     by "take the candidate most aligned with +delta[k]*e_k", 4/4 — but
+    //     that is the OPPOSITE sign convention from the 32/32 rule the
+    //     single-candidate endpoints obey, so it cannot be the same law and
+    //     is not implemented. Deliberately left as hold-fixed. Non-manifold
+    //     fans (3+ faces on the grabbed edge) land here too.
+    //   * ZERO continuation candidates at a valence>2 vertex — the grabbed
+    //     edge borders no face at all (a bare edge meeting a face corner,
+    //     which the topology pen's own bare-edge build cases can produce),
+    //     so there is no polygon to continue around.
+    // Both are recorded as open rather than tie-broken; revisit when the
+    // capture lane pins a polygon-selection rule.
+    //
+    // SCOPE OF "HELD FIXED" (doc/tasks/work/0482-topopen-move-nonvertex.md item
+    // 3): this rule is stated PER ENDPOINT, and `onCtrlLmbDown` composes it one
+    // step further than the wording alone implies — when NEITHER endpoint's rail
+    // resolves it declines the whole gesture instead of arming a Slide that
+    // would hold both endpoints fixed. Read that as the intended reading of this
+    // contract, not a deviation from it: the two are IDENTICAL for the geometry
+    // (a moving set in which no vertex has a rail is a Slide that moves nothing,
+    // whichever way you get there), and declining is strictly better on the
+    // channels the per-endpoint wording never addressed — it moves nothing,
+    // and it does not suppress the hover indicator for
+    // the duration of a hold that was never going to do anything. What the
+    // decline used to cost was observability, and that is now published
+    // explicitly (`slideDecline_` / `slideDeclineReason`) rather than left to be
+    // inferred from an armed-but-railless state that no longer exists. A
+    // 4-valent interior edge is the common shape that lands here: both endpoints
+    // hit the "2+ DISTINCT continuation candidates" open case above, so no rail
+    // resolves at either end and the press declines with `no_continuation`.
+    package(vibe3d.editing.tools.interactive.tools.edit.topology_pen) static int continuationNeighbor(Mesh* m, uint x, uint other) {
+        int found = -1, count = 0;
+        foreach (v; m.edgeNeighbors(x)) {
+            if (v == other) continue;
+            ++count;
+            found = cast(int)v;
+        }
+        if (count == 0) return -1;
+        if (count == 1) return found;
+        auto cands = continuationRailCandidates(m, x, other);
+        return (cands.length == 1) ? cands[0] : -1;
+    }
+
+    // P7 (doc/topopen_p7_slide_plan.md), on the Ctrl+LMB "Slide" slot
+    // (V1-scope Option B — EDGE grab, capture-verified §1/§3/§4): a press
+    // picks the nearest primary-layer EDGE (`findRingSeedEdge`, reused
+    // verbatim from P6); each endpoint whose rail resolves
+    // (`continuationNeighbor` — unique remaining incident edge at valence-2,
+    // polygon-continuation edge at valence>2) is slidable along it; an
+    // endpoint whose rail does not resolve is HELD FIXED (see
+    // `continuationNeighbor` for the enumerated open cases, and its "SCOPE OF
+    // HELD FIXED" note for why declining is the intended composition of that
+    // per-endpoint rule). If NEITHER endpoint is slidable, nothing is armed (no
+    // documented gesture to perform) — don't consume, matching every other
+    // down-handler's miss convention. The commit itself is deferred to release
+    // (`onMouseButtonUp`); this only arms, freezes the drag-conversion anchor
+    // (the grabbed edge's midpoint) and zeroes the law's scalar — a press with
+    // no motion is by construction a zero delta, hence a zero offset.
+    //
+    // Every exit writes `slideDecline_` (and `slideDeclineSeed_`), so
+    // `/api/tool/state` always explains the OUTCOME of the most recent Slide
+    // press: a pick miss and a contract-driven hold-both-fixed decline are
+    // different answers, not the one indistinguishable "nothing armed" they used
+    // to collapse into. Purely additive bookkeeping — no gesture behaviour here
+    // reads it back.
+    package(vibe3d.editing.tools.interactive.tools.edit.topology_pen) bool onCtrlLmbDown(ref const SDL_MouseButtonEvent e, ref VectorStack vts) {
+        // Phase-3 dispatch cleanup (doc/topopen_input_dispatch_phase2_plan.md §Phase 3):
+        // this row's `ResetScope.AllButtons` already fires
+        // `resetAllGestureArms()` via `dispatchInput`'s `onInputResetAll()`
+        // hook before this handler runs. See `resetAllGestureArms`'s own doc
+        // comment for the full hazard this closes.
+
+        // Pessimistic default: every early exit below is a "no edge to work
+        // with" outcome (a real pick miss, or no mesh at all), and the two paths
+        // that know better overwrite it explicitly.
+        slideDecline_     = SlideDecline.NoEdge;
+        slideDeclineSeed_ = -1;
+
+        Viewport vp = viewportOf(vts);
+        slideVertex_ = -1;
+        int grabbed;
+        if (resolveGrabTarget(e.x, e.y, vp, grabbed, pickOcclusionOf(vts), vts.get!SubjectPacket()) == MoveElem.Vertex)
+            return armVertexSlide(e, grabbed);
+        int seed = findRingSeedEdge(e.x, e.y, vp);
+        if (seed < 0) return false;
+
+        auto m = mesh;
+        if (m is null) return false;
+        auto edgePair = m.edges[seed];
+        int eA = cast(int)edgePair[0], eB = cast(int)edgePair[1];
+        int nA = continuationNeighbor(m, cast(uint)eA, cast(uint)eB);
+        int nB = continuationNeighbor(m, cast(uint)eB, cast(uint)eA);
+        // Over a background the slide needs no rail (L47/L50: the endpoints
+        // land at nearestBG(u + offset)), so an interior edge slides too.
+        const bool overBg = backgroundSourcesFull().length != 0;
+        if (nA < 0 && nB < 0 && !overBg) {
+            // Neither endpoint slidable -> nothing to do. NOT a pick miss: the
+            // edge resolved, the hold-fixed contract simply leaves nothing to
+            // move. Record both facts so a consumer can tell this apart from
+            // `NoEdge` and can still see WHICH edge was picked.
+            slideDecline_     = SlideDecline.NoContinuation;
+            slideDeclineSeed_ = seed;
+            return false;
+        }
+
+        slideDecline_     = SlideDecline.None;
+        slideDeclineSeed_ = -1;
+
+        slideSeed_   = seed;
+        slideArmed_  = true;
+        slideStartX_ = e.x;
+        slideStartY_ = e.y;
+        slideEndA_   = eA;
+        slideEndB_   = eB;
+        slideNbrA_   = nA;
+        slideNbrB_   = nB;
+        slideAnchor_ = (m.vertices[eA] + m.vertices[eB]) * 0.5f;
+        slideDeltaK_ = 0.0f;
+        slideAxis_   = -1;
+        slideOverBg_ = overBg;
+        slidePathPx_ = 0.0f;
+        slidePrevX_  = e.x;
+        slidePrevY_  = e.y;
+        slideEdgeTargetA_ = m.vertices[eA];
+        slideEdgeTargetB_ = m.vertices[eB];
+        return true;
+    }
+
+    // Vertex-slide arm (task 8700, P2; law L49, the S-proj rule of
+    // `vertexSlideAxis`: the vertex moves one channel along the world axis
+    // whose SCREEN image is most parallel to the drag, then lands at its
+    // nearest point on the background). A press resolved to a vertex with no
+    // incident edge declines as `NoEdge` and slides nothing (before this arm
+    // it fell through to `findRingSeedEdge`, which could seed a nearby edge).
+    private bool armVertexSlide(ref const SDL_MouseButtonEvent e, int v) {
+        auto m = mesh;
+        if (m is null || m.edgeNeighbors(cast(uint)v).length == 0) return false;
+        slideDecline_ = SlideDecline.None;
+        slideVertex_  = v;
+        slideAxis_    = -1;
+        slideArmed_   = true;
+        slideStartX_  = e.x;
+        slideStartY_  = e.y;
+        slideEndA_    = v;
+        slideSeed_    = slideEndB_ = slideNbrA_ = slideNbrB_ = -1;
+        slideAnchor_  = m.vertices[v];
+        slideVertexTarget_ = m.vertices[v];
+        slideDeltaK_  = 0.0f;
+        return true;
+    }
+
+    // The foreshortening floor of the vertex slide's axis election: an axis
+    // whose screen image is shorter than this fraction of the longest one is
+    // never elected. Ours, inside the interval the captures bound it to
+    // (0.047, 0.432) — gap row (jj).
+    enum double kVertexSlideTau = 0.2;
+
+    // The screen images (window pixels, y down) of a unit WORLD step along X,
+    // Y and Z at world point `p` under `vp` — the projection Jacobian's
+    // columns, analytic in double. False when `p` is behind the camera.
+    package(vibe3d.editing.tools.interactive.tools.edit.topology_pen) static bool screenAxisImages(const ref Viewport vp, Vec3 p, out double[2][3] J) {
+        const ref float[16] V = vp.view, P = vp.proj;
+        double[4] v, c;
+        foreach (r; 0 .. 4)
+            v[r] = V[r] * p.x + V[r + 4] * p.y + V[r + 8] * p.z + V[r + 12];
+        foreach (r; 0 .. 4)
+            c[r] = P[r] * v[0] + P[r + 4] * v[1] + P[r + 8] * v[2] + P[r + 12] * v[3];
+        if (!(c[3] > 0)) return false;
+        foreach (i; 0 .. 3) {
+            double[4] dc;
+            foreach (r; 0 .. 4)
+                dc[r] = P[r] * V[4 * i] + P[r + 4] * V[1 + 4 * i] + P[r + 8] * V[2 + 4 * i];
+            J[i][0] =  0.5 * vp.width  * (dc[0] * c[3] - c[0] * dc[3]) / (c[3] * c[3]);
+            J[i][1] = -0.5 * vp.height * (dc[1] * c[3] - c[1] * dc[3]) / (c[3] * c[3]);
+        }
+        return true;
+    }
+
+    // The vertex slide's axis election, S-proj (L49; C1-SV1 X, C2-SV2 Y,
+    // C3-SV3 -Z, C4-SV4 Z): among the world axes whose screen image `J[i]`
+    // is at least `tau` x the longest, the one most parallel to the drag
+    // (max |cos|); `sign` = the sign of `J[axis] . drag`. -1 for a zero drag.
+    package(vibe3d.editing.tools.interactive.tools.edit.topology_pen) static int vertexSlideAxis(const double[2][3] J, double dx, double dy, double tau,
+                                       out int sign) {
+        import std.math : abs, sqrt;
+        sign = 0;
+        const dl = sqrt(dx * dx + dy * dy);
+        double[3] len;
+        double maxLen = 0;
+        foreach (i; 0 .. 3) {
+            len[i] = sqrt(J[i][0] ^^ 2 + J[i][1] ^^ 2);
+            if (len[i] > maxLen) maxLen = len[i];
+        }
+        if (dl == 0 || maxLen == 0) return -1;
+        int best = -1;
+        double bestCos = -1;
+        foreach (i; 0 .. 3) {
+            if (len[i] < tau * maxLen) continue;
+            const c = abs(J[i][0] * dx + J[i][1] * dy) / (len[i] * dl);
+            if (c > bestCos) { bestCos = c; best = i; }
+        }
+        sign = (J[best][0] * dx + J[best][1] * dy >= 0) ? 1 : -1;
+        return best;
+    }
+
+    // The nearest background ray hit (WORLD) of window point (x, y), over
+    // every background source in its own space; false on a miss or with no
+    // background. One query for the vertex slide and the build's drag delta:
+    // the CONS stage's ungated `rayHit` (the pen's own BVHs only without a
+    // pipeline) on the ray through the EXACT point, a projected point plus the
+    // drag, never a pixel centre (a half-pixel shift reddens three captured
+    // cells, card 9403 step 0).
+    private bool backgroundRayHit(float x, float y, const ref Viewport vp, out Vec3 hitW) {
+        auto cs = liveConstrainStage();
+        Vec3 org, dir;
+        SurfaceHit sh;
+        screenPointToRay(x, y, vp, org, dir);
+        if (!(cs !is null ? cs.rayHit(org, dir, sh) : backgroundHit(bgRayPick_, org, dir, backgroundSourcesFull(), sh)))
+            return false;
+        hitW = sh.point;
+        return true;
+    }
+
+    // The vertex slide's landed point for the pointer at (mx, my), LOCAL: the
+    // axis and its sign from `vertexSlideAxis` at the vertex's world point;
+    // the length `|k|` the component on that axis of the G-delta offset (L28,
+    // M-hit: the background hit under the vertex's pixel moved by the drag,
+    // minus the vertex — gap row (q)), or of the free-plane drag delta
+    // (`planeDragDelta`) when that ray finds no background; added to the
+    // vertex in world, then the constraint's `pass` (geometry Point: onto the
+    // background; off or no stage: left there — K-C4 h0d / h0d_g0, task
+    // 9477). False when the drag does not convert.
+    private bool vertexSlideTarget(int mx, int my, const ref Viewport vp,
+                                   out Vec3 target, out int axis, out float k) {
+        import std.math : abs;
+        axis = -1;
+        k = 0.0f;
+        auto m = mesh;
+        if (m is null || slideVertex_ < 0 || slideVertex_ >= cast(int)m.vertices.length)
+            return false;
+        const ms = primaryModelSpace();
+        const Vec3 uW = ms.toWorldPoint(m.vertices[slideVertex_]);
+        const Vec3 aW = ms.toWorldPoint(slideAnchor_);
+        const int dx = mx - slideStartX_, dy = my - slideStartY_;
+        Vec3 off, hitW;
+        float qx, qy, qz;
+        if (projectToWindowFull(aW, vp, qx, qy, qz)
+            && backgroundRayHit(qx + dx, qy + dy, vp, hitW)) {
+            off = hitW - aW;
+        } else {
+            bool skip;
+            off = planeDragDelta(mx, my, slideStartX_, slideStartY_, 3, aW, vp, skip);
+            if (skip) return false;
+        }
+        double[2][3] J;
+        if (!screenAxisImages(vp, uW, J)) return false;
+        int sign;
+        axis = vertexSlideAxis(J, dx, dy, kVertexSlideTau, sign);
+        if (axis < 0) return false;
+        k = sign * abs(axis == 0 ? off.x : axis == 1 ? off.y : off.z);
+        const Vec3 tW = Vec3(uW.x + (axis == 0 ? k : 0.0f), uW.y + (axis == 1 ? k : 0.0f),
+                             uW.z + (axis == 2 ? k : 0.0f));
+        target = passLocal(m.vertices[slideVertex_], ms.toLocalPoint(tW), passSources());
+        return true;
+    }
+
+    // The edge slide's latch point, in pixels of cursor path from the press:
+    // ours, inside the measured window (2.24, 5.9] px (L50; gap row (bb)).
+    enum float kEdgeSlideLatchPx = 4.5f;
+    // Two |components| tie within this RELATIVE tolerance, and a tie goes to
+    // the LATER axis (X/Y -> Y captured by L50, Y/Z ours; [A15-4], gap row (y)).
+    enum double kEdgeSlideTieEps = 1e-3;
+
+    /// The edge slide's world axis for the surface delta `d`: the largest
+    /// |component|, a later axis winning a tie within `eps` (relative to the
+    /// larger of the two); -1 for a zero or non-finite delta.
+    package(vibe3d.editing.tools.interactive.tools.edit.topology_pen) static int edgeSlideAxis(Vec3 d, double eps) {
+        import std.math : abs, fmax, isFinite;
+        const double[3] a = [abs(cast(double)d.x), abs(cast(double)d.y), abs(cast(double)d.z)];
+        foreach (c; a) if (!isFinite(c)) return -1;
+        if (!(a[0] > 0 || a[1] > 0 || a[2] > 0)) return -1;
+        int best = 0;
+        foreach (k; 1 .. 3)
+            if (a[k] > a[best] || abs(a[k] - a[best]) <= eps * fmax(a[k], a[best])) best = k;
+        return best;
+    }
+
+    // One evaluation of the edge slide over a background, for the cursor at
+    // (x, y): accumulate the path, latch the axis once it reaches
+    // `kEdgeSlideLatchPx` — from the SURFACE delta `hit(proj(anchor) + drag) -
+    // hit(proj(anchor))` ([A12-1]; the `- anchor` form when the press pixel's
+    // ray misses, [A12-n6]) — and answer the offset: the L28 G-delta offset
+    // `hit(proj(anchor) + drag) - anchor` projected on the latched axis, one
+    // world channel, LOCAL. False before the latch (the edge does not move)
+    // and when the drag's ray finds no background (it writes nothing).
+    private bool edgeSlideStep(int x, int y, const ref Viewport vp, out Vec3 offLocal) {
+        slidePathPx_ += hypot(cast(float)(x - slidePrevX_), cast(float)(y - slidePrevY_));
+        slidePrevX_ = x;
+        slidePrevY_ = y;
+        const ms = primaryModelSpace();
+        const Vec3 aW = ms.toWorldPoint(slideAnchor_);
+        float qx, qy, qz;
+        Vec3 hitW;
+        if (!projectToWindowFull(aW, vp, qx, qy, qz)
+            || !backgroundRayHit(qx + (x - slideStartX_), qy + (y - slideStartY_), vp, hitW))
+            return false;
+        const Vec3 offW = hitW - aW;
+        if (slideAxis_ < 0) {
+            if (slidePathPx_ < kEdgeSlideLatchPx) return false;
+            Vec3 pressW;
+            slideAxis_ = edgeSlideAxis(backgroundRayHit(qx, qy, vp, pressW) ? hitW - pressW : offW,
+                                       kEdgeSlideTieEps);
+            if (slideAxis_ < 0) return false;
+        }
+        const float k = slideAxis_ == 0 ? offW.x : slideAxis_ == 1 ? offW.y : offW.z;
+        const Vec3 stepW = Vec3(slideAxis_ == 0 ? k : 0.0f, slideAxis_ == 1 ? k : 0.0f,
+                                slideAxis_ == 2 ? k : 0.0f);
+        offLocal = ms.toLocalPoint(aW + stepW) - slideAnchor_;
+        return true;
+    }
+
+    // P6 (doc/topopen_p6_addloop_plan.md Phase 3), on the Shift+MMB "Add
+    // Loop" slot: a press picks the nearest primary-layer edge
+    // (`findRingSeedEdge`); if none is within snap range, or the picked
+    // edge's perpendicular quad ring doesn't exist (`collectEdgeRing`
+    // empty — a non-quad or unringed seed), this is not a documented
+    // gesture — don't consume, matching every other down-handler's miss
+    // convention. Otherwise arms the gesture, captures the seed rail
+    // (`seedRail`) once, and seeds `addLoopRatio_` from THIS press's own
+    // cursor position so a stationary click (no subsequent motion) still
+    // has a sane ratio at commit.
+    private bool onShiftMmbDown(ref const SDL_MouseButtonEvent e, ref VectorStack vts) {
+        addLoopSeed_  = -1;
+        addLoopArmed_ = false;
+
+        Viewport vp = viewportOf(vts);
+        int seed = findRingSeedEdge(e.x, e.y, vp);
+        if (seed < 0) return false;
+
+        auto m = mesh;
+        if (m is null) return false;
+        bool closed;
+        // `(*m).`, not `m.`: task 1903 Stage F1 made `collectEdgeRing` a free
+        // function over `ref const(Mesh)`, and UFCS does not auto-deref a
+        // pointer the way member lookup did.
+        if ((*m).collectEdgeRing(cast(uint)seed, closed).length == 0) return false;
+
+        addLoopSeed_   = seed;
+        addLoopArmed_  = true;
+        addLoopStartX_ = e.x;
+        addLoopStartY_ = e.y;
+        seedRail(cast(uint)seed, seedRailA_, seedRailB_);
+        addLoopRatio_  = ratioFromCursor(e.x, e.y, vp);
+        return true;
+    }
+
+    // P9 (doc/topopen_p9_split_plan.md Phase 3), on the plain-MMB "Split"
+    // slot: a press picks the nearest primary-layer VERTEX (`findSourceVertex`,
+    // reused verbatim from P3/P4); if none is within snap range, this is not
+    // a documented gesture — don't consume, matching every other down-
+    // handler's miss convention. Otherwise arms the gesture at the picked
+    // source vertex A; the target C is resolved live on every subsequent
+    // motion event (`onMouseMotion`) and once more, authoritatively, at
+    // release (`onMouseButtonUp`'s MIDDLE branch, `commitSplit`).
+    //
+    // This handler does ONLY its own narrow self-reset: a cross-button chord
+    // never reaches it with another button's arm alive, because
+    // `openPressStep` ends the held gesture first (L56; see
+    // `resetAllGestureArms`'s doc comment). A same-slot MIDDLE re-press is
+    // guarded by this handler's own top-of-function reset, exactly like Add
+    // Loop's.
+    private bool onPlainMmbDown(ref const SDL_MouseButtonEvent e, ref VectorStack vts) {
+        splitArmed_      = false;
+        splitSourceVert_ = -1;
+        splitTargetVert_ = -1;
+
+        Viewport vp = viewportOf(vts);
+        int src = findSourceVertex(e.x, e.y, vp);
+        if (src < 0) return false;   // no vertex under the cursor -> no documented gesture
+
+        splitArmed_      = true;
+        splitSourceVert_ = src;
+        splitTargetVert_ = -1;
+        return true;
+    }
+
+    // P10 (doc/topopen_p10_moveloop_plan.md, REV1 FIX-1 — the KILLER fix):
+    // the moving-set for a Move Loop gesture is the SORTED-UNIQUE union of
+    // endpoint vertices of `Mesh.selectLoopEdges(seedEdge)` — the classic
+    // IN-LINE edge-loop CHAIN (mesh.d:13857, ported bit-exact against 11
+    // reference `select.loop` cases) — NOT `loopSliceRingEdges`/
+    // `collectEdgeRing` (the PERPENDICULAR ring a stack of parallel edges,
+    // used by Add Loop/Slide above for an unrelated purpose: seeding a
+    // loop-CUT ring, not gathering a loop to DRAG). Handles both an interior
+    // seed (closed OR open in-line chain, depending on where it dead-ends)
+    // and a boundary seed (`selectLoopBorderChain` — chains along the open
+    // perimeter, closing if the boundary loop itself closes) — both branches
+    // already live inside `selectLoopEdges` itself; this helper only turns
+    // the returned edge-index list into a deduplicated, order-independent
+    // vertex set. `sort` gives a deterministic, reproducible ordering for
+    // tests (not a topological requirement — `commitMoveLoop` writes every
+    // entry regardless of order).
+    package(vibe3d.editing.tools.interactive.tools.edit.topology_pen) static uint[] uniqueRingVerts(Mesh* m, uint seedEdge) {
+        import std.algorithm : sort;
+
+        bool[uint] seen;
+        uint[] verts;
+        foreach (ei; (*m).selectLoopEdges(seedEdge)) {
+            if (ei < 0 || ei >= cast(int)m.edges.length) continue;   // defensive
+            auto ep = m.edges[cast(uint)ei];
+            foreach (v; ep) {
+                if (v in seen) continue;
+                seen[v] = true;
+                verts ~= v;
+            }
+        }
+        sort(verts);
+        return verts;
+    }
+
+    // P10 (doc/topopen_p10_moveloop_plan.md), on the plain RMB "Move Loop"
+    // slot: a press picks the nearest primary-layer EDGE
+    // (`findRingSeedEdge`, reused verbatim from P6/P7) and gathers its
+    // in-line edge loop (`uniqueRingVerts`, REV1 FIX-1); if no edge is
+    // within snap range, or the gathered moving-set is somehow empty
+    // (defensive — `selectLoopEdges` never returns an empty list for a
+    // valid seed index), this is not a documented gesture — don't consume,
+    // matching every other down-handler's miss convention (RMB-lasso then
+    // proceeds unchanged, task-0288 "tool first crack at RMB" precedent).
+    //
+    // This handler does ONLY its own narrow self-reset: a cross-button chord
+    // never reaches it with another button's arm alive, because
+    // `openPressStep` ends the held gesture first (L56; see
+    // `resetAllGestureArms`'s doc comment). A same-button RMB re-press is
+    // guarded by this handler's own top-of-function reset, exactly like Add
+    // Loop's/Split's.
+    package(vibe3d.editing.tools.interactive.tools.edit.topology_pen) bool onMoveLoopRmbDown(ref const SDL_MouseButtonEvent e, ref VectorStack vts) {
+        moveLoopArmed_ = false;
+        moveLoopSeed_  = -1;
+        moveLoopVerts_ = null;
+
+        Viewport vp = viewportOf(vts);
+        int seed = findRingSeedEdge(e.x, e.y, vp);
+        if (seed < 0) return false;   // no edge under the cursor -> no documented gesture
+
+        auto m = mesh;
+        if (m is null) return false;
+        auto verts = uniqueRingVerts(m, cast(uint)seed);
+        if (verts.length == 0) return false;   // defensive; shouldn't happen for a valid seed
+
+        moveLoopSeed_   = seed;
+        moveLoopVerts_  = verts;
+        moveLoopStartX_ = e.x;
+        moveLoopStartY_ = e.y;
+        moveLoopCurX_   = e.x;
+        moveLoopCurY_   = e.y;
+        moveLoopArmed_  = true;
+        return true;   // consume; the loop drag (if any) commits on release
+    }
+
+    // P11 (doc/topopen_p11_duploop_plan.md), on the Shift+RMB "Duplicate
+    // Loop" slot: a press picks the nearest primary-layer EDGE
+    // (`findRingSeedEdge`, reused verbatim from P6/P7/P10) and gathers its
+    // edge loop (`Mesh.selectLoopEdges`, the SAME kernel P10's
+    // `uniqueRingVerts` calls) — but unlike P10, this stores the raw EDGE
+    // INDICES (`dupLoopEdges_`), not the unique vertex set: the commit
+    // needs the edge list to build `extendEdgesByMask`'s mask.
+    //
+    // REV1 FIX-1 (label correction): a BOUNDARY seed resolves to
+    // `selectLoopBorderChain` — the FULL CLOSED perimeter (the
+    // owner-observed "весь loop" case: a side/boundary edge duplicates the
+    // WHOLE closed rim) — and is the shipped-faithful, MEASURED case. An
+    // INTERIOR seed resolves to the classic quad-opposite walk — an OPEN
+    // chain that dead-ends at the mesh boundary — which `extendEdgesByMask`
+    // turns non-manifold (each source edge 2→3 adjacent faces, a documented
+    // v1 kernel degrade, mesh.d:5659-5663); the owner did NOT capture this
+    // case, so V1 ships the kernel's existing behavior UNMEASURED/FLAGGED
+    // (plan §Open-item IL) rather than block or invent a split-the-mesh
+    // alternative.
+    //
+    // If no edge is within snap range, or the gathered loop is somehow
+    // empty (defensive — `selectLoopEdges` never returns an empty list for
+    // a valid seed index), this is not a documented gesture — don't
+    // consume, matching every other down-handler's miss convention
+    // (Shift+RMB-lasso proceeds unchanged, Shift being the lasso's own
+    // additive modifier).
+    //
+    // This handler does ONLY its own narrow self-reset: a cross-button chord
+    // never reaches it with another button's arm alive, because
+    // `openPressStep` ends the held gesture first (L56). A same-slot
+    // Shift+RMB re-press is guarded by this handler's own top-of-function
+    // reset, exactly like Move Loop's/Add Loop's/Split's.
+    package(vibe3d.editing.tools.interactive.tools.edit.topology_pen) bool onDupLoopShiftRmbDown(ref const SDL_MouseButtonEvent e, ref VectorStack vts) {
+        dupLoopArmed_ = false;
+        dupLoopSeed_  = -1;
+        dupLoopEdges_ = null;
+
+        Viewport vp = viewportOf(vts);
+        int seed = findRingSeedEdge(e.x, e.y, vp);
+        if (seed < 0) return false;   // no edge under the cursor -> no documented gesture
+
+        auto m = mesh;
+        if (m is null) return false;
+
+        // Task 0486 (contract C-0): Duplicate needs a BORDER edge. On an
+        // interior one this chord is a MOVE-LOOP, not a declined press and not
+        // a duplicate — the reference's Evaluate guards Duplicate on
+        // `isEdgeBorder(pressed)` and silently runs Move when it fails.
+        if (!(*m).isEdgeBorder(cast(uint) seed)) return onMoveLoopRmbDown(e, vts);
+
+        // Contract C-1: this chord FORCES the loop on and never reads
+        // `edgeLoop_` — `loop=false` and `loop=true` were bit-identical on one
+        // seed. C-4: the committed set is the border RUN, not the whole
+        // gathered perimeter.
+        auto edges = trimBorderRunAroundSeed((*m).selectLoopEdges(cast(uint)seed), seed);
+        if (edges.length == 0) return false;   // defensive; shouldn't happen for a valid seed
+
+        dupLoopSeed_    = seed;
+        dupLoopEdges_   = edges;
+        dupLoopStartX_  = e.x;
+        dupLoopStartY_  = e.y;
+        dupLoopCurX_    = e.x;
+        dupLoopCurY_    = e.y;
+        dupLoopArmed_   = true;
+        return true;   // consume; the extrude+drag (if any) commits on release
+    }
+
+    // P12 (doc/topopen_p12_smoothloop_plan.md), on the Shift+Ctrl+RMB
+    // "Smoothing + Edge Loop" slot: a press picks the nearest primary-layer
+    // EDGE (`findRingSeedEdge`, reused verbatim from P6/P7/P10/P11) and
+    // gathers its in-line edge loop (`uniqueRingVerts`, the SAME
+    // sorted-unique moving-set gather P10 Move Loop uses) into
+    // `smoothLoopVerts_` — REV1 FIX-2: this DOWN-time cache is reused
+    // VERBATIM at commit (`applySmoothLoopPasses`), never re-gathered, since
+    // the mesh is never mutated between arm and commit. If no edge is within
+    // snap range, or the gathered moving-set is somehow empty (defensive —
+    // `selectLoopEdges` never returns an empty list for a valid seed index),
+    // this is not a documented gesture — don't consume, matching every other
+    // down-handler's miss convention (Shift+Ctrl+RMB-lasso then proceeds
+    // unchanged).
+    //
+    // This handler does ONLY its own narrow self-reset: a cross-button chord
+    // never reaches it with another button's arm alive, because
+    // `openPressStep` ends the held gesture first (L56). A same-slot
+    // Shift+Ctrl+RMB re-press is guarded by this handler's own
+    // top-of-function reset, exactly like Move Loop's/Dup Loop's.
+    package(vibe3d.editing.tools.interactive.tools.edit.topology_pen) bool onSmoothLoopRmbDown(ref const SDL_MouseButtonEvent e, ref VectorStack vts) {
+        smoothLoopArmed_ = false;
+        smoothLoopSeed_  = -1;
+        smoothLoopVerts_ = null;
+
+        Viewport vp = viewportOf(vts);
+        int seed = findRingSeedEdge(e.x, e.y, vp);
+        if (seed < 0) return false;   // no edge under the cursor -> no documented gesture
+
+        auto m = mesh;
+        if (m is null) return false;
+        auto verts = uniqueRingVerts(m, cast(uint)seed);
+        if (verts.length == 0) return false;   // defensive; shouldn't happen for a valid seed
+
+        smoothLoopSeed_   = seed;
+        smoothLoopVerts_  = verts;
+        smoothLoopStartX_ = e.x;
+        smoothLoopStartY_ = e.y;
+        smoothLoopCurX_   = e.x;
+        smoothLoopCurY_   = e.y;
+        smoothLoopDragPx_ = 0.0f;
+        smoothLoopArmed_  = true;
+        return true;   // consume; the relax+re-snap (if any) commits on release
+    }
+
+    // The point a shared SCREEN drag puts `orig` at, in `orig`'s OWN space:
+    // unproject the shifted pixel onto the plane through `orig` parallel to
+    // the image plane — i.e. drag at CONSTANT view depth. Same pixel-CENTRE
+    // convention (`+0.5f`) the ray path used, so the screen→3D mapping this
+    // tool has always applied is unchanged in shape; task 0619 changed only
+    // which space it resolves in (see the aiming-kind note below).
+    //
+    // TASK 0503, on the ONE clause of the measured law this does NOT port.
+    // The reference feeds its constraint `src_i + Δ` with a SINGLE 3D offset
+    // Δ shared by every moving vertex (identical to 1e-9 across them —
+    // dupedge cells `A0-FLAT`/`A1-TILT`/`A2-NOBG`). Shifting each vertex's
+    // OWN pixel by a shared screen delta is a DEPTH-DEPENDENT world delta,
+    // so the two laws agree exactly when the moving vertices share a view
+    // depth and diverge when they do not. Every rig either capture ran on
+    // has its moving set on one fronto-parallel plane, so both measurements
+    // are silent on the difference — and Δ's own law (which plane the drag
+    // unprojects onto, whether the drag point is itself constrained) is
+    // explicitly NOT established by either note. Porting the shared-Δ shape
+    // would therefore mean inventing Δ, so this keeps the existing
+    // per-vertex mapping and records the gap instead.
+    // AIMING KIND: **RayPlane** (task 0619 §1.2), and the RENAME is part of
+    // the fix — the old name was `shiftedWorldPoint`, which lied twice over:
+    // its `orig` argument is a LAYER-LOCAL mesh point at both call sites, and
+    // what it returned was neither space (a WORLD ray met a plane through a
+    // LOCAL anchor).
+    //
+    // The law has three steps that must not be reordered, so it goes through
+    // `screenPointToLocalRay` (math.d) rather than being open-coded:
+    //   1. build the ray from the UN-composed, world `vp` — an `AimViewport`
+    //      must not be used, because `screenRay` treats the view 3x3's
+    //      transpose as its inverse and `M` generally carries a scale;
+    //   2. carry origin and direction into local, the direction NOT
+    //      renormalized so `t` keeps meaning a world distance;
+    //   3. carry the plane's WORLD normal across with `toLocalNormal`
+    //      (`M^T`), NOT `toLocalDir` (`M^-1`). The two are EQUAL for a pure
+    //      rotation and diverge under any non-uniform scale, so a
+    //      rotation-only fixture cannot tell them apart — and getting it
+    //      wrong tilts the constant-depth plane, which moves the answer
+    //      along the ray rather than merely scaling it.
+    // Then `dot(n_l, (o_l + t·d_l) − p_l) ≡ dot(n_w, (o_w + t·d_w) − p_w)`
+    // exactly, for any invertible `M`.
+    //
+    // LOCAL is the destination because both consumers want local: the Fill
+    // search ranks `(m.vertices[v] − cursorPt).length`, and
+    // `resnapToBackground` writes its answer into `m.vertices[]` after one
+    // explicit world round trip for the background query.
+    private static Vec3 shiftedLocalPoint(Vec3 origLocal, int px, int py,
+                                          const ref Viewport vp) {
+        const ms = primaryModelSpace();
+        Vec3 org, dir;
+        screenPointToLocalRay(cast(float)px + 0.5f, cast(float)py + 0.5f,
+                              vp, ms, org, dir);
+        // View matrix third ROW (column-major m[row + col*4]) = the
+        // camera-back direction; the plane through `origLocal` with that
+        // normal is the constant-view-depth plane. Same derivation `drag.d`'s
+        // `planeDragDelta` uses for its own camera-facing plane. It is a
+        // WORLD normal oriented by the camera, so it crosses with `M^T`.
+        const ref float[16] v = vp.view;
+        Vec3 camBackLocal = ms.toLocalNormal(Vec3(v[2], v[6], v[10]));
+        Vec3 q;
+        if (!rayPlaneIntersect(org, dir, origLocal, camBackLocal, q))
+            return origLocal;   // degenerate view
+        return q;
+    }
+
+    // TASK 0503 (measured port): re-snap `orig`, dragged to pixel (px,py),
+    // onto the background as the NEAREST POINT on the background facet,
+    // CLAMPED to that facet — NOT a camera ray through the pixel.
+    //
+    // This replaces the `BvhPick.pickSurface` ray P10 shipped. The ray was
+    // OUR divergence, and it is measured wrong twice over, on two gestures,
+    // by two independently built rigs:
+    //
+    //   * Duplicate, cells `A5-TILT30`/`A1-TILT`(×2 boots)/`A6-TILT60`
+    //     (toolcards/topology_pen/dupedge_resnap_capture.md, contract C-2):
+    //     |new edge| / |source edge| = cos(tilt) — 0.866025692 / 0.707106741 /
+    //     0.500000075, worst deviation 2.9e-7 — which is exactly the length a
+    //     PERPENDICULAR projection of a screen-horizontal segment onto a plane
+    //     tilted by θ leaves. A per-vertex ray predicts 1.804 / 2.484 / 4.369
+    //     on the same three cells: wrong by factors of 2 to 9. Cell `A0-FLAT`
+    //     rules out "exotic background" as an excuse — on the FLAT background
+    //     every earlier cell in this campaign used, the measurement is 1.000
+    //     and the ray law predicts 1.220.
+    //   * Add Loop, verdict V-1 (addloop_bgresnap_undo_capture.md, run g5,
+    //     cells `AL-BG-1`/`AL-BG-2`/`AL-BG-MID`/`AL-BG-RAY`): all four
+    //     inserted vertices land on the background plane to 1.1e-09…7.6e-09 D,
+    //     and their lateral profile matches the perpendicular-foot formula to
+    //     5.36e-09 D against 5.75e-03 D for the view ray — six orders.
+    //
+    // WHY THE PORT SURVIVED FOUR EARLIER CAPTURES: on a background PARALLEL
+    // to the plane the drag resolves on, the per-vertex correction is the
+    // IDENTITY, and every background before these two runs was parallel. A
+    // test on a flat/parallel background cannot see this law at all (it can
+    // still see the RATIO, 1.000 vs 1.220 — which is why the fixtures below
+    // use both a tilted and a flat background).
+    //
+    // Per-vertex, never anchor-plus-rigid: refuted three independent ways on
+    // Duplicate (the length ratio; a 4.8× spread of per-point displacement
+    // — 0.0651/0.0617/0.1886/0.3155 — inside ONE evaluation, where a rigid
+    // rest requires equality; and a zero hit count on the function a static
+    // read had blamed). The port's "one target per moving vertex" shape was
+    // already right and is unchanged.
+    //
+    // Reuses `constraint.closestPointOnMeshes` — the SAME nearest-foot
+    // primitive P8/P12's Smooth already re-snaps with (`applySmoothPasses`,
+    // `applySmoothLoopPasses`), so after this change every re-snap in the
+    // tool goes through one query instead of two rival ones. `dblSided =
+    // false` mirrors those call sites and CONS's Point-mode default.
+    //
+    // MISS SEMANTICS CHANGE, deliberately. A ray misses whenever the shifted
+    // pixel points at empty space; a nearest-foot query over a non-empty
+    // background never misses — it CLAMPS to the facet (that clamp is
+    // measured: cell `A3-CLIP` put both feet past a cut background edge and
+    // both landed exactly on the cut, β = -0.30000). So `false` here now
+    // means only "no background surface exists at all", which is still a
+    // measured case: with no background the gesture commits and translates
+    // rigidly (cell `A2-NOBG`, contract C-5), which is what the callers'
+    // keep-the-original policy produces. What is NOT ported is the honest
+    // consequence of the clamp — the reference commits the DEGENERATE quad
+    // it produces, and "match the reference" vs "never emit a zero-area
+    // facet" is an owner call, not a capture verdict (contract C-4). No
+    // guard is added here either way.
+    //
+    // Returns false (leaving `outPoint` untouched) only when no live
+    // background source exists, or none has a usable face.
+    package(vibe3d.editing.tools.interactive.tools.edit.topology_pen) bool resnapToBackground(Vec3 orig, int px, int py,
+                                    const ref Viewport vp, out Vec3 outPoint) {
+        auto sources = backgroundSourcesFull();
+        if (sources.length == 0) return false;
+
+        // Task 0619 §1.5 (Landing) — the space chain, converted at exactly
+        // one point in each direction:
+        //   * `orig` and the shifted query are the PRIMARY layer's LOCAL
+        //     coordinates (`shiftedLocalPoint`);
+        //   * `closestPointOnMeshes` folds every BACKGROUND source through
+        //     its OWN ModelSpace and answers in WORLD (constraint.d:160),
+        //     so the query is lifted to world for it;
+        //   * the foot comes back to the PRIMARY's local space, because
+        //     every consumer of `outPoint` writes it into `m.vertices[]`
+        //     (`applyMoveTargets`, `commitMoveLoop`, `commitDupEdges`).
+        // Leaving the result in world is the producer-moved / consumer-left
+        // defect one call deeper, and it is what this function used to do.
+        const ms = primaryModelSpace();
+        Vec3 query = ms.toWorldPoint(shiftedLocalPoint(orig, px, py, vp));
+
+        Vec3  hitPt, hitN;
+        int   si, fi;
+        float d2;
+        enum bool dblSided = false;   // matches P8/P12/CONS Point-mode's own default
+        if (!closestPointOnMeshes(query, sources, dblSided, hitPt, hitN, si, fi, d2))
+            return false;
+        outPoint = ms.toLocalPoint(hitPt);
+        return true;
+    }
+
+    // P10 (doc/topopen_p10_moveloop_plan.md "The pinned drag-mapping"): the
+    // per-vertex re-snap targets for a shared SCREEN-space drag delta
+    // `(dx, dy)` — project each moving vertex's CURRENT (pre-commit)
+    // position, shift by the shared delta, and re-snap
+    // (`resnapToBackground`). A vertex that projects behind the camera, or
+    // for which NO background surface exists at all, KEEPS its original
+    // position (also the contract FIX-2's partial-miss test pins at the
+    // `commitMoveLoop` layer). TASK 0503 narrowed that branch: the re-snap
+    // is now a nearest-foot query, which cannot miss a non-empty background
+    // the way the old camera ray could — see `resnapToBackground`. Returns
+    // one target per entry of `verts`, same order — `verts.length == 0`/
+    // `m is null` yields an empty array (defensive; callers already guard
+    // this).
+    package(vibe3d.editing.tools.interactive.tools.edit.topology_pen) Vec3[] perVertexTargets(const(uint)[] verts, int dx, int dy,
+                                    const ref Viewport vp) {
+        Vec3[] base;
+        auto m = mesh;
+        if (m is null) return base;
+        base.length = verts.length;
+        foreach (i, vi; verts)
+            base[i] = (vi < m.vertices.length) ? m.vertices[vi] : Vec3(0, 0, 0);
+        return perVertexTargetsFrom(base, dx, dy, vp);
+    }
+
+    // The same law, taking the source positions EXPLICITLY (task 0484). A
+    // gesture that writes the mesh LIVE cannot project "the vertex's current
+    // position" — by the second motion event that is already the moved one,
+    // and the element would race away from the cursor by an ever-growing
+    // delta. It hands its ARM-TIME positions in instead, so every motion
+    // event recomputes the same absolute answer from the same origin.
+    //
+    // `perVertexTargets` above is the identity case (base = live positions),
+    // which is exactly right for a gesture that only ever computes this once,
+    // at release — Move Loop / Dup Loop are unchanged by this split.
+    package(vibe3d.editing.tools.interactive.tools.edit.topology_pen) Vec3[] perVertexTargetsFrom(const(Vec3)[] base, int dx, int dy,
+                                        const ref Viewport vp) {
+        // Pixel (§1.1), hoisted out of the per-vertex loop (§3). `base` is
+        // LOCAL in both callers — `perVertexTargets` fills it from
+        // `m.vertices[]`, and Move's own caller hands in `moveBase_`, the
+        // ARM-TIME copy of those same local positions. The pixel this
+        // produces is the one the drag delta is measured from, so it has to
+        // be the pixel the vertex is DRAWN at.
+        const AimViewport vpAim = aimSpace(vp, primaryModelSpace());
+        Vec3[] targets;
+        targets.length = base.length;
+        foreach (i, orig; base) {
+            targets[i] = orig;   // default: a miss keeps the original
+
+            ImVec2 pt;
+            if (!projectLocalPt(orig, vpAim, pt)) continue;   // behind camera -> keep original
+
+            int px = cast(int)(pt.x + cast(float)dx);
+            int py = cast(int)(pt.y + cast(float)dy);
+            Vec3 hitPt;
+            if (resnapToBackground(orig, px, py, vp, hitPt)) targets[i] = hitPt;
+        }
+        return targets;
+    }
+
+    // P8 (doc/topopen_p8_smooth_plan.md Phase 3), on the Shift+Ctrl+LMB
+    // "Smooth" slot: arms a whole-primary-mesh relax+re-snap gesture — NO
+    // source-vertex/edge pick (unlike every other gesture above, this one
+    // is scope-free: it relaxes the ENTIRE primary mesh, not a
+    // press-selected element) and NO mutation on down. Commit is deferred
+    // to release (`onMouseButtonUp`'s Smooth branch, `applySmoothPasses`),
+    // deriving the pass count from the cursor's signed horizontal offset from
+    // THIS press pixel (`smoothStartX_`, the law's anchor — see
+    // `kSmoothPassStridePx`).
+    // Phase-3 dispatch cleanup (doc/topopen_input_dispatch_phase2_plan.md §Phase 3):
+    // the full symmetric close (same LEFT-button discipline as
+    // `onPlainLmbDown`/`onShiftLmbDown`/`onCtrlLmbDown`) is now guaranteed by
+    // this row's `ResetScope.AllButtons`, which fires `resetAllGestureArms()`
+    // via `dispatchInput`'s `onInputResetAll()` hook before this handler
+    // runs, so a stray Move/Build/Slide arm from an earlier press can never
+    // survive into this one. Always claims the event (Shift+Ctrl+LMB is
+    // unambiguously the Smooth gesture, regardless of what — if anything —
+    // is under the cursor).
+    private bool onShiftCtrlLmbDown(ref const SDL_MouseButtonEvent e, ref VectorStack vts) {
+        smoothArmed_  = true;
+        smoothStartX_ = smoothLastX_ = e.x;
+        smoothStartY_ = smoothLastY_ = e.y;
+        smoothDragDx_ = 0;
+        return true;
+    }
+
+    // Dispatch entry point: `dispatchInput` reads back the SAME action id it
+    // armed on THIS button's Down (never re-derived from arm-bool priority)
+    // and calls `onToolAction(a, Up, ...)`, which routes to the matching
+    // `<mode>Up` helper below — the same bodies this method used to call
+    // inline, per-button-branch, before the Phase-2 flip.
+    override bool onMouseButtonUp(ref const SDL_MouseButtonEvent e,
+                                  ref VectorStack vts) {
+        if (releaseBeforeDispatch(e)) return true;
+        // The release still runs on the press's ranges — `splitUp` re-resolves
+        // its target vertex at the release pixel and must use the same
+        // acceptance the whole gesture used — so the drop happens AFTER the
+        // dispatch, never before it.
+        bool handled = dispatchInput(toButton(e.button), toMods(SDL_GetModState()),
+                                     InputPhase.Up, e, vts);
+        dragSnap_ = SnapPacket.init;
+        // Task 0523: the guide's registration ends where the ranges snapshot
+        // does, and for the same reason — one gesture, one configuration. It
+        // is dropped AFTER the dispatch, so `splitUp` still resolves its
+        // target vertex against the rule the whole gesture ran on.
+        unregisterSnapGuide();
+        if (stepOpen_ && e.button == stepButton_) {
+            closePressStep();
+            return true;
+        }
+        return handled;
+    }
+
+    // The two releases decided BEFORE dispatch (L56, wave plan §9.27 [A15-1]):
+    // an inert button's release is consumed and dispatches nothing; the open
+    // step's own release while another pen button is still held discards its
+    // gesture (no commit runs) and closes the step as an unchanged row.
+    private bool releaseBeforeDispatch(ref const SDL_MouseButtonEvent e) {
+        immutable ubyte bit = penButtonBit(e.button);
+        if (inertButtons_ & bit) {
+            inertButtons_ &= cast(ubyte)~bit;
+            heldMask_ &= cast(ubyte)~bit;
+            return true;
+        }
+        heldMask_ &= cast(ubyte)(~bit & g_heldGestureButtons.bits);
+        inertButtons_ &= heldMask_;
+        if (!stepOpen_ || e.button != stepButton_ || heldMask_ == 0) return false;
+        discardOpenGesture();
+        resetAllArmed();
+        dragSnap_ = SnapPacket.init;
+        unregisterSnapGuide();
+        closePressStep();
+        return true;
+    }
+
+    // --- Phase-2 input-dispatch migration (doc/topopen_input_dispatch_phase2_plan.md):
+    // the 9 extracted UP-branch bodies below (Remove has no arm bool and no
+    // UP body — it commits on DOWN) — each is BOTH the body `onMouseButtonUp`
+    // above calls AND the body `onToolAction`'s UP cases will call once
+    // Phase 2 flips the seam, so there is exactly one copy of this logic.
+    // Each guards on its OWN arm bool first (`if (!xArmed_) return false;`) —
+    // this is what makes each helper safely callable directly from
+    // `onToolAction` even on a Down-that-resolved-but-declined (the
+    // arm-before-decline gap the plan's own "Key decision" section documents):
+    // the base's `armed_[button]` may say "armed", but the bool says
+    // otherwise, and the bool is what every helper actually trusts.
+
+    // P4 Place/Move (doc/topopen_p4_plan.md, Design A): both outcomes of a
+    // plain-LMB press commit HERE, never at DOWN — see `onPlainLmbDown`'s own
+    // doc comment for the disambiguation.
+    package(vibe3d.editing.tools.interactive.tools.edit.topology_pen) bool lmbPlaceOrMoveUp(ref const SDL_MouseButtonEvent e, ref VectorStack vts) {
+        if (placeArmed_) {
+            placeArmed_ = false;
+            readHit(vts);   // refresh lastHit_ to THIS release event's CONS-snapped hit
+            // Task 0619 §1.5 (Landing), and the most user-visible item in
+            // the stage: `lastHit_.point` is the CONS stage's WORLD hit —
+            // on a BACKGROUND layer, through that layer's own transform —
+            // while `addVertex` stores a coordinate in the PRIMARY layer's
+            // LOCAL array. On a transformed primary the click landed the new
+            // vertex at `hit` rather than at `M^-1·hit`, i.e. visibly away
+            // from the cursor.
+            if (!lastHit_.hit) return true;
+            const p = primaryModelSpace().toLocalPoint(placeSnapped(e.x, e.y, vts));
+            const vi = placeVertexAt(p, vts);
+            // The placed point is its own anchor (L17; its Offset reads 0).
+            if (vi >= 0) noteStepDescriptor(PenStepKind.PointPlace, [cast(uint)vi], [p]);
+            return true;
+        }
+        if (moveArmed_) {
+            // Task 0484: the release applies the FINAL targets for its own
+            // pixel and records the whole drag as one undo entry — see
+            // `finishMove`. For a grabbed VERTEX this is P4's original law
+            // verbatim (go to the release event's CONS-snapped hit), so
+            // where a vertex move lands is unchanged; edges and faces take
+            // the shared screen-delta law.
+            Viewport vp = viewportOf(vts);
+            finishMove(e.x, e.y, vp, vts);
+            return true;
+        }
+        return false;
+    }
+
+    // K-P P8/P8c: a Point lands on the shared snap election's answer at the
+    // release pixel — every source, background included, on the press's packet
+    // — and on the surface hit when nothing snaps or snapping is off. Registered placement guides only (9513):
+    // the weld guide does not constrain background placement. An
+    // edited vertex is a target too: the point lands on it as a new coincident
+    // vertex, no weld (K-PS KPS_1/KPS_2).
+    private SnapResult placementElection(Vec3 world, int mx, int my, Viewport vp,
+                                         SnapPacket cfg, const(uint)[] exclude = null) {
+        auto m = mesh;
+        if (m is null) { SnapResult empty; empty.worldPos = world; return empty; }
+        return snapCursor(world, mx, my, vp, *m, primaryModelSpace(), cfg, exclude, null,
+            liveSnapGuides(SnapQueryPolicy(SnapPurpose.placement, SnapGuideScope.registered)));
+    }
+
+    private Vec3 placeSnapped(int mx, int my, ref VectorStack vts) {
+        placementSnap_ = placementElection(lastHit_.point, mx, my, viewportOf(vts), dragSnap_);
+        return placementSnap_.worldPos;
+    }
+
+    // P3: commits the armed drag-build, if any, at the RELEASE event's own
+    // CONS-snapped hit. A release with no real motion since press (a
+    // stationary click-on-vertex — "revisit = Move/no-op", capture SESSION 1)
+    // builds nothing.
+    package(vibe3d.editing.tools.interactive.tools.edit.topology_pen) bool buildUp(ref const SDL_MouseButtonEvent e, ref VectorStack vts) {
+        // Task 0485: the same slot's EDGE outcome. Checked first and
+        // exclusively — `onShiftLmbDown` arms exactly one of the two, so this
+        // can never shadow a vertex build.
+        if (dupEdgeArmed_) return dupEdgeUp(e, vts);
+        // Every Duplicate press that armed no build lands here: the Move
+        // fall-throughs (an interior edge, contract C-0; a closed source
+        // vertex, R-closed) AND a press that declined outright (empty space),
+        // because the base arms the button before the press can decline and
+        // `runPenMode` stamps `Build` whatever the press answered. So this
+        // release goes to the Move's commit leg, guarded by its own arm bools
+        // (nothing armed: a no-op) — never back through `lmbModeUp`, which
+        // reads the `Build` stamp and returns here forever (task 8720: it hung
+        // the app; cells chord-dup-interior-edge and chord-dup-empty). The
+        // loop fall-through is not reachable here: with Edge Loop on,
+        // `runPenMode` sends the press to the duplicate-LOOP slot instead.
+        if (!dragArmed_) return lmbPlaceOrMoveUp(e, vts);
+        int       a     = sourceVert_;
+        BuildCase casee  = classifiedCase_;
+        int       p      = quadP_;
+        int       q      = quadQ_;
+        int       startX = dragStartX_, startY = dragStartY_;
+        int       dx = e.x - startX, dy = e.y - startY;
+
+        // N-plane (`nAngleNeighbour`): with several border neighbours the
+        // triangle's is the one nearest the drag's surface direction.
+        int n = triN_;
+        if (casee == BuildCase.Tri) {
+            Viewport vp = viewportOf(vts);
+            n = triNeighbourAt(e.x, e.y, vp);
+        }
+
+        sourceVert_     = -1;
+        dragArmed_      = false;
+        classifiedCase_ = BuildCase.None;
+        triN_ = quadP_ = quadQ_ = ghostTriN_ = -1;
+        triCands_ = null;
+        triCandDirs_ = null;
+
+        readHit(vts);   // refresh lastHit_ to THIS release event's CONS-snapped hit
+
+        // A release back at (near enough) the press pixel is a stationary
+        // click on the source vertex, not a drag — capture-confirmed no-op
+        // (a near-zero-displacement Move), never a build.
+        if (releaseIsClick(dx, dy)) return true;
+
+        if (!lastHit_.hit) return true;        // no surface hit at release -> nothing to build
+        if (casee == BuildCase.None) return true;   // defensive: a closed source arms a move instead
+
+        // Landing (§1.5), same conversion as Place above: the CONS hit is
+        // world, `m.addVertex` inside `buildFromSource` stores local.
+        buildFromSource(a, casee, n, p, q,
+                        primaryModelSpace().toLocalPoint(lastHit_.point));
+        return true;
+    }
+
+    // P7 (doc/topopen_p7_slide_plan.md Phase 3): commits the armed Slide
+    // gesture at the RELEASE event's own cursor-derived scalar. Re-derived
+    // press->release here rather than reusing the last motion event's
+    // `slideDeltaK_`, so the committed offset is the LAST evaluation's — the
+    // law's own commit rule — even if the release pixel differs from the last
+    // motion pixel.
+    package(vibe3d.editing.tools.interactive.tools.edit.topology_pen) bool slideUp(ref const SDL_MouseButtonEvent e, ref VectorStack vts) {
+        if (!slideArmed_) return false;
+        uint seed   = cast(uint)slideSeed_;
+        int  eA     = slideEndA_, eB = slideEndB_;
+        int  nA     = slideNbrA_, nB = slideNbrB_;
+        int  startX = slideStartX_, startY = slideStartY_;
+        const int vSlid = slideVertex_;
+        const bool overBg = vSlid < 0 && slideOverBg_;
+        Vec3 vTarget, off;
+        bool vOk, eOk;
+        if (vSlid >= 0) {
+            Viewport vpv = viewportOf(vts);
+            int axis;
+            float k;
+            vOk = vertexSlideTarget(e.x, e.y, vpv, vTarget, axis, k);
+            // Its offset: the one world channel the vertex was pushed along.
+            auto mv = mesh;
+            if (vOk && mv !is null && vSlid < cast(int)mv.vertices.length) {
+                const ms = primaryModelSpace();
+                const Vec3 u = mv.vertices[vSlid];
+                const Vec3 uW = ms.toWorldPoint(u);
+                off = ms.toLocalPoint(Vec3(uW.x + (axis == 0 ? k : 0.0f), uW.y + (axis == 1 ? k : 0.0f),
+                                           uW.z + (axis == 2 ? k : 0.0f))) - u;
+            }
+        } else if (overBg) {
+            Viewport vpe = viewportOf(vts);
+            eOk = edgeSlideStep(e.x, e.y, vpe, off);   // the release is the last sample
+        }
+        slideOverBg_ = false;
+        slidePathPx_ = 0.0f;
+
+        slideSeed_  = -1;
+        slideArmed_ = false;
+        slideEndA_ = slideEndB_ = -1;
+        slideNbrA_ = slideNbrB_ = -1;
+        slideVertex_ = -1;
+        slideAxis_   = -1;
+
+        // REV1 FIX-2 (doc/topopen_p7_slide_plan.md): a release back at (near
+        // enough) the press pixel is a click without a real drag — an
+        // explicit, clean no-op (no vertex write; the press is still its one
+        // step), mirroring P3's own `kMinDragPx` guard.
+        int dx = e.x - startX, dy = e.y - startY;
+        if (releaseIsClick(dx, dy)) return true;
+
+        slideDeltaK_ = 0.0f;
+        auto m = mesh;
+        if (vSlid >= 0) {
+            if (!vOk || m is null) return true;
+            // The slid vertex is the step's carried set (L17; S7b).
+            writeOffset(off);
+            noteStepDescriptor(PenStepKind.Slide, [cast(uint)vSlid], [m.vertices[vSlid]]);
+            commitSlideTargets(vSlid, vSlid, vTarget, vTarget);
+            return true;
+        }
+        if (overBg) {
+            // Over a background both endpoints land at nearestBG(u_i + offset)
+            // (L29/L47/L50, the one-channel latched offset); no landing: nothing.
+            if (!eOk || m is null || eA < 0 || eB < 0 || eA >= cast(int)m.vertices.length
+                || eB >= cast(int)m.vertices.length) return true;
+            const Vec3[] u = [m.vertices[eA], m.vertices[eB]];
+            const to = carriedTargets(u, off);
+            writeOffset(off);
+            noteStepDescriptor(PenStepKind.Slide, [cast(uint)eA, cast(uint)eB], u);
+            commitSlideTargets(eA, eB, to[0], to[1]);
+            return true;
+        }
+        Viewport vp = viewportOf(vts);
+        commitSlide(seed, eA, eB, nA, nB, slideDeltaFromDrag(e.x, e.y, vp));
+        return true;
+    }
+
+    // P8 (doc/topopen_p8_smooth_plan.md Phase 3): commits the armed Smooth
+    // gesture — a click, and equally a drag that ends back at the press
+    // pixel's own column, applies exactly ONE pass; a rightward drag applies
+    // N per the measured law (`smoothPassesForDragDx`). Risk 5 (plan):
+    // UNLIKE every other gesture, this one is NOT gated by `kMinDragPx` — a
+    // stationary click must still apply its one pass (`applySmoothPasses`
+    // itself carries the REV1 FIX-2 no-op-undo guard for the case where that
+    // one pass genuinely changes nothing).
+    //
+    // Reads the LAST MOTION EVENT's displacement (`smoothDragDx_`), not this
+    // release event's own pixel — matching the reference, which likewise
+    // recomputes the count only while moving and consumes the last value it
+    // published at release. This also keeps the release and the live
+    // `smoothPassCount` readback exactly in step by construction.
+    private bool smoothUp(ref const SDL_MouseButtonEvent e, ref VectorStack vts) {
+        if (!smoothArmed_) return false;
+        smoothArmed_ = false;
+        immutable int passes = smoothPassesForDragDx(smoothDragDx_);
+        applySmoothPasses(passes);
+        // A Strength write re-runs it from the press image (L21): the one
+        // entry is the pass count, as `applySmoothPasses` clamps it.
+        noteStepDescriptor(PenStepKind.Smooth,
+                           [cast(uint)(passes < 1 ? 1 : passes > MAX_TOPOPEN_SMOOTH_PASSES
+                                       ? MAX_TOPOPEN_SMOOTH_PASSES : passes)], null);
+        return true;
+    }
+
+    // P9 (doc/topopen_p9_split_plan.md REV1 FIX-2): commits the armed Split
+    // gesture. C is resolved AT THE RELEASE PIXEL — authoritative, never the
+    // last-motion `splitTargetVert_` (a release with no intervening motion
+    // event must still resolve C at its own pixel).
+    //
+    // Split is a VERTEX -> VERTEX chord split, and nothing else
+    // (doc/tasks/work/0480-topopen-addloop-middle.md): a release that does
+    // NOT land on an existing vertex within the drag-snap acceptance radius
+    // (`topoPenSnapAcceptPx`, via `resolveSplitTargetVert`) — mid-span over
+    // an edge, or on empty space — is a clean no-op. Inserting a new vertex
+    // partway along a crossed edge belongs to the Add Loop gesture
+    // (`addLoopUp`/`addLoopFrac`), which owns both the fraction and the
+    // "at the Middle" option; this path never creates a vertex.
+    package(vibe3d.editing.tools.interactive.tools.edit.topology_pen) bool splitUp(ref const SDL_MouseButtonEvent e, ref VectorStack vts) {
+        if (!splitArmed_) return false;
+        int a = splitSourceVert_;
+        splitArmed_      = false;
+        splitSourceVert_ = -1;
+        Viewport vp = viewportOf(vts);
+        int c = resolveSplitTargetVert(e.x, e.y, vp, a);
+        splitTargetVert_ = -1;
+        if (c >= 0) commitSplit(a, c);
+        // else: release on an edge / empty space -> clean no-op.
+        return true;
+    }
+
+    // The Add Loop insert-fraction law (reference parity,
+    // doc/tasks/work/0480-topopen-addloop-middle.md):
+    //
+    //     frac = middle ? 0.5 : clamp(cursorRatio, 0, 1)
+    //
+    // ONE uniform scalar for the WHOLE ring — the returned value is handed
+    // to `insertEdgeLoops` once and applied at the same fraction on every
+    // crossed edge; it is never re-derived per crossed edge from that edge's
+    // own screen projection. (Measured on the reference: the cut fractions
+    // across the crossed edges of one gesture had a spread of exactly 0.)
+    //
+    // `middle` bypasses the cursor entirely, so it also bypasses the clamp —
+    // there is no cursor value that can perturb the forced 0.5. With the
+    // option OFF the clamp is nominally redundant (`ratioOnSegment` already
+    // clamps to `[0,1]`), but it is stated here because the clamp is part of
+    // the law, not an artefact of the current cursor plumbing: it must hold
+    // for ANY future producer of the ratio.
+    package(vibe3d.editing.tools.interactive.tools.edit.topology_pen) float addLoopFrac(float cursorRatio) const {
+        if (addLoopMiddle_) return 0.5f;
+        if (!(cursorRatio > 0.0f)) return 0.0f;   // also rejects NaN
+        if (cursorRatio > 1.0f)    return 1.0f;
+        return cursorRatio;
+    }
+
+    // P6 (doc/topopen_p6_addloop_plan.md Phase 3): commits the armed Add Loop
+    // gesture, at the RELEASE event's own cursor-derived ratio — passed
+    // through `addLoopFrac`, so the sticky "at the Middle" option overrides
+    // it with a flat 0.5 for every crossed edge.
+    package(vibe3d.editing.tools.interactive.tools.edit.topology_pen) bool addLoopUp(ref const SDL_MouseButtonEvent e, ref VectorStack vts) {
+        if (!addLoopArmed_) return false;
+        int seed = addLoopSeed_;
+        addLoopSeed_  = -1;
+        addLoopArmed_ = false;
+        Viewport vp = viewportOf(vts);
+        float r = addLoopFrac(ratioFromCursor(e.x, e.y, vp));
+        commitAddLoop(cast(uint)seed, r);
+        return true;
+    }
+
+    // P10 (doc/topopen_p10_moveloop_plan.md Phase 3): commits the armed Move
+    // Loop gesture at the RELEASE event's own pixel. A release back at (near
+    // enough) the press pixel is a click without a real drag — an explicit,
+    // clean no-op (no vertex write, no `perVertexTargets`/
+    // re-snap work at all), mirroring P3/P7's own `kMinDragPx` guard.
+    package(vibe3d.editing.tools.interactive.tools.edit.topology_pen) bool moveLoopUp(ref const SDL_MouseButtonEvent e, ref VectorStack vts) {
+        if (!moveLoopArmed_) return false;
+        auto verts = moveLoopVerts_;
+        int  sx = moveLoopStartX_, sy = moveLoopStartY_;
+        immutable int seed = moveLoopSeed_;
+        moveLoopArmed_ = false;
+        moveLoopVerts_ = null;
+        moveLoopSeed_  = -1;
+
+        int dx = e.x - sx, dy = e.y - sy;
+        Viewport vp = viewportOf(vts);
+        auto m = mesh;
+        Vec3[] orig;
+        if (m !is null)
+            foreach (vi; verts) if (vi < m.vertices.length) orig ~= m.vertices[vi];
+        immutable keep = moveLoopSeed_;
+        moveLoopSeed_ = seed;   // the offset's anchor, already disarmed
+        const off = loopOffset(dx, dy, vp);
+        moveLoopSeed_ = keep;
+        writeOffset(off);
+        noteStepDescriptor(PenStepKind.MoveLoop, verts, orig);
+        if (releaseIsClick(dx, dy) || orig.length != verts.length) return true;
+
+        immutable size_t nv = m.vertices.length;
+        commitMoveLoop(verts, carriedTargets(orig, off), vp);
+        // A landing weld compacted the indices: the moved set is gone (S7a's
+        // Move rule).
+        if (m.vertices.length != nv) noteStepDescriptor(PenStepKind.MoveLoop, null, null);
+        return true;
+    }
+
+    // P11 (doc/topopen_p11_duploop_plan.md Phase 3): commits the armed Dup
+    // Loop gesture at the RELEASE event's own screen delta. A release back
+    // at (near enough) the press pixel is a click without a real drag — an
+    // explicit, clean no-op (no extrude), mirroring every
+    // other gesture's `kMinDragPx` guard.
+    package(vibe3d.editing.tools.interactive.tools.edit.topology_pen) bool dupLoopUp(ref const SDL_MouseButtonEvent e, ref VectorStack vts) {
+        // Task 0486 (contract C-0): on an interior edge this chord fell through
+        // to a move-loop, whose commit leg is `moveLoopUp` — reach it, or the
+        // gesture would arm and then never commit.
+        if (!dupLoopArmed_ && moveLoopArmed_) return moveLoopUp(e, vts);
+        if (!dupLoopArmed_) return false;
+        auto edges = dupLoopEdges_;
+        int  sx = dupLoopStartX_, sy = dupLoopStartY_;
+        dupLoopArmed_ = false;
+        dupLoopEdges_ = null;
+        dupLoopSeed_  = -1;
+
+        int dx = e.x - sx, dy = e.y - sy;
+        if (releaseIsClick(dx, dy)) return true;
+
+        Viewport vp = viewportOf(vts);
+        commitDupLoop(edges, dx, dy, vp);
+        return true;
+    }
+
+    // Task 0485: commits the armed Shift+LMB duplicate-EDGE gesture — the
+    // single-edge sibling of `dupLoopUp` immediately above, with the same
+    // click-vs-drag gate (a stationary Shift+click duplicates nothing) and
+    // the same release-pixel delta. Disarms on every path.
+    private bool dupEdgeUp(ref const SDL_MouseButtonEvent e, ref VectorStack vts) {
+        if (!dupEdgeArmed_) return false;
+        auto edges = dupEdgeEdges_;
+        immutable int sx = dupEdgeStartX_, sy = dupEdgeStartY_;
+        dupEdgeArmed_ = false;
+        dupEdgeSeed_  = -1;
+        dupEdgeEdges_ = null;
+
+        immutable int dx = e.x - sx, dy = e.y - sy;
+        if (releaseIsClick(dx, dy)) return true;
+        if (edges.length == 0) return true;
+
+        Viewport vp = viewportOf(vts);
+        // `buildEditFactory_` — this IS the Shift+LMB Duplicate/build slot,
+        // so the entry carries that slot's own wire name, never the loop
+        // gesture's (the OBJ-3/D4 discipline every commit path here follows).
+        commitDupEdges(edges, dx, dy, vp, factories_.build, "Topology Duplicate Edge",
+                       PenStepKind.DupEdge);
+        return true;
+    }
+
+    // P12 (doc/topopen_p12_smoothloop_plan.md Phase 3): commits the armed
+    // Smooth+Loop gesture — UNLIKE Move Loop/Dup Loop, this is NOT gated by
+    // `kMinDragPx` (a stationary click must still apply its one pass,
+    // mirroring the whole-mesh Smooth gesture's own Risk-5 discipline, P8).
+    // Disarms BEFORE calling `applySmoothLoopPasses` (REV1 plan "Disarm
+    // before commit"); `smoothLoopSeed_`/`smoothLoopVerts_` stay valid for
+    // THAT call (it reads them directly, REV1 FIX-2 — no re-gather) and are
+    // cleared immediately after.
+    package(vibe3d.editing.tools.interactive.tools.edit.topology_pen) bool smoothLoopUp(ref const SDL_MouseButtonEvent e, ref VectorStack vts) {
+        if (!smoothLoopArmed_) return false;
+        smoothLoopArmed_ = false;
+        int n = 1 + cast(int)(smoothLoopDragPx_ / kSmoothLoopPassStridePx);
+        applySmoothLoopPasses(n);
+        smoothLoopSeed_   = -1;
+        smoothLoopVerts_  = null;
+        smoothLoopDragPx_ = 0.0f;
+        return true;
+    }
+
+    // The Mode router's RELEASE leg (task 0483): the unmodified-LMB slot's
+    // UP dispatches to whichever gesture THIS press's DOWN actually resolved
+    // to (`gestureOn_`), never to a freshly re-read `penMode_` — see
+    // `gestureOn_`'s own doc comment for the mid-drag hazard that closes.
+    //
+    // Every `*Up` below already guards on its own arm bool, so a DOWN that
+    // resolved-but-declined lands here as a clean no-op. `Remove` and the
+    // Fill click op have no UP leg at all (both commit on DOWN) and return
+    // `false`, unconsumed — matching how the Ctrl+MMB chord's own UP case
+    // answers. `PlaceOrMove` is both the Move/Point modes' leg and the
+    // neutral post-reset value, and is guarded by `placeArmed_`/`moveArmed_`.
+    package(vibe3d.editing.tools.interactive.tools.edit.topology_pen) bool lmbModeUp(ref const SDL_MouseButtonEvent e, ref VectorStack vts) {
+        return penGestureUp(gestureOn_[InputButton.Left], e, vts);
+    }
+
+    /// Dispatch a RELEASE to the commit leg of the gesture `g` — the gesture
+    /// the matching press actually resolved to, per button (task 0487). Every
+    /// leg guards on its own arm bool, so a press that resolved-but-declined
+    /// lands here as a clean no-op.
+    ///
+    /// `final switch` since task 0705: this used to end in
+    /// `default: return lmbPlaceOrMoveUp(...)`, which is the RIGHT answer for
+    /// `PlaceOrMove` and a silently WRONG one for any gesture added later —
+    /// a new `PenGesture` would have armed at Down and then committed through
+    /// place-or-move's leg at Up, with nothing to say so. Spelling
+    /// `PlaceOrMove` out costs one line and makes the next member a compile
+    /// error here instead. Behaviour is unchanged: `PlaceOrMove` was the only
+    /// member the `default` arm could ever see.
+    private bool penGestureUp(PenGesture g, ref const SDL_MouseButtonEvent e,
+                              ref VectorStack vts) {
+        final switch (g) {
+        case PenGesture.Build:       return buildUp(e, vts);
+        case PenGesture.Slide:       return slideUp(e, vts);
+        case PenGesture.Smooth:      return smoothUp(e, vts);
+        case PenGesture.Split:       return splitUp(e, vts);
+        case PenGesture.AddLoop:     return addLoopUp(e, vts);
+        case PenGesture.MoveLoop:    return moveLoopUp(e, vts);
+        case PenGesture.DupLoop:     return dupLoopUp(e, vts);
+        case PenGesture.SmoothLoop:  return smoothLoopUp(e, vts);
+        case PenGesture.Remove:      return false;   // commits on DOWN (D2)
+        case PenGesture.PlaceOrMove: return lmbPlaceOrMoveUp(e, vts);
+        }
+    }
+
+    // Phase-2 input-dispatch migration (doc/topopen_input_dispatch_phase2_plan.md):
+    // delivers one resolved action at one phase — the LIVE seam
+    // `onMouseButtonDown`/`onMouseButtonUp` above now route through
+    // `dispatchInput()` to reach. DOWN cases delegate to the existing
+    // `on*Down` methods (unchanged); UP cases delegate to the extracted
+    // `<mode>Up` helpers above (the SAME bodies `onMouseButtonUp` used to
+    // call inline pre-flip) — each already guards on its own arm bool, so a
+    // Down that resolved-but-declined (the base arms `armed_[button]` BEFORE
+    // `onToolAction(Down)` can decline — the "arm-before-decline gap") safely
+    // no-ops here too: the bool, not `armed_[]`, is the "really armed" truth.
+    // `Remove` has no UP body (it commits on DOWN, D2) and no arm bool, so
+    // its UP case returns `false`, unconsumed — never add a `removeArmed_`
+    // bool (it would wrongly suppress the hover indicator during a held
+    // Ctrl+MMB). `Move` never arrives — this tool does not route
+    // `onMouseMotion` through `dispatchInput` (Move-phase routing is
+    // deferred, design §5); `onMouseMotion` keeps reading the arm bools
+    // directly, unchanged.
+    override bool onToolAction(ToolAction a, InputPhase p,
+                               ref const SDL_MouseButtonEvent e, ref VectorStack vts) {
+        immutable auto chord = cast(TopoPenChord) a;
+        immutable auto btn   = chordButton(chord);
+        immutable auto ov    = kChordOv[chord];
+
+        if (p == InputPhase.Down) {
+            // The chord's overrides on top of the user's own settings — the
+            // whole of the input model, in three lines.
+            immutable PenMode mode = (ov.mode == ModeOv.FromUser)
+                                   ? penMode_ : modeOfOverride(ov.mode);
+            immutable bool loop    = (ov.loop  == FlagOv.ForceOn) || edgeLoop_;
+            immutable bool slide   = (ov.slide == FlagOv.ForceOn) || edgeSlide_;
+            return runPenMode(mode, loop, slide, ov.axis, btn, e, vts);
+        }
+        if (p == InputPhase.Up) return penGestureUp(gestureOn_[btn], e, vts);
+        // `Move` never arrives — this tool does not route `onMouseMotion`
+        // through `dispatchInput` (Move-phase routing is deferred, design §5);
+        // `onMouseMotion` keeps reading the arm bools directly, unchanged.
+        return false;
+    }
+
+    // Create one isolated vertex at `point` in the PRIMARY layer via the
+    // `mesh.addVertex` command (P2 REV-1, doc/topopen_p2_plan.md): fires
+    // the real `MeshVertexNew` through its Operator interface
+    // (`cmd.evaluate(vts)`, using the TOOL's own vts so the command's
+    // internal `SubjectPacket` guard is satisfied) as the KERNEL of the
+    // press step — the step, not the command, is the row (plan 8646; the
+    // kernel shape mirrors the precedent at
+    // `tools/common/command_wrapper.d`'s `applyWithLivePipeline`, NOT
+    // VertexTool's snapshot-diff path: the bound `gestureFactory` builds
+    // `new MeshVertexNew(&mesh(), …)` at CALL time, so the command targets
+    // whichever layer is primary right now, and its own `MeshSnapshot`-based
+    // `revert()` handles undo). Returns the new vertex's index (`-1` on a
+    // no-op — missing factory, a carrier of the wrong class, or a rejected
+    // `evaluate`), for P3's chain-building to reuse
+    // (doc/topopen_p2_plan.md §Extension); this tool itself does not use the
+    // return value yet.
+    //
+    // The three tail statements (GPU upload, selection sync, display refresh)
+    // run bound or unbound alike.
+    /// `pointLocal` is a PRIMARY-LAYER LOCAL coordinate (task 0619): the
+    /// command writes it straight into `mesh.vertices[]`, so a caller
+    /// holding a world hit converts BEFORE calling, not after.
+    private int placeVertexAt(Vec3 pointLocal, ref VectorStack vts) {
+        // Guard BOTH prerequisites BEFORE creating/applying the command
+        // (review NIT): meshSrc_/gpu_/vc_/ec_/fc_ are wired together with the
+        // base's `gestureFactory` (registration.d), so a partially-constructed
+        // tool (e.g. no-arg ctor + `setPenFactories` only) must bail HERE —
+        // above cmd.evaluate() — so it never mutates-then-fails-to-record
+        // (which would leave an applied-but-un-undoable edit).
+        if (gestureFactory is null || meshSrc_ is null) return -1;
+
+        // The seam's slot is typed `Command delegate()`, so the class comes
+        // back here. A null cast means the factory bound at registration builds
+        // something other than a `MeshVertexNew` — a COUNTED refusal, never a
+        // silent one, and taken BEFORE any mutation for the reason above.
+        auto cmd = cast(MeshVertexNew) gestureFactory();   // binds &mesh() = primary NOW
+        if (cmd is null) { noteGestureCarrierMismatch(); return -1; }
+        cmd.setPos(pointLocal);
+        if (!cmd.evaluate(vts)) return -1;
+        // The command is the KERNEL only; the press step is the row.
+        noteStep(factories_.place, "Topology Place");
+
+        if (gpu_ !is null) gpu_.upload(*mesh);
+        mesh.syncSelection();
+        refreshDisplay(mesh, gpu_);
+
+        return cast(int)(mesh.vertices.length - 1);
+    }
+
+    // P7 (doc/topopen_p7_slide_plan.md Phase 3): commit the armed Slide
+    // gesture — writes AT MOST 2 vertex positions (the grabbed edge's own
+    // endpoints; a HELD-FIXED endpoint, `nA`/`nB == -1`, keeps its CURRENT
+    // position). Position-only, direct kernel mutation
+    // (`m.vertices[i] = pos` + `commitChange(Position)`), bracketed in ONE
+    // before/after `MeshSnapshot` pair recorded through the DEDICATED
+    // `slideEditFactory_` (wireName "mesh.topoPen_slide") — mirrors
+    // `applyMoveTargets`'s shape, extended to up to 2 vertices. `seed` is a
+    // defensive cross-check (the grabbed edge must still connect `eA`/`eB`
+    // — guards against a stale/corrupted arm rather than trusting the
+    // caller's indices blindly); the eps no-op guard mirrors
+    // `applyMoveTargets`'s. Zero topology change — never resizes/rebuilds
+    // `faces[]`/`edges[]`/`vertices[]` (no `buildLoops`, no
+    // `deleteFacesByMask`, no `insertEdgeLoops`) — so unlike P5/P6 this does
+    // NOT call `resyncSession()` (plan §Risks: no sibling gesture's cached
+    // INDEX can dangle from a pure position write).
+    //
+    // `deltaK` is the law's single signed scalar (`dominantAxisDelta` of the
+    // gesture's world-space move delta, then carried into the layer's own
+    // space by `slideDeltaFromDrag` — the rails it is applied along below
+    // are local) — ONE value for BOTH endpoints, which
+    // is measured, not an economy: the two endpoints differ only in their rail
+    // DIRECTION. See `slideEndpointPos` for the per-endpoint law and for why
+    // there is no `[0,1]` clamp any more.
+    package(vibe3d.editing.tools.interactive.tools.edit.topology_pen) void commitSlide(uint seed, int eA, int eB, int nA, int nB, double deltaK) {
+        auto m = mesh;
+        if (m is null) return;
+        if (eA < 0 || eA >= cast(int)m.vertices.length) return;
+        if (eB < 0 || eB >= cast(int)m.vertices.length) return;
+        if (nA >= cast(int)m.vertices.length) return;
+        if (nB >= cast(int)m.vertices.length) return;
+        if (seed >= m.edges.length) return;
+        auto ep = m.edges[seed];
+        bool edgeMatches = (ep[0] == eA && ep[1] == eB) || (ep[0] == eB && ep[1] == eA);
+        if (!edgeMatches) return;   // stale/corrupted arm — defensive, should not happen
+
+        Vec3 origA = m.vertices[eA];
+        Vec3 origB = m.vertices[eB];
+        Vec3 pA = (nA >= 0) ? slideEndpointPos(origA, m.vertices[nA], deltaK) : origA;
+        Vec3 pB = (nB >= 0) ? slideEndpointPos(origB, m.vertices[nB], deltaK) : origB;
+        commitSlideTargets(eA, eB, pA, pB);
+    }
+
+    // The slide's commit tail, shared by the edge slide (`commitSlide`, its
+    // rail kernel above) and the vertex slide (`vertexSlideTarget`):
+    // write the two endpoint positions (the same index twice for a vertex) as
+    // ONE step under the slide's own factory, or nothing within the eps.
+    package(vibe3d.editing.tools.interactive.tools.edit.topology_pen) void commitSlideTargets(int eA, int eB, Vec3 pA, Vec3 pB) {
+        auto m = mesh;
+        if (m is null) return;
+        if (eA < 0 || eA >= cast(int)m.vertices.length) return;
+        if (eB < 0 || eB >= cast(int)m.vertices.length) return;
+        Vec3 origA = m.vertices[eA];
+        Vec3 origB = m.vertices[eB];
+
+        enum float kSlideEps = 1e-4f;   // mirrors applyMoveTargets's stationary-grab guard
+        if ((pA - origA).length <= kSlideEps && (pB - origB).length <= kSlideEps) return;
+
+        m.vertices[eA] = pA;
+        m.vertices[eB] = pB;
+        m.commitChange(MeshEditScope.Position);
+        noteStep(factories_.slide, "Topology Slide");
+
+        // Position-only: no resyncSession() — see this method's own doc
+        // comment / plan §Risks.
+
+        m.syncSelection();
+        if (gpu_ !is null) { gpu_.upload(*m); refreshDisplay(m, gpu_); }
+    }
+
+    // P8 (doc/topopen_p8_smooth_plan.md "The pluggable weight"): true when
+    // edge `ei` is OPEN — bordered by AT MOST one face (either a genuine
+    // boundary edge, `facesAroundEdge` yielding exactly one, or a bare/
+    // floating edge with no incident face at all, e.g. an un-closed P3
+    // CASE-EDGE build). Reuses `facesAroundEdge` — the same primitive
+    // `seedRail`/`commitAddLoop` already walk — so this classification
+    // stays consistent with the rest of this tool, and additionally covers
+    // the bare-edge case a `loop.twin`-based test (as `MeshSmooth`'s own
+    // `lockBound`/`lockCorner` use) cannot see on a non-face-bounded patch.
+    package(vibe3d.editing.tools.interactive.tools.edit.topology_pen) static bool isOpenEdge(Mesh* m, uint ei) {
+        int n = 0;
+        foreach (fi; m.facesAroundEdge(ei)) { ++n; if (n > 1) break; }
+        return n <= 1;
+    }
+
+    // P8: true when vertex `v` is incident to AT LEAST ONE open edge
+    // (`isOpenEdge`) — a boundary vertex, per the measured relax rule the
+    // Smooth kernel applies (`buildRelaxTopology` below feeds the equivalent
+    // per-slot flags to `deriveBoundary`, which is the authority on that
+    // path; this predicate remains for single-vertex queries and tests).
+    // `adjOff`/`adjNbrs` are the caller's already-fetched CSR adjacency
+    // (avoids re-fetching per vertex).
+    package(vibe3d.editing.tools.interactive.tools.edit.topology_pen) static bool isOpenVertex(Mesh* m, uint v,
+                                     const(size_t)[] adjOff, const(uint)[] adjNbrs) {
+        foreach (nb; adjNbrs[adjOff[v] .. adjOff[v + 1]])
+            if (m.edgeIndex(v, nb) != uint.max && isOpenEdge(m, m.edgeIndex(v, nb)))
+                return true;
+        return false;
+    }
+
+    // Inverse-edge-length relax KERNEL for the 1-D Smooth+Loop gesture (P12,
+    // doc/topopen_p12_smoothloop_plan.md Phase 1).
+    //
+    // SCOPE (narrowed — read this before reusing it): this was originally
+    // extracted so the whole-mesh Smooth gesture and the 1-D Smooth+Loop
+    // gesture could share one law. That premise no longer holds. The
+    // whole-mesh Smooth path has since been re-measured and moved to a
+    // DIFFERENT, force-accumulating law (`tools/edit/smooth_relax.d`), which
+    // superseded the reading below — in particular the weights there are
+    // proportional to edge LENGTH, not its inverse, and the step is projected
+    // perpendicular to each edge. Smooth+Loop's own weighting has NOT been
+    // re-measured, so it keeps this law until it is; do not "unify" the two
+    // on the assumption that they must agree, and do not treat this function
+    // as evidence about the whole-mesh path.
+    //
+    // The law it does implement: a closer neighbor pulls harder —
+    //   relaxTarget(v) = Σ_i (n_i / len_i) / Σ_i (1 / len_i)
+    // where `len_i = |v − n_i|` at the caller-supplied `readPos` snapshot
+    // (every vertex in a pass reads from the SAME snapshot, mirroring
+    // `MeshSmooth`'s own prev/cur double-buffer, smooth.d:280-297) and
+    // `nbrs` is whatever neighbor set the caller has already resolved
+    // (today: `applySmoothLoopPasses`'s 1-D loop-neighbor pair) — this
+    // function itself has NO topology awareness beyond the list it's handed.
+    // `kStrength = 1.0` (V1 fixed, full relax) is kept as an explicit blend
+    // so a future capture can retune it without touching the weight law.
+    // An empty `nbrs` returns `readPos[v]` UNCHANGED — a true no-op,
+    // bit-identical (no arithmetic performed), `hadNeighbors` left at its
+    // `out`-default `false`. Preserves the ORIGINAL `1e-6` div-by-zero
+    // floor and float summation order (iterating `nbrs` in the caller's
+    // given order) bit-for-bit — a pure extraction, not a rewrite.
+    package(vibe3d.editing.tools.interactive.tools.edit.topology_pen) static Vec3 inverseEdgeLenRelax(const(Vec3)[] readPos, uint v,
+                                            const(uint)[] nbrs, out bool hadNeighbors) {
+        if (nbrs.length == 0) return readPos[v];
+
+        Vec3  weightedSum = Vec3(0, 0, 0);
+        float weightSum   = 0.0f;
+        foreach (nb; nbrs) {
+            float len = (readPos[v] - readPos[nb]).length;
+            float w   = 1.0f / ((len > 1e-6f) ? len : 1e-6f);
+            weightedSum = weightedSum + readPos[nb] * w;
+            weightSum  += w;
+        }
+
+        hadNeighbors = true;
+        Vec3 mean = weightedSum * (1.0f / weightSum);
+        enum float kStrength = 1.0f;   // V1 fixed (full relax)
+        return readPos[v] + (mean - readPos[v]) * kStrength;
+    }
+
+    // Freeze this mesh's topology into the form the measured relaxation
+    // kernel consumes (`tools/edit/smooth_relax.d`, which owns the law
+    // itself and the evidence for it). Built ONCE per Smooth gesture: the
+    // gesture is Position-only, so `edges[]`/`faces[]` — and therefore every
+    // field here — are invariant across all of its iterations.
+    //
+    // Neighbours come from `m.vertexAdjacencyCSR`, the EXACT same CSR
+    // adjacency the shipped Laplacian smooth averages over
+    // (`commands/mesh/smooth.d`), so this gesture's neighbour SET can never
+    // drift from that command's. `openTo` is filled slot-for-slot from
+    // `isOpenEdge` — the same open-edge classification `seedRail` /
+    // `commitAddLoop` use — and `boundary` is DERIVED from it by
+    // `deriveBoundary`, never assembled here, so the per-vertex flag and the
+    // per-slot flags cannot disagree.
+    //
+    // The measured boundary rule: a vertex with at least one open edge
+    // relaxes using ONLY its open-edge neighbours, not its full 1-ring
+    // (dropping this restriction costs 4.3e-02 against the conformance
+    // fixture). A missing `edgeIndex` (defensive — should not occur
+    // post-`buildLoops`) is treated as NOT open, i.e. as an interior edge:
+    // the conservative choice, since it can only restrict, never widen.
+    package(vibe3d.editing.tools.interactive.tools.edit.topology_pen) static RelaxTopology buildRelaxTopology(Mesh* m) {
+        const(size_t)[] adjOff;
+        const(uint)[]   adjNbrs;
+        m.vertexAdjacencyCSR(adjOff, adjNbrs);
+
+        auto openTo = new bool[](adjNbrs.length);
+        foreach (v; 0 .. m.vertices.length) {
+            foreach (k; adjOff[v] .. adjOff[v + 1]) {
+                uint ei = m.edgeIndex(cast(uint) v, adjNbrs[k]);
+                openTo[k] = (ei != uint.max) && isOpenEdge(m, ei);
+            }
+        }
+
+        RelaxTopology topo = {
+            offset:   adjOff,
+            nbrs:     adjNbrs,
+            openTo:   openTo,
+            boundary: deriveBoundary(adjOff, openTo),
+        };
+        return topo;
+    }
+
+    // SCALE-RELATIVE no-op threshold for the Smooth gesture: the distance a
+    // vertex must move before the gesture counts as having changed anything.
+    // Returns a fraction of the pre-gesture bounding-box DIAGONAL rather than
+    // a world-unit constant.
+    //
+    // Why this had to stop being absolute. The guard's job is to catch a
+    // gesture that nets to IDENTITY — a disconnected patch with no usable
+    // neighbours, no background to snap against, or a perfectly regular mesh
+    // (an exact fixed point of this relaxation law). Every one of those
+    // produces EXACTLY zero movement, not merely small movement, so the
+    // threshold only ever has to clear float round-trip noise. The old
+    // `1e-4f` was inherited from the sibling `kMoveEps`/`kSlideEps`/
+    // `kMoveLoopEps` guards, where the displacement is DRAG-proportional and
+    // a tenth of a millimetre genuinely is nothing. Smooth's displacement is
+    // not drag-proportional: it scales with mesh size and with `strength`
+    // (per click, roughly `0.028 · strength · medianEdgeLength`). Against a
+    // fixed 1e-4 that produces a silent cliff — below it the ENTIRE gesture
+    // is discarded, mesh restored, no feedback of any kind.
+    // Measured: strength 0.05 (legal, well inside the Param's own [0, 4])
+    // on a mesh with 0.07-unit edges — ordinary detail-modelling scale, and
+    // exactly the spacing of the reference capture rig — displaces 5.46e-05
+    // and was swallowed whole. Scaling the threshold to the model removes the
+    // cliff instead of relocating it, which is why this is preferred over
+    // simply lowering the constant.
+    //
+    // Why 1e-6 of the diagonal. Positions are `float`, i.e. ~1.2e-7 relative
+    // precision, so a coordinate out at the extremity of a bounding box of
+    // diagonal D carries roughly D·1e-7 of quantisation. 1e-6·D sits an order
+    // of magnitude above that noise floor while staying ~370x below the
+    // smallest genuinely-visible gesture above. The floor keeps the threshold
+    // positive for a degenerate mesh (single vertex, or all vertices
+    // coincident) whose diagonal is 0, so that a background re-snap of a
+    // coincident cluster is still recorded rather than divided into nothing.
+    //
+    // Deliberately NOT applied to the sibling guards: `kMoveEps`,
+    // `kSlideEps` and `kMoveLoopEps` all judge a SCREEN-driven displacement
+    // (a background re-snap of a shifted pixel, or a rail step whose length is
+    // a pixel delta through the drag Jacobian), so an absolute threshold is
+    // wrong for them in a DIFFERENT way and a bbox-relative one would not fix
+    // it — see `applySmoothLoopPasses` for the measured numbers and for why
+    // the honest replacement there is pixel-relative rather than this.
+    // `kSmoothEps` had no reader outside this function.
+    //
+    // `kSmoothLoopEps` USED TO BE ON THAT LIST AND IS NOT ANY MORE (task 2440).
+    // It was listed as drag-proportional; it is not. `inverseEdgeLenRelax`
+    // carries a fixed `kStrength = 1.0f` and never reads `smoothStrength_`, so
+    // the Smooth+Loop displacement is the loop's own irregularity in world
+    // units — the same kind of quantity this function scales, judged by the
+    // same "the real no-op is EXACTLY zero" argument. It now calls this.
+    private static float smoothNoOpEps(const(Vec3)[] verts) {
+        enum float kRel   = 1e-6f;    // fraction of the bbox diagonal
+        enum float kFloor = 1e-9f;    // degenerate (zero-extent) mesh
+        if (verts.length == 0) return kFloor;
+
+        Vec3 lo = verts[0], hi = verts[0];
+        foreach (v; verts[1 .. $]) {
+            if (v.x < lo.x) lo.x = v.x;  if (v.x > hi.x) hi.x = v.x;
+            if (v.y < lo.y) lo.y = v.y;  if (v.y > hi.y) hi.y = v.y;
+            if (v.z < lo.z) lo.z = v.z;  if (v.z > hi.z) hi.z = v.z;
+        }
+        immutable float diag = (hi - lo).length;
+        immutable float eps  = kRel * diag;
+        return eps > kFloor ? eps : kFloor;
+    }
+
+    // 1-D LOOP-neighbor connectivity (P12,
+    // doc/topopen_p12_smoothloop_plan.md Phase 1): each vertex touched by
+    // `m.selectLoopEdges(seed)` maps to its ≤2 IN-LOOP neighbors (built
+    // purely from the loop's OWN edge list — no CSR / full 1-ring is read
+    // anywhere here), which is exactly what enforces the "1-D along the
+    // loop, not the full 2-D 1-ring" contract: for each loop edge `[a,b]`,
+    // `b` is appended to `a`'s list and `a` to `b`'s. A closed interior loop
+    // vertex ends up with 2 neighbors; an open-chain END vertex, 1 (F1,
+    // held fixed at the caller — see `applySmoothLoopPasses`'s own doc
+    // comment for the `!= 2` guard, REV1 FIX-3). `ei` bounds are guarded
+    // exactly like `uniqueRingVerts` above (defensive — a valid seed should
+    // never yield an out-of-range edge index).
+    package(vibe3d.editing.tools.interactive.tools.edit.topology_pen) static uint[][uint] loopNeighborsOf(Mesh* m, uint seed) {
+        uint[][uint] nbrs;
+        foreach (ei; (*m).selectLoopEdges(seed)) {
+            if (ei < 0 || ei >= cast(int)m.edges.length) continue;   // defensive
+            auto ep = m.edges[cast(uint)ei];
+            nbrs[ep[0]] ~= ep[1];
+            nbrs[ep[1]] ~= ep[0];
+        }
+        return nbrs;
+    }
+
+    // Commit ONE Smooth evaluation of `passCount` relaxation iterations over
+    // the WHOLE primary mesh (V1 scope — no falloff-radius brushing), then a
+    // SINGLE background re-snap. Click supplies `passCount==1`; a drag
+    // supplies more (`onMouseButtonUp`'s Smooth branch).
+    //
+    // The relaxation law itself lives in `tools/edit/smooth_relax.d` — see
+    // that module's header for the measured formula and the per-part
+    // ablation evidence. This function owns everything AROUND it: the
+    // topology freeze, the float↔double conversion, the re-snap, and the
+    // undo record.
+    //
+    // EVALUATION SEMANTICS (measured, reference parity). Three properties,
+    // all of which this shape satisfies:
+    //
+    //   (1) RESTART FROM THE PRE-GESTURE MESH. Every evaluation begins from
+    //       the positions the mesh had before the gesture started — passes
+    //       do not compound across evaluations. Here that holds by
+    //       construction: the whole gesture is deferred to release, so this
+    //       is the ONLY evaluation and `m.vertices` still holds the DOWN-time
+    //       state when the iteration loop is seeded from it.
+    //   (2) SNAP ONCE, AFTER ALL ITERATIONS — not between them. This is a
+    //       real change from the previous shape, which re-snapped every
+    //       pass: re-snapping mid-relaxation feeds the constrained position
+    //       back into the next iteration's neighbour reads, which is a
+    //       different trajectory (and, with N>1, a visibly different result)
+    //       from relaxing freely and constraining the outcome once.
+    //   (3) COMMIT ONLY THE LAST EVALUATION — one `history.record` for the
+    //       whole gesture, which this already did.
+    //
+    // The iteration loop is pure arithmetic on a local `double` array, so
+    // `mutationVersion` never moves inside it and the CSR adjacency behind
+    // `buildRelaxTopology` is fetched exactly once. The geometry pass's
+    // brute-force O(V·F_bg) scan now runs ONCE per gesture instead of once
+    // per pass — property (2) makes the multi-pass case cheaper, not dearer.
+    // Position-only, zero topology delta, so unlike P5/P6 this does NOT call
+    // `resyncSession()` (mirrors `commitSlide`'s own reasoning).
+    //
+    // `lockBound` / `lockCorner` — MEASURED, NOT OVERLOOKED. The reference
+    // carries two such flags and they are deliberately absent here: both
+    // were confirmed to reach the reference's own kernel and to change
+    // NOTHING on this whole-mesh path (with either flag on, all 15 boundary
+    // and all 4 corner vertices of the capture rig still moved, bit-identical
+    // to the unlocked run — the conformance fixture pins two of those cases
+    // directly). Implementing them as vertex-holding here would therefore
+    // CREATE a divergence, not close one. They become real only on the
+    // falloff / edge-loop path, if that is ever ported.
+    //
+    // The ITERATION COUNT likewise has no user knob, for the same
+    // "implementing it would create the divergence" reason and NOT by
+    // omission — the reference's own iteration attribute shares storage with
+    // its gesture counter and is overwritten at every Smooth press, so it
+    // cannot influence a gesture. Full reasoning at
+    // `smoothPassesForDragDx`; `passCount` here therefore only ever arrives
+    // from that law (or from a direct unit-test caller).
+    //
+    // REV1 FIX-2 (PRIORITY, not hedged/unconditional — opponent obj-2): a
+    // Smooth gesture that produces NO net vertex change — 0-neighbor
+    // disconnected verts, no background source, or any other combination
+    // that nets to identity — restores the pre-gesture positions and keeps no
+    // change (the press is still its one step, L5) (mirrors `applyMoveTargets`/`commitSlide`'s own eps guards). This is
+    // ROUTINE, not a rare edge case (a freshly-placed, still-disconnected
+    // patch with no bg layer is exactly this), so the guard runs on EVERY
+    // commit, never skipped.
+    package(vibe3d.editing.tools.interactive.tools.edit.topology_pen) void applySmoothPasses(int passCount) {
+        auto m = mesh;
+        if (m is null) return;
+
+        // Two-layer clamp (plan "Passes"): floor at 1 (a click always
+        // applies exactly one pass), cap at MAX_TOPOPEN_SMOOTH_PASSES (the
+        // runaway backstop, mirroring MeshSmooth's own MAX_SMOOTH_ITER).
+        // This is the ONLY work-scaling quantity on this path and the cap is
+        // unconditional, so a headless caller cannot drive the O(iters·E)
+        // loop past it.
+        if (passCount < 1) passCount = 1;
+        if (passCount > MAX_TOPOPEN_SMOOTH_PASSES) passCount = MAX_TOPOPEN_SMOOTH_PASSES;
+
+        // Positions only: the press step holds the mesh image.
+        const Vec3[] beforePos = m.vertices.dup;
+
+        immutable size_t nV = m.vertices.length;
+        if (nV == 0) return;
+
+        // Topology frozen once (Position-only gesture — it cannot move).
+        auto topo = buildRelaxTopology(m);
+
+        // Seed the double-precision working set from the PRE-GESTURE
+        // positions (semantics (1) above) and run every iteration on it.
+        auto pos = new RelaxVec3[](nV);
+        foreach (vi; 0 .. nV)
+            pos[vi] = RelaxVec3(m.vertices[vi].x, m.vertices[vi].y, m.vertices[vi].z);
+
+        const sources = passSources();   // one snapshot per commit
+        relaxPasses(pos, topo, cast(double) smoothStrength_ / kSmoothStrengthDivisor,
+                    passCount);
+
+        // ONE re-snap pass over the relaxed result (semantics (2) above):
+        // the constraint's geometry pass (`passLocal`; under the pen's Point
+        // composition the nearest FOOT, the capture-verified crux).
+        foreach (vi; 0 .. nV) {
+            // A 0-neighbor vertex is a loose point: it can neither generate
+            // nor receive a relaxation force, so it is skipped ENTIRELY,
+            // including the background re-snap, leaving it byte-unchanged.
+            //
+            // OPEN / static-only: the reference is understood to still run
+            // its per-vertex commit callback for such a vertex, and would
+            // therefore snap it to the background. The conformance fixture
+            // cannot settle this — its minimum vertex degree is 2, so it
+            // contains no isolated vertex at all — so the existing
+            // vibe3d behavior is kept rather than changed on a prediction.
+            if (topo.offset[vi] == topo.offset[vi + 1]) continue;
+
+            Vec3 relaxed = Vec3(cast(float) pos[vi].x, cast(float) pos[vi].y,
+                                cast(float) pos[vi].z);
+            relaxed = passLocal(m.vertices[vi], relaxed, sources);
+            m.vertices[vi] = relaxed;
+        }
+
+        // REV1 FIX-2: unconditional no-op check — a gesture that nets to
+        // ZERO vertex movement (within eps) restores the pre-gesture positions
+        // exactly. The threshold is SCALE-RELATIVE (see
+        // `smoothNoOpEps`) — an absolute one silently discarded whole
+        // gestures at low `smoothStrength` or on small-scale meshes.
+        // Measured against the PRE-gesture positions, so the reference scale
+        // cannot itself be perturbed by the edit being tested.
+        immutable float smoothEps = smoothNoOpEps(beforePos);
+        bool changed = false;
+        foreach (i; 0 .. nV)
+            if ((m.vertices[i] - beforePos[i]).length > smoothEps) { changed = true; break; }
+        if (!changed) { m.vertices[] = beforePos[]; return; }   // nothing worth keeping — no GPU churn
+
+        // NIT-1: fire the change-bus Position commit only on the CHANGED
+        // path — committing unconditionally (the old placement, above the
+        // no-op check) recomputed every position-keyed cache to identical
+        // values on the routine no-op gesture the guard above just caught.
+        m.commitChange(MeshEditScope.Position);
+
+        noteStep(factories_.smooth, "Topology Smooth");
+
+        // Position-only: no resyncSession() — see this method's own doc
+        // comment / plan §Undo.
+
+        m.syncSelection();
+        if (gpu_ !is null) { gpu_.upload(*m); refreshDisplay(m, gpu_); }
+    }
+
+    // P12 (doc/topopen_p12_smoothloop_plan.md Phase 3): commit `passCount`
+    // passes of 1-D LOOP relax + re-snap over ONLY the armed loop's
+    // vertices — modeled on `applySmoothPasses` above (same clamp/Jacobi/
+    // sources-once/eps-guard/undo shape), two differences:
+    //
+    // (1) REV1 FIX-2 (drop redundant re-gather): the moving set is
+    // `smoothLoopVerts_`, the DOWN-time cache from `onSmoothLoopRmbDown`
+    // (`uniqueRingVerts`), reused VERBATIM — the mesh is never mutated
+    // between arm and commit, so re-running `uniqueRingVerts` here would be
+    // redundant, not more correct (mirrors `commitMoveLoop`'s own
+    // no-re-gather discipline, P10). `loopNeighborsOf(m, smoothLoopSeed_)`
+    // IS new commit-time work (never computed at arm time) — the 1-D
+    // loop-neighbor connectivity each loop vertex relaxes along.
+    //
+    // (2) F1 (owner-observed, "концы стоят на месте" — REV1 F1 RESOLVED):
+    // a loop vertex with EXACTLY 2 loop-neighbors relaxes toward the
+    // shared `inverseEdgeLenRelax` kernel's inverse-edge-length-weighted
+    // point between them and re-snaps via `passLocal` — P8's
+    // geometry pass, NOT Dup Loop's camera-ray `resnapToBackground`:
+    // a relaxed point has no natural screen pixel to ray through, so the
+    // geometry pass is the correct reuse here (plan §Reuse
+    // verdict item 4). A loop vertex with `!= 2` loop-neighbors — an
+    // open-loop END (1 neighbor), or a defensive/degenerate 0 or 3+ (REV1
+    // FIX-3 tightens the plan's original "< 2" to "!= 2") — is HELD FIXED:
+    // skipped entirely, no relax, no re-snap, stays byte-unchanged across
+    // every pass (the vertex is simply never written to `m.vertices`).
+    // Non-loop vertices are NEVER touched either — the outer loop below
+    // iterates `verts` alone, so "only loop vertices move" holds by
+    // construction, not by a separate guard.
+    //
+    // Position-only, zero topology delta — no `resyncSession()` (mirrors
+    // `commitMoveLoop`'s/`applySmoothPasses`'s own reasoning: a pure
+    // position write can never dangle a sibling gesture's cached INDEX).
+    package(vibe3d.editing.tools.interactive.tools.edit.topology_pen) void applySmoothLoopPasses(int passCount) {
+        auto m = mesh;
+        if (m is null) return;
+        auto verts = smoothLoopVerts_;   // REV1 FIX-2: the DOWN-time cache, reused verbatim
+        if (verts.length == 0) return;
+        foreach (vi; verts)
+            if (vi >= m.vertices.length) return;   // stale/corrupted arm — defensive
+
+        auto loopNbrs = loopNeighborsOf(m, cast(uint)smoothLoopSeed_);   // new commit-time work
+        // Corner lock (task 8680, law L13 border; toolcard session_capture
+        // S-smoothloop): a loop vertex on exactly ONE polygon is a patch
+        // corner and is held fixed like an open-loop end, so a border loop
+        // relaxes its perimeter but not its corners. The rule we implement is
+        // face valence 1; on a manifold patch it agrees with the edge-valence-2
+        // boundary rule of `mesh.smooth`'s `lockCorner`.
+        const polyCount = m.vertexPolygonCounts();
+
+        // Two-layer clamp (mirrors applySmoothPasses's own): floor at 1 (a
+        // click always applies exactly one pass), cap at
+        // MAX_TOPOPEN_SMOOTH_PASSES (the shared runaway backstop).
+        if (passCount < 1) passCount = 1;
+        if (passCount > MAX_TOPOPEN_SMOOTH_PASSES) passCount = MAX_TOPOPEN_SMOOTH_PASSES;
+
+        const Vec3[] beforePos = m.vertices.dup;  // positions only (the step holds the image)
+        const sources = passSources();   // one snapshot per commit
+
+        foreach (pass; 0 .. passCount) {
+            Vec3[] read = m.vertices.dup;   // this pass's neighbor-read snapshot (Jacobi)
+            foreach (vi; verts) {
+                auto pNbrs = vi in loopNbrs;
+                // F1/REV1 FIX-3: `!= 2` (not `< 2`) — an open-loop end (1
+                // neighbor) OR a degenerate/self-touching >2 case is held
+                // fixed identically; a missing AA entry (defensive) is the
+                // same as 0 neighbors.
+                if (pNbrs is null || (*pNbrs).length != 2) continue;
+                if (polyCount[vi] == 1) continue;   // corner lock (above)
+
+                bool hadNeighbors;
+                Vec3 relaxed = inverseEdgeLenRelax(read, vi, *pNbrs, hadNeighbors);
+                if (!hadNeighbors) continue;
+                relaxed = passLocal(m.vertices[vi], relaxed, sources);
+                m.vertices[vi] = relaxed;
+            }
+        }
+
+        // Unconditional eps no-op guard, restricted to the LOOP verts —
+        // the only ones this gesture could possibly have touched (mirrors
+        // `applySmoothPasses`'s own whole-mesh guard, narrowed to this
+        // gesture's actual write set).
+        //
+        // SCALE-RELATIVE, THE SAME `smoothNoOpEps` THE WHOLE-MESH SMOOTH USES
+        // (task 2440). It was `1e-4f` absolute, and `smoothNoOpEps`'s own
+        // comment listed it among the four guards deliberately left alone
+        // because "their displacement is drag-proportional". MEASURED, and
+        // that premise is false for this one: `inverseEdgeLenRelax` never
+        // reads `smoothStrength_` at all — it carries a hard-coded
+        // `kStrength = 1.0f` ("V1 fixed, full relax") — so one pass moves a
+        // loop vertex ALL THE WAY to its inverse-edge-length neighbour mean.
+        // The displacement is therefore the loop's own local irregularity, in
+        // world units, and it is not drag-proportional in any sense.
+        //
+        // Measured 2026-08-28 on an 8x8 grid, one middle-row vertex pushed off
+        // the row by `kink`, one pass: the displacement IS `kink`, and it is
+        // INDEPENDENT of edge length (0.07-unit and 0.007-unit rigs cliff at
+        // the same place). Against the old absolute constant, `kink = 2e-4`
+        // recorded and `kink = 1e-4` was discarded whole — mesh restored, no
+        // feedback of any kind. That is not a mesh-scale corner:
+        // at a camera framed on a 0.007-extent model (`haulWorldPerPixel`
+        // 1.93e-5) a 1e-4 world displacement is FIVE PIXELS of visible motion.
+        //
+        // The sixth guard's relative form is the right one here because it is
+        // the same law and the same argument: the cases this guard exists to
+        // catch — a disconnected patch with no usable neighbours, or a
+        // perfectly regular loop, which is an exact fixed point of this
+        // relaxation — produce EXACTLY zero, so the threshold only ever has to
+        // clear float round-trip noise, and that noise scales with the model.
+        // The bbox is the WHOLE mesh's, as `applySmoothPasses` passes it, so
+        // two gestures on one model cannot disagree about the model's size.
+        //
+        // Deliberately NOT extended to `kMoveEps` / `kSlideEps` /
+        // `kMoveLoopEps`: those three judge a SCREEN-driven displacement, and a
+        // bbox-relative threshold is the wrong RELATION for them in both
+        // directions — it would not remove their cliff (which is camera-zoom
+        // driven: a legal 3-pixel drag falls under 1e-4 once
+        // `haulWorldPerPixel` drops below 3.33e-5, whatever the model's size)
+        // and it would manufacture one at large model scale (a 1000-unit model
+        // would get a 1e-3 threshold and swallow a real sub-millimetre drag).
+        // Their correct threshold is PIXEL-relative, which three of the four
+        // sites cannot spell — `commitSlide` takes no viewport at all. Left as
+        // a named follow-up rather than half-done here.
+        immutable float kSmoothLoopEps = smoothNoOpEps(beforePos);
+        bool changed = false;
+        foreach (vi; verts)
+            if ((m.vertices[vi] - beforePos[vi]).length > kSmoothLoopEps) { changed = true; break; }
+        if (!changed) { m.vertices[] = beforePos[]; return; }   // nothing worth keeping -- no GPU churn
+
+        m.commitChange(MeshEditScope.Position);
+        noteStep(factories_.smoothLoop, "Topology Smooth Loop");
+
+        // Position-only: no resyncSession() — see this method's own doc
+        // comment above.
+
+        m.syncSelection();
+        if (gpu_ !is null) { gpu_.upload(*m); refreshDisplay(m, gpu_); }
+    }
+
+    // P3 (doc/topopen_p3_plan.md): fire the classified build (EDGE/TRI/QUAD)
+    // for the drag gesture just released, on the `pen.d:903-926`
+    // `commitPolygonWithUndo` precedent — a DIRECT kernel `mesh.addVertex`
+    // (like `pen.d:933`, NOT the `MeshVertexNew` command) bracketed in ONE
+    // before/after `MeshSnapshot` pair, so the whole gesture (new vertex +
+    // every new edge/face the case implies) is ONE atomic undo entry. Every
+    // guard (armed/motion/hit/case) already ran in `onMouseButtonUp`; this
+    // is the unconditional mutation + undo-record + display-refresh tail.
+    /// `bPosLocal` is a PRIMARY-LAYER LOCAL coordinate (task 0619) — it goes
+    /// straight into `m.addVertex`. The gesture's caller converts the CONS
+    /// world hit; the direct-construction unittests in the package's test
+    /// module already pass local fixture positions, which is what they always
+    /// meant.
+    package(vibe3d.editing.tools.interactive.tools.edit.topology_pen) void buildFromSource(int a, BuildCase casee, int n, int p, int q,
+                                 Vec3 bPosLocal) {
+        auto m = mesh;
+        if (m is null) return;
+
+        // The ROLLBACK image of the two degenerate arms below (never a record:
+        // the press step is the row). Restoring the press image instead would
+        // also revert another button's commit inside the same hold.
+        MeshSnapshot before = MeshSnapshot.capture(*m);
+
+        uint b = m.addVertex(bPosLocal);
+        // Same hazard `MeshVertexNew.evaluate` (vertex_new.d:54) documents:
+        // addVertex only grows `vertices[]` — grow the selection arrays to
+        // match BEFORE anything below could index vertexMarks at `b`.
+        m.resizeVertexSelection();
+
+        final switch (casee) {
+            case BuildCase.None:
+                return;   // defensive; onMouseButtonUp already filters this out
+            case BuildCase.Edge:
+                // CASE-EDGE: A was truly isolated — a bare edge A-B, no face.
+                m.addEdge(cast(uint)a, b);
+                m.buildLoops();
+                break;
+            case BuildCase.Tri: {
+                // CASE-TRI: the triangle on A, the new B and the neighbour N.
+                // Over a bare A-N the CAPTURED index order is [A, B, N] (hub,
+                // newest, older-neighbor; doc/topopen_p3_plan.md "WINDING").
+                // Beside a polygon the shared side runs against it (captured
+                // [0,4,16] beside [0,1,5,4], [0,16,1] in B1b): a
+                // polygon listing N then A gives [A, N, B]. autoOrient:false —
+                // a construction-order convention; it assumes an OUTWARD-side
+                // release. A wrong-side or exactly collinear release makes the
+                // triangle self-intersecting or zero-area —
+                // `makePolygonFromVerts` rejects the zero-area case (-1, review
+                // SHOULD-FIX: rolled back below) but NOT a merely
+                // self-intersecting one, which is accepted verbatim, matching
+                // the reference (no wrong-side capture contradicts it).
+                int polys, dir;
+                sideIncidence(m, cast(uint)a, cast(uint)n, polys, dir);
+                uint[] tri = dir == -1 ? [cast(uint)a, cast(uint)n, b]
+                                       : [cast(uint)a, b, cast(uint)n];
+                if (m.makePolygonFromVerts(tri, false, /*autoOrient*/false) < 0) {
+                    // Degenerate/wrong-side release (collinear A-B-N ->
+                    // Newell-null): only `b` itself would be left stray.
+                    // Restore `before` so the whole gesture is a clean
+                    // no-op rather than a silently-committed stray vertex.
+                    before.restore(*m);
+                    return;
+                }
+                // Consumes the bare A-N's wire key (captured C3-R3/R3-rev:
+                // the line polygon goes with the build, law L46). A-N is a
+                // side of `tri` in either order. No Quad-case call: no capture
+                // gives the splice's new sides a key (gap row (w)).
+                consumeDegenerateOnRing(m, tri);
+                break;
+            }
+            case BuildCase.Quad: {
+                // CASE-QUAD: A is a triangle corner with two border
+                // neighbours P and Q — the new quad [P, A, Q, B] runs each
+                // shared side against its polygon, and every existing polygon
+                // is KEPT (captured S-inTri, see `classifySource`: the hub-fan splice
+                // keeps its triangle; B2/B5a/B5b-far build the quad across the
+                // two border neighbours beside the triangles). Same winding
+                // caveat as CASE-TRI above: a wrong-side B yields a bowtie
+                // (self-intersecting quad), accepted verbatim unless its signed
+                // area cancels to zero (Newell-null — rejected below).
+                if (m.makePolygonFromVerts([cast(uint)p, cast(uint)a, cast(uint)q, b],
+                                           false, /*autoOrient*/false) < 0) {
+                    // Degenerate/wrong-side release (review SHOULD-FIX): `b`
+                    // is already added — restoring `before` makes the whole
+                    // gesture a clean no-op instead of a stray vertex.
+                    before.restore(*m);
+                    return;
+                }
+                break;
+            }
+        }
+
+        noteStep(factories_.build, "Topology Build");
+        // The new vertex carries its SOURCE as anchor (L17, C0-S5).
+        noteStepDescriptor(PenStepKind.CornerBuild, [b], [m.vertices[a]]);
+        writeOffset(bPosLocal - m.vertices[a]);
+
+        m.syncSelection();
+        if (gpu_ !is null) gpu_.upload(*m);
+        refreshDisplay(m, gpu_);
+    }
+
+    // P5 (doc/topopen_p5_remove_plan.md D4): commit a single-face removal
+    // — deletes `faceIdx` and the vertices and edges THIS removal leaves with
+    // no face, keeping every pre-existing loose point and wire (task 8710,
+    // `Mesh.removeFacesWithOwnOrphans`; D5's keep-all was refuted), as
+    // one atomic undo entry via the DEDICATED `removeEditFactory_`
+    // (`MeshEditScope.Geometry` — a removal IS a topology change, unlike
+    // Move's Position-only scope; opponent KILLER-1 — never
+    // `buildEditFactory_`/`moveEditFactory_`, which would bake the wrong
+    // wire name onto this op). A miss/out-of-range `faceIdx` bails BEFORE
+    // any mutation (D3) — mirrors `applyMoveTargets`'s up-front guard shape.
+    //
+    // On SUCCESS, calls `resyncSession()` (opponent KILLER-2, Risk 1): the
+    // tool never overrides `isDragging()`, so a Ctrl+MMB Remove can fire
+    // while a Shift+LMB build (`dragArmed_`/`quadP_`) or an LMB Move
+    // (`moveArmed_`/`grabbedVert_`) is armed on a DIFFERENT button; this
+    // kernel call COMPACTS `faces[]`, so those cached indices would dangle
+    // (silent mis-delete or a RangeError on the sibling gesture's eventual
+    // release) unless invalidated here, before the sibling ever reads them
+    // again — the same idiom `resyncSession` already provides for an
+    // external undo/redo navigation.
+    package(vibe3d.editing.tools.interactive.tools.edit.topology_pen) void removeFaceAt(int faceIdx) {
+        auto m = mesh;
+        if (m is null || faceIdx < 0 || faceIdx >= cast(int)m.faces.length) return;
+
+        auto mask = new bool[](m.faces.length);
+        mask[faceIdx] = true;
+        m.removeFacesWithOwnOrphans(mask);
+
+        noteStep(factories_.remove, "Topology Remove");
+
+        // Opponent KILLER-2: invalidate any OTHER armed gesture's cached
+        // indices now that faces[] has been compacted out from under them.
+        resyncSession();
+
+        m.syncSelection();
+        if (gpu_ !is null) { gpu_.upload(*m); refreshDisplay(m, gpu_); }
+    }
+
+    // ---- Remove's other two primitives (task 0494) ------------------------
+
+    /// The index of the vertex at exactly `p`, or -1. Positions survive the
+    /// dissolve kernels' vertex compaction by value (they are copied, never
+    /// re-derived), which is what makes this the way to carry a vertex
+    /// identity ACROSS one of them — the same technique, and the same
+    /// coincident-position caveat, as `Mesh.edgeDeleteRegion`.
+    private static int vertexAtPosition(Mesh* m, Vec3 p) {
+        foreach (i, ref v; m.vertices)
+            if (v.x == p.x && v.y == p.y && v.z == p.z) return cast(int)i;
+        return -1;
+    }
+
+    // Face-less geometry (placed points, a chain drawn before any polygon
+    // closes over it) used to be wiped MESH-WIDE by the dissolve kernels' tail,
+    // and this tool carried its own capture/re-add pair to survive that. Task
+    // 0502 moved the preservation INTO the kernels (`Mesh.captureLooseGeometry`
+    // and the pins/remap replay around `compactUnreferenced`), where it also
+    // covers edge removal — which rode the same kernel and had
+    // the same defect. The local copy is gone; nothing here needs to bracket a
+    // dissolve any more.
+
+    /// Remove-on-an-EDGE (task 0494, contracts C-1/C-2/C-3/C-4): DISSOLVE the
+    /// pressed edge — its two incident polygons merge into one — through the
+    /// DEDICATED `removeEdgeEditFactory_`, as one atomic undo entry.
+    ///
+    /// A BORDER seed is a TOTAL no-op, in both variants (C-3). The guard is on
+    /// the SEED and it runs BEFORE the gather, which is what the measurement
+    /// showed: on a border press the reference's primitive returned without
+    /// reaching its loop branch at all, 0 edits, 0 moved vertices. Written as
+    /// its own early return, and tested as its own case, precisely because a
+    /// well-meaning "just filter the gathered set" refactor would still pass
+    /// every OTHER test here.
+    ///
+    /// `loop` promotes the seed to the vertex-continuation edge LOOP through
+    /// it (C-2) — `Mesh.selectLoopEdges`, the same gather every other loop
+    /// gesture in this tool uses, with NO border trim (Duplicate's trim was
+    /// measured NOT to apply to removal) and one filter: an edge joins the
+    /// doomed set only if it borders exactly two polygons.
+    ///
+    /// The flag is the EFFECTIVE one (C-1), never the button. A plain press
+    /// with Edge Loop on and the chord that forces the flag were measured
+    /// bit-identical, down to the removed-edge, new-edge and removed-vertex
+    /// sets, so keying this on the physical button would be keying it on the
+    /// one thing the measurement says is irrelevant.
+    ///
+    /// `keepVertex_` (C-4) is passed straight to the kernel: OFF (the measured
+    /// default) purges the vertices whose whole polygon fan the dissolve ate
+    /// and re-stitches their survivors; ON keeps them as corners of the merged
+    /// polygons. See `Mesh.consumedFanVertexMask` for the rule and for why it
+    /// is not the 2-valent one.
+    package(vibe3d.editing.tools.interactive.tools.edit.topology_pen) void removeEdgeAt(int edgeIdx, bool loop) {
+        auto m = mesh;
+        if (m is null || edgeIdx < 0 || edgeIdx >= cast(int)m.edges.length) return;
+
+        // C-3: the seed gate, before the gather.
+        auto polyCount = m.edgePolygonCounts();
+        if (polyCount[edgeIdx] != 2) return;
+
+        auto mask = new bool[](m.edges.length);
+        if (loop)
+            foreach (ei; (*m).selectLoopEdges(cast(uint)edgeIdx)) {
+                if (ei < 0 || ei >= cast(int)m.edges.length) continue;
+                if (polyCount[ei] != 2) continue;
+                mask[ei] = true;
+            }
+        mask[edgeIdx] = true;   // the seed dissolves whether or not it gathered
+
+        // A zero return happens before any write (its early returns), and the
+        // press is still its step's one row (L5): the chord's default carrier.
+        if (m.removeEdgesByMask(mask, keepVertex_) == 0) return;
+        noteStep(factories_.removeEdge, "Topology Remove Edge");
+
+        // Same reason `removeFaceAt` calls it: the kernel COMPACTS `faces[]`
+        // and `vertices[]`, so any sibling gesture armed on another button is
+        // holding stale indices.
+        resyncSession();
+
+        m.syncSelection();
+        if (gpu_ !is null) { gpu_.upload(*m); refreshDisplay(m, gpu_); }
+    }
+
+    /// Remove-on-a-VERTEX (task 0494, contract C-0): merge the pressed
+    /// vertex's WHOLE incident polygon fan into one polygon, then drop the
+    /// vertex — through the DEDICATED `removeVertexEditFactory_`, as one
+    /// atomic undo entry.
+    ///
+    /// This is its OWN law and is deliberately not expressed in terms of the
+    /// edge primitive's. Measured on an interior vertex of a 4x4 grid: the
+    /// four quads around it became ONE 8-gon and exactly that one vertex went
+    /// (15/20/6). Running the EDGE path's fan rule over the same four edges
+    /// would additionally have taken the two neighbours whose own fans are
+    /// fully consumed, giving 13/18/6 — a different mesh. Two primitives, two
+    /// laws, recorded as measured rather than generalised into one.
+    ///
+    /// Two consequences of that law worth stating, since neither is obvious:
+    ///
+    ///   * A CORNER vertex (one incident polygon) still works, and the merge
+    ///     is simply vacuous: measured, its quad collapses to a triangle and
+    ///     the vertex's two border edges go with it.
+    ///   * `keepVertex_` is NOT read here. It was captured OFF on this path
+    ///     and the reference's own vertex primitive reads the flag nowhere, so
+    ///     honouring it would be inventing a second meaning for it.
+    ///
+    /// A vertex with NO incident polygon is DECLINED. That case is outside
+    /// everything measured (the reference's retopo never builds face-less
+    /// geometry) and there is no fan to merge, so a press there changes
+    /// nothing rather than guessing — which also keeps a bare retopo chain out
+    /// of a kernel that would rebuild the edge array around it.
+    private void removeVertexAt(int vertIdx) {
+        auto m = mesh;
+        if (m is null || vertIdx < 0 || vertIdx >= cast(int)m.vertices.length) return;
+
+        // The fan, and the edges interior to it. Both by direct scan rather
+        // than through the half-edge rings: this runs right after arbitrary
+        // other mutations, and the scan cannot be stale.
+        bool hasFan = false;
+        foreach (ref f; m.faces) {
+            foreach (v; f) if (v == cast(uint)vertIdx) { hasFan = true; break; }
+            if (hasFan) break;
+        }
+        if (!hasFan) return;
+
+        immutable Vec3 pos = m.vertices[vertIdx];
+        auto polyCount = m.edgePolygonCounts();
+        auto mask = new bool[](m.edges.length);
+        size_t nMerge = 0;
+        foreach (ei; 0 .. m.edges.length) {
+            auto e = m.edges[ei];
+            if (e[0] != cast(uint)vertIdx && e[1] != cast(uint)vertIdx) continue;
+            if (polyCount[ei] != 2) continue;   // border/wire: nothing to merge across
+            mask[ei] = true;
+            ++nMerge;
+        }
+
+        // Merge the fan, KEEPING every consumed vertex — the one the press
+        // named is dropped below, and only it.
+        if (nMerge > 0) m.removeEdgesByMask(mask);
+
+        // Drop the pressed vertex. An interior fan merges to a polygon that no
+        // longer uses it, so the kernel's own tail compaction already took it
+        // and there is nothing left to find; a border fan leaves it a corner of
+        // the merged polygon, and this is what removes it.
+        immutable int vi = vertexAtPosition(m, pos);
+        if (vi >= 0) {
+            auto vmask = new bool[](m.vertices.length);
+            vmask[vi] = true;
+            m.dissolveVerticesByMask(vmask, /*keepOrphans*/true);
+        }
+
+        noteStep(factories_.removeVertex, "Topology Remove Vertex");
+
+        resyncSession();
+
+        m.syncSelection();
+        if (gpu_ !is null) { gpu_.upload(*m); refreshDisplay(m, gpu_); }
+    }
+
+    // P6 (doc/topopen_p6_addloop_plan.md Phase 4): commit the armed Add Loop
+    // gesture — FULL KERNEL REUSE, zero kernel change. The clamp/exact
+    // -vertex-inserts-nothing guard is copied VERBATIM from
+    // `MeshAddLoop.evaluate` (`source/commands/mesh/loop_slice.d:68-69`):
+    // `r` is already in `[0,1]` (`ratioFromCursor`'s own clamp), so this is
+    // an open-INTERVAL check, not a re-clamp. The dry-run
+    // `collectEdgeRing` call mirrors that same command's defensive
+    // re-check (the mesh is never mutated between arm and commit, so the
+    // ring cannot have vanished, but a stale seed index after some other
+    // path's mutation is cheap to guard against here too). The entire
+    // topology op is the ONE `insertEdgeLoops` call below — bracketed in a
+    // single before/after `MeshSnapshot` pair, recorded through the
+    // DEDICATED `addLoopEditFactory_` (REV1 obj-1 — never
+    // `buildEditFactory_`/`moveEditFactory_`/`removeEditFactory_`, which
+    // would bake the wrong wire name onto a loop-cut).
+    //
+    // REV1 KILLER-2: `insertEdgeLoops`/`insertEdgeLoopsMulti` does
+    // `faces = newFaces` — a WHOLESALE rebuild (every ring face expands
+    // into 2, shifting every subsequent face index). A concurrently-armed
+    // Shift+LMB build's classification (`quadP_`/`triCands_`, read off the
+    // pre-cut topology) would be stale on that build's eventual release unless
+    // invalidated here — `resyncSession()` is called on SUCCESS, in the
+    // SAME position `removeFaceAt` above calls it (right after
+    // `history.record`, before `syncSelection`/the display tail), for the
+    // identical reason (the tool never overrides `isDragging()`, so a
+    // Shift+MMB Add Loop CAN fire mid-build/mid-move on a different
+    // button). No `resizeVertexSelection` needed here — `insertEdgeLoops`
+    // already rebuilds the selection arrays itself; the `after` snapshot +
+    // `syncSelection` cover it.
+    package(vibe3d.editing.tools.interactive.tools.edit.topology_pen) void commitAddLoop(uint seedEdge, float r) {
+        auto m = mesh;
+        if (m is null) return;
+
+        // MeshAddLoop.evaluate's open-interval guard: a ratio landing
+        // exactly on a vertex (r<=0 or r>=1) inserts nothing. Written as a
+        // NEGATED in-range test rather than that command's literal
+        // `r <= 0 || r >= 1` so a non-finite `r` — which compares false
+        // against everything and would slip through the literal form into
+        // `insertEdgeLoops` — is rejected here too.
+        if (!(r > 0.0f && r < 1.0f)) return;
+
+        bool closed;
+        if ((*m).collectEdgeRing(seedEdge, closed).length == 0) return;   // Stage F1: ref const(Mesh)
+
+        immutable size_t firstNew = m.vertices.length;
+
+        // Task 1903 Stage F1 — `insertEdgeLoops` is a free function over
+        // `ref MeshEditBatch` now, so the batch opens HERE, at the pen's own
+        // boundary (§4.1), around the ONE topology op this gesture performs.
+        // UNRECORDED: Add Loop undoes through the press step's whole-mesh
+        // image pair, so a recording batch would build an op-log nothing
+        // reads. The re-snap stays INSIDE the batch, so it is in the step's
+        // after image. A false return is a no-op (nothing inserted).
+        bool ok;
+        {
+            auto ed = MeshEditBatch.unrecorded(*m, kLoopSliceEditScope);
+            ok = ed.insertEdgeLoops(seedEdge, [r]);
+            if (ok) snapInsertedToBackground(ed, firstNew);
+            ed.close();
+        }
+        if (!ok) return;
+
+        noteStep(factories_.addLoop, "Topology Add Loop");
+        noteStepDescriptor(PenStepKind.AddLoop, null, null);
+
+        // REV1 KILLER-2: invalidate any OTHER armed gesture's cached
+        // indices now that faces[] has been wholesale-rebuilt.
+        resyncSession();
+
+        m.syncSelection();
+        if (gpu_ !is null) { gpu_.upload(*m); refreshDisplay(m, gpu_); }
+    }
+
+    // Add Loop's inserted vertices re-snap onto the background through the
+    // constraint's geometry pass (`passLocal`), after the cut fraction is
+    // applied and inside the same batch, so the gesture stays one step.
+    // Measured under the pen's own Point composition on a tilted background
+    // with the fraction forced to 0.5: every inserted vertex lands on the
+    // perpendicular foot to ~5e-9 of the camera distance, against ~6e-3 for
+    // the view ray; original vertices never move
+    // (toolcards/topology_pen/addloop_bgresnap_undo_capture.md, verdict V-1;
+    // pinned by tests/test_topopen_addloop_bg_resnap.d). `addVertex` only
+    // appends, so the inserted set is every index from `firstNew` on.
+    private void snapInsertedToBackground(ref MeshEditBatch ed, size_t firstNew) {
+        const sources = passSources();
+        if (sources.length == 0) return;   // the identity pass writes nothing
+        uint[] idx;
+        Vec3[] to;
+        foreach (vi; firstNew .. ed.vertices.length) {
+            idx ~= cast(uint) vi;
+            to  ~= passLocal(ed.vertices[vi], ed.vertices[vi], sources);
+        }
+        if (idx.length) ed.setVertexPositions(idx, to);
+    }
+
+    // P9 (doc/topopen_p9_split_plan.md Phase 2): commit the armed Split
+    // gesture — FULL KERNEL REUSE, zero kernel change. Mirrors `removeFaceAt`
+    // above exactly: resolve the shared face (`findCommonSplitFace` — every
+    // no-op condition, incl. C==-1 (release on an edge or empty space), C==A, and
+    // cross-polygon/adjacent A-C, funnels through its -1 return with NO
+    // mutation; the press is still its one row, L5), run the ONE kernel call
+    // inside the press step, and name the DEDICATED
+    // `splitEditFactory_` (never `removeEditFactory_`/`addLoopEditFactory_`,
+    // which would bake the wrong wire name onto a split).
+    //
+    // KILLER-2 (sibling index dangle): `splitFaceByVertices` ->
+    // `rebuildFacesWithChordSplits` calls `rebuildEdges()`+`buildLoops()`, so
+    // `faces[]`/`edges[]` are wholesale-rebuilt (Δf=+1/Δe=+1) — any OTHER
+    // gesture armed on a different button holding a face/edge index would
+    // dangle. `resyncSession()` is called on SUCCESS, in the SAME position
+    // `removeFaceAt`/`commitAddLoop` call it, for the identical reason (the
+    // tool never overrides `isDragging()`, so a plain-MMB Split CAN fire
+    // mid-build/mid-move/mid-slide on a different button). Vertices are NOT
+    // compacted here — no orphans are created by a split — so a concurrently
+    // armed gesture's VERTEX index stays valid regardless; `resyncSession()`
+    // is still the uniform, cheap-to-call safety net every sibling commit
+    // uses.
+    package(vibe3d.editing.tools.interactive.tools.edit.topology_pen) void commitSplit(int a, int c) {
+        auto m = mesh;
+        if (m is null) return;
+
+        int fi = findCommonSplitFace(m, a, c);
+        if (fi < 0) return;   // every no-op condition (C==-1, C==A, no shared
+                               // face, adjacent A/C) funnels here — no mutation
+
+        size_t n = (*m).splitFaceByVertices(cast(uint)fi, cast(uint)a, cast(uint)c);
+        if (n == 0) return;   // defensive; mesh unmutated
+
+        noteStep(factories_.split, "Topology Split");
+
+        // KILLER-2: invalidate any OTHER armed gesture's cached face/edge
+        // indices now that faces[]/edges[] have been rebuilt.
+        resyncSession();
+
+        m.syncSelection();
+        if (gpu_ !is null) { gpu_.upload(*m); refreshDisplay(m, gpu_); }
+    }
+
+    // Commit the ring `findFillRing` resolved — FULL KERNEL REUSE, zero
+    // kernel change. Mirrors `commitSplit`/`commitAddLoop` above: bracket
+    // the ONE kernel call in a single before/after `MeshSnapshot` pair,
+    // record through the DEDICATED `fillEditFactory_` (never
+    // `splitEditFactory_`/`removeEditFactory_`, which would bake the wrong
+    // wire name onto a fill).
+    //
+    // `ringVerts` reuses EXISTING verts (Δv=0) and arrives in the ORDER the
+    // shape test accepted — 4 corners, or 3 when `quadOnly` is off. It is
+    // passed through verbatim: the reference hands its own candidate array,
+    // in exactly that order, to its polygon build, so re-sorting here would
+    // wind a different polygon (measured — 139 of 240 four-slot searches
+    // have slot 2 farther from the cursor than slot 3, so "the four nearest"
+    // describes the SET and never the order). `autoOrient:true` only
+    // REVERSES a winding, it never re-sorts, so it leaves the ring's own
+    // adjacency intact while keeping the new face consistent with its
+    // neighbours — the one degree of freedom the capture explicitly does not
+    // score.
+    //
+    // `makePolygonFromVerts` creates any missing edge (a notch's mouth, or
+    // the closing side of a bridge across a gap that has no edge at all —
+    // the reference has NO real-fourth-side requirement and that guard is
+    // dropped in this port), and rejects dup-face/non-manifold/degenerate
+    // with a `-1` no-op — the mesh stays byte-unchanged.
+    //
+    // THE RING GATE IS NOT HERE, AND THAT IS DELIBERATE (task 0532). The
+    // reference's last gate on a formed ring — read in task 0528 — lives in
+    // the shared candidate search (`ringRefusedByIncidentPolygon`), because
+    // that is where the reference calls it and it is therefore a HOVER
+    // quantity too. By the time a ring reaches `commitFill` it has already
+    // passed that gate, so this function keeps exactly the guards it always
+    // had. Anything that calls `commitFill` with a hand-built ring (the
+    // unit tests below do) bypasses the gate on purpose: that is what makes
+    // the two testable apart.
+    //
+    // Single mutation — no partial-mutation rollback is needed here.
+    //
+    // KILLER-2 (shared with every topology-growing sibling commit above):
+    // `makePolygonFromVerts` runs `buildLoops()`, moving `faces[]`/
+    // `edges[]` indices — any OTHER gesture armed on a different button
+    // holding a face/edge index would dangle. `resyncSession()` is called
+    // on SUCCESS, in the SAME position every sibling commit calls it (the
+    // tool never overrides `isDragging()`, so a Fill click CAN fire
+    // mid-build/mid-move/mid-slide on a different button).
+    package(vibe3d.editing.tools.interactive.tools.edit.topology_pen) void commitFill(const(uint)[] ringVerts) {
+        auto m = mesh;
+        if (m is null) return;
+        if (ringVerts.length != 4 && ringVerts.length != 3) return;
+
+        int fi = m.makePolygonFromVerts(ringVerts, false, true);
+        if (fi < 0) return;   // dup-face / non-manifold / degenerate -> clean no-op, no mutation
+
+        consumeDegenerateOnRing(m, ringVerts);
+
+        noteStep(factories_.fill, "Topology Fill");
+        noteStepDescriptor(PenStepKind.Fill, null, null);
+
+        // KILLER-2: invalidate any OTHER armed gesture's cached face/edge
+        // indices now that faces[]/edges[] have been rebuilt.
+        resyncSession();
+
+        m.syncSelection();
+        if (gpu_ !is null) { gpu_.upload(*m); refreshDisplay(m, gpu_); }
+    }
+
+    // The reference's own post-build cleanup contract, ported (task 0488):
+    // immediately after the polygon is created it walks the NEW ring once and
+    // deletes any LINE polygon (2 corners) lying along a new side, and any
+    // POINT polygon (1 corner) sitting at a new corner. A build CONSUMES the
+    // degenerate polygons it swallows.
+    //
+    // Our line polygon IS a registered wire key (`Mesh.wireEdgeKeys`), so the
+    // key of every ring SIDE is consumed here too (task 8750; law L46,
+    // captured C3-R3-rev/C3-R4: Consumed for the build's triangle and for
+    // Fill). An orphan vertex carries no key, so the point-polygon arm is
+    // inert on our own geometry (gap row (v)). Line polygons from an importer
+    // are consumed by both callers; the point-polygon arm matches Fill's
+    // decode only — the reference's triangle build KEPT the point polygon at
+    // its corner A (C3-R3-rev h2), so for the Tri caller that arm diverges,
+    // unreachable today (nothing here holds a 1-corner face; gap row (v)).
+    // Only the two captured callers reach this — Fill's commit and the build's
+    // Tri case; every other face creator keeps covered authorship (F1,
+    // doc/measured_laws.md §7). The key removal sits OUTSIDE the
+    // polygon-delete guard: on our substrate that guard is normally false.
+    //
+    // `keepOrphans` + `keepFloatingEdges` both true: consuming the degenerate
+    // polygon must not additionally eat its vertices or its edge — those are
+    // corners and sides of the face we just built.
+    package(vibe3d.editing.tools.interactive.tools.edit.topology_pen) static void consumeDegenerateOnRing(Mesh* m, const(uint)[] ring) {
+        import vibe3d.mesh.topology.mesh_topo : edgeKey;
+        if (m is null || ring.length < 3) return;
+        bool[] mask;
+        bool any = false;
+        foreach (fi, const ref f; m.faces) {
+            bool hit = false;
+            if (f.length == 1) {
+                foreach (v; ring) if (f[0] == v) { hit = true; break; }
+            } else if (f.length == 2) {
+                foreach (k; 0 .. ring.length) {
+                    immutable uint a = ring[k], b = ring[(k + 1) % ring.length];
+                    if ((f[0] == a && f[1] == b) || (f[0] == b && f[1] == a)) { hit = true; break; }
+                }
+            }
+            if (!hit) continue;
+            if (mask.length == 0) mask = new bool[](m.faces.length);
+            mask[fi] = true;
+            any = true;
+        }
+        if (any) m.deleteFacesByMask(mask, /*keepOrphans*/true, /*keepFloatingEdges*/true);
+        foreach (k; 0 .. ring.length)
+            m.wireEdgeKeys.remove(edgeKey(ring[k], ring[(k + 1) % ring.length]));
+    }
+
+    // P10 (doc/topopen_p10_moveloop_plan.md "Commit"): commit the armed Move
+    // Loop gesture — writes EVERY entry of `verts`/`targets` (same length,
+    // same order), one atomic undo entry via the DEDICATED
+    // `moveLoopEditFactory_` (wireName "mesh.topoPen_moveloop") — mirrors
+    // `commitSlide`'s N-vertex shape (`commitSlide` is the 2-vertex
+    // template; this is the general N-vertex form). `targets` is a PARAM,
+    // not resolved inside this function — the unmeasured re-snap
+    // (`perVertexTargets`) is isolated from the testable commit, exactly how
+    // `commitSlide` takes `tA`/`tB` rather than re-deriving them; a
+    // per-vertex MISS is already baked into `targets[i] == orig[i]` by the
+    // caller (`perVertexTargets`'s "keep original" policy), so this function
+    // has no separate miss-handling of its own — it simply writes whatever
+    // it is given (REV1 FIX-2's contract: a partial-miss commits atomically,
+    // no per-vertex special-casing here).
+    //
+    // Position-only, zero topology delta — never resizes/rebuilds
+    // `faces[]`/`edges[]`/`vertices[]` — so unlike P5/P6/P9 this does NOT
+    // call `resyncSession()` (mirrors `commitSlide`'s/`applySmoothPasses`'s
+    // own reasoning: no sibling gesture's cached INDEX can dangle from a
+    // pure position write). Eps no-op guard (mirrors `applyMoveTargets`/
+    // `commitSlide`): a gesture that nets to ZERO vertex movement (every
+    // target within eps of its own original position — e.g. every ray
+    // missed, or a whole-loop click-without-drag that slipped past the
+    // release-side `kMinDragPx` gate) records no mutation.
+    //
+    // `vp` is the release event's viewport, and it is a REQUIRED parameter
+    // rather than a defaulted one (task 0555): the destructive landing has to
+    // project each moved vertex to ask where it came to rest, and a caller
+    // that could omit the viewport would silently get a Move Loop that never
+    // welds — the one failure mode worth a compile error.
+    package(vibe3d.editing.tools.interactive.tools.edit.topology_pen) void commitMoveLoop(const(uint)[] verts, const(Vec3)[] targets,
+                                const ref Viewport vp) {
+        auto m = mesh;
+        if (m is null) return;
+        if (verts.length == 0 || verts.length != targets.length) return;
+        foreach (vi; verts)
+            if (vi >= m.vertices.length) return;   // stale/corrupted arm — defensive
+
+        enum float kMoveLoopEps = 1e-4f;   // mirrors applyMoveTargets's/commitSlide's own eps guards
+        bool changed = false;
+        foreach (i, vi; verts)
+            if ((targets[i] - m.vertices[vi]).length > kMoveLoopEps) { changed = true; break; }
+        if (!changed) return;   // no mutation worth recording — no GPU churn
+
+        foreach (i, vi; verts) m.vertices[vi] = targets[i];
+        m.commitChange(MeshEditScope.Position);
+        // The destructive landing (task 0555) — the LOOP grab's copy of it,
+        // and the cell whose measurement (four vertices absorbed in one
+        // gesture) is what proves the absorption is per moved vertex rather
+        // than per cursor. Inside the press step, so the whole gesture is
+        // still ONE undo step; a no-op unless the shared snap enable is on.
+        immutable bool welded = weldMovedVertices(verts, vp) > 0;
+        noteStep(factories_.moveLoop, "Topology Move Loop");
+
+        // Position-only: no resyncSession() — see this method's own doc
+        // comment / plan §Undo. UNLESS the landing welded, which rebuilds and
+        // compacts the mesh and therefore CAN dangle a sibling's cached index.
+        if (welded) resyncSession();
+
+        m.syncSelection();
+        if (gpu_ !is null) { gpu_.upload(*m); refreshDisplay(m, gpu_); }
+    }
+
+    // P11 (doc/topopen_p11_duploop_plan.md "The flow"): commit the armed
+    // Duplicate Loop gesture — ONE atomic undo entry covering BOTH the
+    // extrude (`Mesh.extendEdgesByMask`, identity TRS ⇒ a coincident
+    // duplicate ring + bridge quads, ZERO new mesh.d code — the brief's
+    // `extrudeEdgesByMask` is REFUTED, plan §Reuse verdict) and the
+    // follow-up per-vertex drag/re-snap of the NEW (tail) verts, reusing
+    // P10's `perVertexTargets` verbatim (the new verts are coincident with
+    // their source loop verts, so projecting the new vert = projecting the
+    // source — no source→new map needed). `loopEdges` are the edge
+    // INDICES gathered at DOWN (`onDupLoopShiftRmbDown`); the mesh is
+    // never mutated between arm and commit, so they stay valid — a
+    // defensive out-of-range check bails before any mutation regardless
+    // (a stale/corrupted arm).
+    //
+    // REV1 FIX-2: `[oldV .. m.vertices.length)` is a lazy `size_t` iota —
+    // materialized + narrowed to a `uint[]` (`.array` + a `uint` map)
+    // before it reaches `perVertexTargets` (`const(uint)[]`).
+    //
+    // REV1 FIX-3: `extendEdgesByMask` already calls
+    // `commitChange(MeshEditScope.Geometry)` internally (the topology
+    // growth); the follow-up MANUAL position write below uses
+    // `commitChange(MeshEditScope.Position)` — mirrors `commitMoveLoop`'s
+    // own manual-write precedent — never a second `Geometry` commit.
+    //
+    // `n == 0` (empty/all-wire mask — every gathered edge has zero
+    // adjacent faces) is a clean no-op: `extendEdgesByMask` guarantees NO
+    // mutation occurred before returning 0 (`mesh.d` "if (exEdges.length ==
+    // 0) return 0;", before any `addVertex`/`faces ~=`), so this bails with
+    // no history entry. Once `n > 0`, topology HAS grown regardless of
+    // where the re-snap lands (UNLIKE `commitMoveLoop`'s Position-only eps
+    // guard, there is no "nothing worth recording" case here — plan Risk 2's
+    // all-rays-miss degenerate-coincident-ring outcome still commits the
+    // one real topology change that already happened).
+    //
+    // Calls `resyncSession()` on success (KILLER-2, mirrors
+    // `removeFaceAt`'s/`commitAddLoop`'s own discipline): `faces[]`/
+    // `edges[]`/`vertices[]` all grew, so any OTHER armed gesture's cached
+    // index would dangle.
+    package(vibe3d.editing.tools.interactive.tools.edit.topology_pen) void commitDupLoop(const(int)[] loopEdges, int dx, int dy,
+                               const ref Viewport vp) {
+        commitDupEdges(loopEdges, dx, dy, vp, factories_.dupLoop,
+                       "Topology Duplicate Loop", PenStepKind.None);
+    }
+
+    // The duplicate-edges KERNEL, shared by the Shift+RMB loop gesture above
+    // and the Shift+LMB single-edge one (task 0485). Identical work either
+    // way — the two differ ONLY in how many edges the caller put in the list
+    // and in which factory/label the entry carries — so they cannot drift
+    // apart in the extrude, the re-snap, or the undo shape.
+    private void commitDupEdges(const(int)[] loopEdges, int dx, int dy,
+                                const ref Viewport vp,
+                                MeshSessionEdit delegate() factory, string label,
+                                PenStepKind kind) {
+        auto m = mesh;
+        if (m is null || loopEdges.length == 0) return;
+
+        bool[] mask; mask.length = m.edges.length;
+        foreach (ei; loopEdges) {
+            if (ei < 0 || ei >= cast(int)mask.length) return;   // stale/corrupted arm -- defensive
+            mask[ei] = true;
+        }
+
+        size_t oldV = m.vertices.length;
+        // task 1903 Stage H: extendEdgesByMask takes `ref MeshEditBatch` now.
+        // This gesture undoes via the press step's image pair, not the op-log,
+        // so the batch is unrecorded.
+        auto ed = MeshEditBatch.unrecorded(*m, kExtrudeEditScope);
+        size_t n = ed.extendEdgesByMask(mask, 0.0f, 0.0f,
+                                        Vec3(0, 0, 0), Vec3(0, 0, 0), Vec3(1, 1, 1), 1);
+        ed.close();
+        if (n == 0) return;   // nothing extendable (all-wire/empty mask) -- no mutation occurred
+
+        import std.range     : iota;
+        import std.algorithm : map;
+        import std.array     : array;
+        // FIX-2: materialize + narrow the lazy size_t iota to a uint[] --
+        // extendEdgesByMask is pure-add (new verts appended at the tail,
+        // never reindexed), so [oldV .. m.vertices.length) is exactly the
+        // coincident duplicate ring.
+        uint[] newVerts = iota(oldV, m.vertices.length).map!(i => cast(uint)i).array;
+
+        auto targets = perVertexTargets(newVerts, dx, dy, vp);
+        // The SOURCE positions (the new ring is coincident with them until
+        // this write): a Duplicate edge's descriptor (L30, C1-O12) re-places
+        // the new vertices from them; its Offset is their mean travel (ours:
+        // gap row, the kernel is the per-vertex screen delta).
+        if (kind != PenStepKind.None) {
+            Vec3[] src;
+            Vec3 travel = Vec3(0, 0, 0);
+            foreach (i, vi; newVerts) {
+                src ~= m.vertices[vi];
+                travel = travel + (targets[i] - m.vertices[vi]);
+            }
+            noteStepDescriptor(kind, newVerts, src);
+            if (newVerts.length) writeOffset(travel * (1.0f / newVerts.length));
+        }
+        foreach (i, vi; newVerts) m.vertices[vi] = targets[i];
+        // FIX-3: Position-only follow-up write -- extendEdgesByMask already
+        // committed Geometry above.
+        m.commitChange(MeshEditScope.Position);
+        noteStep(factory, label);
+
+        resyncSession();   // KILLER-2: topology grew -- clear every sibling arm
+
+        m.syncSelection();
+        if (gpu_ !is null) { gpu_.upload(*m); refreshDisplay(m, gpu_); }
+    }
+
+    // Stored drag-arm index/case dangle across an external history
+    // navigation mid-drag (a redo/undo elsewhere could delete the source
+    // vertex or its incident geometry out from under an armed gesture) — the
+    // driver calls this on every such navigation; clear the whole armed
+    // state rather than trust a possibly-stale index. Covers P4's Move/Place
+    // arm state (doc/topopen_p4_plan.md) the same way — an external undo/redo
+    // could equally delete a grabbed vertex out from under an armed Move.
+    // P6 (doc/topopen_p6_addloop_plan.md Risk "stale armed state"): also
+    // clears the Add Loop arm — a history nav between MMB-down and MMB-up
+    // could otherwise commit against a dangling seed edge index. P7
+    // (doc/topopen_p7_slide_plan.md Phase 3 item 3): also clears the Slide
+    // arm, same rationale. REV1 FIX-1: the actual clearing logic now lives
+    // in `resetAllGestureArms()` — the single source of truth ALSO called
+    // at the top of every LEFT-button gesture-DOWN handler — so this method
+    // is just that helper's "external history navigation" entry point.
+    override void resyncSession() {
+        resetAllGestureArms();
+        // Phase-2 input-dispatch migration (doc/topopen_input_dispatch_phase2_plan.md):
+        // also drop every button's BASE `armed_[]` slot — an external
+        // history navigation must invalidate an in-progress gesture's
+        // dispatch-level arm too, not just this tool's own bools (the two
+        // are otherwise independent: `resetAllGestureArms()` only ever
+        // clears the bools `dispatchInput` doesn't know about). No prior
+        // behavior to preserve here (this call didn't exist pre-migration)
+        // — strictly more hygienic.
+        resetAllArmed();
+        // Generic Hover-Highlight (doc/topopen_hover_highlight_plan.md Phase
+        // 3 item 3): also clear the passive hover-indicator state — an
+        // external undo/redo with no subsequent motion event must not leave
+        // a stale nearest-vert/edge index (possibly deleted by the
+        // navigation) dangling into the next `draw()` call.
+        hoverOverMesh_     = false;
+        hoverNearestVert_  = -1;
+        hoverNearestEdge_  = -1;
+        hoverBoundaryFace_ = -1;
+        hoverBoundary_     = false;
+        hoverGrabElem_     = MoveElem.None;   // same staleness hazard, same fix
+        hoverGrabIndex_    = -1;
+        // Fill mode V1 (task 0477 continuation, doc/topopen_fill_plan.md):
+        // also drop the passive candidate-cell preview — an external
+        // undo/redo with no subsequent motion event must not leave a stale
+        // cell (possibly referencing verts the navigation deleted)
+        // dangling into the next `draw()` call.
+        fillRing_ = null;
+        // Fill mode radius overlay (task 0477 continuation): same
+        // rationale — an external undo/redo with no subsequent motion
+        // event must not leave a stale radius (possibly sized off a
+        // now-deleted border edge) dangling into the next `draw()` call.
+        fillRadiusValid_ = false;
+        // Slide decline diagnostics (doc/tasks/work/0482-topopen-move-nonvertex.md):
+        // same rationale one more time — `slideDeclineSeed_` names an EDGE
+        // INDEX, and an external undo/redo can delete that very edge, so a
+        // navigation must not leave a stale index published on
+        // `/api/tool/state`. Reporting no decline is strictly better than
+        // reporting one against geometry that no longer exists.
+        slideDecline_     = SlideDecline.None;
+        slideDeclineSeed_ = -1;
+    }
+
+    // The rest of this class: two member families that move as one.
+    mixin PenRenderOps;      // every pixel the tool draws
+    mixin PenStateJsonOps;   // its GET /api/tool/state answer
+
+}

@@ -1,0 +1,543 @@
+module vibe3d.editing.tools.interactive.tools.edit.vertex_bevel_tool;
+import vibe3d.viewport.display_policy.display_state : DrawPlan;
+import vibe3d.editing.tools.interactive.prepared_record_context : PreparedToolParamDoorClient,
+    PreparedNamedGpuParamDoorClient;
+
+import bindbc.sdl;
+import vibe3d.editing.pipeline.contracts.operator : VectorStack;
+
+import vibe3d.editing.tools.interactive.tool;
+import vibe3d.editing.tools.interactive.tools.topology_step;
+import vibe3d.editing.commands.runtime.command : Command;
+import vibe3d.mesh.core.mesh;
+import vibe3d.viewport.gpu.mesh_gpu : GpuMesh;
+import vibe3d.mesh.ops.mesh_ops.bevel_vertex : bevelVerticesByMask, kBevelVertexEditScope;
+import vibe3d.util.math.math;
+import vibe3d.util.spatial.spatial : Viewport;
+import vibe3d.editing.contracts.editmode : EditMode;
+import vibe3d.editing.params.params : Param;
+import vibe3d.editing.tools.interactive.handler : Arrow, ToolHandles, HandleState, gizmoSize;
+import vibe3d.viewport.display_policy.viewport_scheme : schemeColor, SchemeColor;
+import vibe3d.editing.tools.interactive.drag : screenAxisDelta, gesturePrevPixel;
+import vibe3d.editing.tools.interactive.overlay_space : OverlaySpace;
+import vibe3d.platform.input.eventlog : queryMouse;
+import vibe3d.viewport.gpu.shader : Shader, LitShader;
+import vibe3d.editing.commands.runtime.command_history : CommandHistory;
+import vibe3d.mesh.snapshot.snapshot : MeshSnapshot;
+import vibe3d.viewport.gpu.display_sync : refreshDisplay;
+import vibe3d.editing.tools.state.tools.edit.preview_rebuild : PreviewRebuild, PreviewTopologyKey,
+    PreviewRebuildCounts;
+
+import std.math : abs, sqrt;
+import std.json : JSONValue;
+import vibe3d.util.profiling.perf_probe : g_perf, Cat;
+import vibe3d.editing.tools.interactive.prepared_record_context : PreparedRecordContext, PreparedToolDoorClient,
+    PreparedSimpleToolDoorClient;
+import vibe3d.editing.contracts.prepared_tool_effect : PreparedDeactivateEffect, PreparedDeactivateKind;
+import vibe3d.editing.contracts.prepared_tool_effect : PreparedSessionActivateEffect, PreparedActivateKind;
+import vibe3d.editing.tools.interactive.prepared_vertex_bevel_activation : PreparedVertexBevelActivationOwner;
+import vibe3d.editing.tools.interactive.prepared_param_update : PreparedParamUpdateOwner,
+    PreparedParamUpdateProducer, PreparedStateParamImage;
+import vibe3d.editing.contracts.prepared_tool_effect : PreparedVertexBevelParamEffect,
+    PreparedVertexBevelParamKind;
+import vibe3d.documents.model.document : Layer;
+import vibe3d.viewport.gpu.mesh_gpu : GpuUploadOwner;
+import core.stdc.string : memcmp;
+
+struct VertexBevelParamProjection {
+    bool interactive, active, built;
+    float inset;
+    bool opEquals(const VertexBevelParamProjection other) const nothrow @nogc {
+        return interactive == other.interactive && active == other.active &&
+            built == other.built &&
+            memcmp(&inset, &other.inset, float.sizeof) == 0;
+    }
+}
+
+alias PreparedVertexBevelParamImage = PreparedStateParamImage!(VertexBevelParamProjection, PreparedVertexBevelParamKind);
+
+struct PreparedVertexBevelActivationImage {
+    MeshSnapshot before;
+    bool valid, gizmoValid;
+    Vec3 anchor, baseAnchor, insetAxis;
+    ulong gizmoSelHash;
+    void clear() nothrow @nogc { this = PreparedVertexBevelActivationImage.init; }
+}
+
+// ---------------------------------------------------------------------------
+// VertexBevelTool — interactive Vertex Bevel (factory id `mesh.vertexBevel`,
+// task 0360 promotion of the one-shot `mesh.vertexBevel` command).
+//
+// Grounded in the captured toolcard (private spec tree — not reproduced
+// here beyond the geometry/behavior facts already baked into
+// mesh_ops.bevel_vertex.bevelVerticesByMask):
+//   - ONE attribute (`inset`, world units, default 0.0).
+//   - Exactly ONE drawn handle ("Inset"), ACTR-anchored — unlike Polygon
+//     Bevel's two handles, only inset is adjustable when beveling
+//     vertices.
+//   - `inset == 0` AND `inset < 0` are BOTH confirmed byte-exact no-ops
+//     (unlike the polygon-inset tool's degenerate-but-real zero-width split) —
+//     mesh_ops.bevel_vertex.bevelVerticesByMask already guards `amount < 1e-6f` as a
+//     no-op, so this divergence from the polygon-inset tool needed ZERO kernel
+//     changes to already be correct.
+//   - "Round Level" (extra rounding geometry) is a real, captured, but
+//     UNVERIFIED-formula reference option (confirmed to add substantial
+//     extra geometry structurally — roughly 2x the vertex count at
+//     level=1 on a 4-corner selection; exact rounding profile not
+//     derivable from the capture). Deliberately left OUT of this port
+//     rather than guessed — it is also not part of the captured
+//     handle_map (single handle only), so this is a panel-only gap, not
+//     a missing-handle gap.
+//   - Multi-adjacent-selection interaction (the exact per-vertex offset
+//     law when several mutually-edge-adjacent vertices are beveled
+//     together) is an OPEN QUESTION per the toolcard — not independently
+//     re-derivable with the capture harness used. This tool ports the
+//     single-vertex law byte-exact (see mesh_ops.bevel_vertex.bevelVerticesByMask's own
+//     tests) and does not attempt to special-case multi-adjacent
+//     selections beyond what the existing kernel already does.
+//
+// Session lifecycle mirrors EdgeBevelTool (its closest sibling: one
+// attribute, ACTR-anchored single handle, topology-creating, generic
+// before/after-snapshot undo).
+// ---------------------------------------------------------------------------
+class VertexBevelTool : Tool, PreparedToolDoorClient, PreparedToolParamDoorClient,
+        TopologyStepClient {
+    // A recording command through the UI door closes the live edit first —
+    // `Tool.commitOperation`'s in-place default — and the tool stays armed
+    // (slice M2; the C1-h-sel-fam law, captured for Edge Extend and Polygon
+    // Bevel and inferred for the rest of the in-place family, R20 gap g5).
+    override ToolSessionPolicy sessionPolicy() const nothrow @nogc {
+        static immutable ToolSessionPolicy policy = {
+            activationRow: true,
+            commandClose: CommandClose.uiDoor,
+            sessionSteps: true, historyTopologySteps: true,
+            // The operation begins at the arm (topology-redo law 1; captured
+            // script cell + three UI cells `s01 armed=True`).
+            opensAt: OpensAt.arm,
+            imageAttrs: ["inset"], haulAttrs: ["inset"],
+            // captured: the tool's activation resets these (topology-redo S6r)
+            activationResetAttrs: ["inset"]
+        };
+        return policy;
+    }
+
+    mixin PreparedNamedGpuParamDoorClient;
+    mixin PreparedSimpleToolDoorClient!Layer;
+private:
+    Mesh* delegate() nothrow @nogc meshSrc_;
+    @property Mesh* mesh() const { return meshSrc_(); }
+    GpuMesh*         gpu;
+    EditMode*        editMode;
+    LitShader        litShader;
+
+    float inset_ = 0.0f;
+
+    bool         active;
+    bool         built;
+    MeshSnapshot before;
+    PreviewRebuild preview_;     // the restore-and-rebuild seam (preview_rebuild.d)
+
+    bool gizmoValid;
+    Vec3 anchor;
+    Vec3 baseAnchor;
+    Vec3 insetAxis;
+    ulong gizmoSelHash;
+
+    enum int PART_INSET = 0;
+    int   dragPart = -1;
+    int   dragLastMX, dragLastMY;
+    float dragBaseInset;
+
+    Arrow       insetArrow;
+    ToolHandles toolHandles;
+
+    enum Vec3 INSET_COLOR = schemeColor(SchemeColor.toolWidth);
+
+public:
+    this(Mesh* delegate() nothrow @nogc meshSrc, GpuMesh* gpu,
+            EditMode* editMode, LitShader litShader) {
+        this.meshSrc_  = meshSrc;
+        this.gpu       = gpu;
+        this.editMode  = editMode;
+        this.litShader = litShader;
+        insetArrow  = new Arrow(Vec3(0,0,0), Vec3(0,1,0), INSET_COLOR);
+        toolHandles = new ToolHandles();
+    }
+
+    void destroy() {
+        if (insetArrow !is null) insetArrow.destroy();
+    }
+
+    override string name() const { return "Vertex Bevel"; }
+
+    override EditMode[] supportedModes() const { return [EditMode.Vertices]; }
+
+    override Param[] params() {
+        return [Param.float_("inset", "Inset", &inset_, 0.0f)];
+    }
+
+    override void activate() {
+        active = true;
+        reinitSession();
+    }
+
+    final PreparedVertexBevelActivationImage buildPreparedActivation(
+            out Mesh* source) {
+        PreparedVertexBevelActivationImage image;
+        source = mesh; if (source is null) return image;
+        image.before = MeshSnapshot.capture(*source); image.valid = true;
+        image.gizmoValid = gizmoValid; image.anchor = anchor;
+        image.baseAnchor = baseAnchor; image.insetAxis = insetAxis;
+        image.gizmoSelHash = gizmoSelHash;
+        computePreparedGizmoFrame(*source, image); return image;
+    }
+    final Mesh* preparedActivationMesh() nothrow @nogc { return meshSrc_(); }
+    final void installPreparedActivation(
+            ref PreparedVertexBevelActivationImage image) nothrow @nogc {
+        if (!image.valid) return;
+        active = true; built = false; dragPart = -1;
+        preview_.reset(); image.before.moveInto(before);
+        gizmoValid = image.gizmoValid; anchor = image.anchor;
+        baseAnchor = image.baseAnchor; insetAxis = image.insetAxis;
+        gizmoSelHash = image.gizmoSelHash; image.clear();
+    }
+    final PreparedSessionActivateEffect prepareActivate(
+            PreparedRecordContext context) {
+        if (context is null) return PreparedSessionActivateEffect(
+            preparedToolStateOwner, PreparedActivateKind.VertexBevel, false);
+        scope(failure) context.discard();
+        auto owner = PreparedVertexBevelActivationOwner.prepare(this);
+        bool ok = owner !is null && context.prepareVertexBevelActivation(owner) &&
+            context.markNoHistoryInstall();
+        if (!ok) context.discard();
+        return PreparedSessionActivateEffect(preparedToolStateOwner,
+            PreparedActivateKind.VertexBevel, ok);
+    }
+
+    private void reinitSession() {
+        built    = false;
+        dragPart = -1;
+        preview_.reset();          // a new clean cage ⇒ a new topology key
+        before   = MeshSnapshot.capture(*mesh);
+        computeGizmoFrame();
+    }
+
+    override void deactivate() {
+        // Completed bevel steps are owned by history.
+        active     = false;
+        built      = false;
+        dragPart   = -1;
+        gizmoValid = false;
+        preview_.reset();          // drop the clean-cage scratch with the session
+        toolHandles.clearHaul();
+    }
+
+    public override bool hasUncommittedEdit() const {
+        return active && dragPart >= 0 && built && inset_ != 0.0f;
+    }
+
+    public override void cancelUncommittedEdit() {
+        cancelLiveEdit();
+    }
+
+    public override void resyncSession() {
+        if (!active) return;
+        reinitSession();
+    }
+
+    mixin SessionCommitHooks;
+    mixin TopologyStepClientBody!("Vertex Bevel", before);
+    mixin GizmoTopologyRebase;
+    final void afterTopologyRebase() { preview_.reset(); }
+
+    override void onParamChanged(string pname) {
+        if (interactiveParamEdit) rebuildPreview();
+    }
+    final bool ownsPreparedLayer(Layer layer) const {
+        return layer !is null && &layer.meshRef() is mesh;
+    }
+    private VertexBevelParamProjection paramProjection() const nothrow @nogc {
+        return VertexBevelParamProjection(interactiveParamEdit, active, built,
+            inset_);
+    }
+    final PreparedVertexBevelParamImage buildPreparedParamUpdate(string, ref const Mesh live) {
+        return PreparedVertexBevelParamImage.prepare(paramProjection(), live);
+    }
+    final bool preparedParamUpdateMatches(in PreparedVertexBevelParamImage image,
+            ref const Mesh live) const nothrow @nogc {
+        return image.matches(paramProjection(), live);
+    }
+    final void installPreparedParamUpdate(
+            ref PreparedVertexBevelParamImage image) nothrow @nogc {
+        image.clear();
+    }
+    /// The preview seam's counters (read by the churn test).
+    public PreviewRebuildCounts previewRebuildCounts() const {
+        return preview_.counts();
+    }
+    mixin PreparedParamUpdateProducer!(PreparedParamUpdateOwner!(VertexBevelTool,
+        PreparedVertexBevelParamImage, PreparedVertexBevelParamKind), PreparedVertexBevelParamEffect);
+    override void evaluate() {}
+
+    // Headless apply (tool.doApply) — the Post-Mode path a panel numeric
+    // edit + Apply button drives. MUST NOT snapshot — ToolDoApplyCommand
+    // wraps it with undo.
+    override bool applyHeadless() {
+        if (*editMode != EditMode.Vertices) return false;
+        if (built && before.filled) {
+            before.restore(*mesh);
+            built = false;
+        }
+        preview_.reset();   // the live mesh is rebuilt behind the seam's back
+        if (mesh.vertices.length == 0) return false;
+        if (inset_ == 0.0f) return true;
+        if (operation(*mesh) == 0) return false;
+        gpu.upload(*mesh);
+        return true;
+    }
+
+    override bool onMouseButtonDown(ref const SDL_MouseButtonEvent e, ref VectorStack vts) {
+        if (!active) return false;
+        if (e.button == SDL_BUTTON_RIGHT) { closeOwnOperation(false); return true; }
+        if (e.button != SDL_BUTTON_LEFT)  return false;
+        SDL_Keymod mods = SDL_GetModState();
+        if (mods & (KMOD_ALT | KMOD_SHIFT)) return false;
+        if (*editMode != EditMode.Vertices) return false;
+        if (!gizmoValid) return false;
+
+        int hmx, hmy;
+        queryMouse(hmx, hmy);
+        int part = toolHandles.test(hmx, hmy, cachedVp);
+
+        dragLastMX    = e.x; dragLastMY = e.y;
+        dragBaseInset = inset_;
+
+        if (part == PART_INSET) {
+            sessionStepBegins();
+            dragPart = PART_INSET;
+            toolHandles.setHaul(part);
+            return true;
+        }
+        return false;
+    }
+
+    override bool onMouseButtonUp(ref const SDL_MouseButtonEvent e, ref VectorStack vts) {
+        if (!active || dragPart < 0) return false;
+        if (e.button != SDL_BUTTON_LEFT) return false;
+        dragPart = -1;
+        toolHandles.clearHaul();
+        sessionStepEnds();
+        return true;
+    }
+
+    override bool onMouseMotion(ref const SDL_MouseMotionEvent e, ref VectorStack vts) {
+        if (!active || dragPart < 0 || !gizmoValid) return false;
+        // The previous pixel comes from the cooked gesture, not from this
+        // tool's own pair — same integer subtraction, sourced one level up.
+        // `dragLastMX/MY` stay written as the fallback when no gesture is
+        // published and as the other half of the debug agreement check.
+        import vibe3d.editing.pipeline.contracts.toolpipe.packets : GesturePacket;
+        int prevMX, prevMY;
+        gesturePrevPixel(vts.get!GesturePacket(), e.x, e.y,
+                         dragLastMX, dragLastMY, prevMX, prevMY);
+        bool skip;
+        // Projected in the space the arm is DRAWN in, and converted back into
+        // the LOCAL length the kernel means (task 0645) — one OverlayAxis in
+        // both roles, so the arm the pixels are dotted against is the arm on
+        // screen and the geometry follows it.
+        const auto os = OverlaySpace.ofPrimary();
+        const auto ax = os.axis(insetAxis);
+        Vec3 delta = screenAxisDelta(e.x, e.y, prevMX, prevMY,
+                                     os.pos(anchor), ax.dir, cachedVp, skip);
+        if (!skip) {
+            float d = ax.toLocal(dot(delta, ax.dir));
+            // No clamp to >=0: the captured law says BOTH inset==0 AND
+            // inset<0 are no-ops (mesh_ops.bevel_vertex.bevelVerticesByMask already guards
+            // `amount < 1e-6f`), so a drag that crosses zero just yields a
+            // cleared preview rather than needing to be pinned at zero.
+            inset_ = dragBaseInset + d;
+            rebuildPreview();
+        }
+        dragLastMX = e.x;
+        dragLastMY = e.y;
+        return true;
+    }
+
+
+    // Read-only test seam (task 0645) — GET /api/tool/handles. The registry
+    // stays the hit-testing authority; this only exposes its already-drawn
+    // state, and that state is the ONLY place a handle's SPACE is observable
+    // from outside the process. Mirrors PolyBevelTool / EdgeBevelTool, which
+    // carried it already.
+    public override JSONValue toolHandlesJson() const {
+        return toolHandles is null ? JSONValue(null) : toolHandles.toJson(cachedVp);
+    }
+
+    override void draw(const ref Shader shader, const ref Viewport vp, ref VectorStack vts,
+                       const ref DrawPlan plan, bool visualOnly = false) {
+        cachedVp = vp;
+        if (dragPart < 0 && !built && mesh.selectionSignature(EditMode.Vertices) != gizmoSelHash)
+            computeGizmoFrame();
+        if (!gizmoValid) return;
+
+        anchor = baseAnchor;   // LOCAL, like the kernel
+
+        // ONE overlay space for the pass (task 0645): the arm is positioned in
+        // it and `toolHandles.update` below hit-tests this same object, so
+        // drawing and hitting cannot land in different spaces.
+        const auto os      = OverlaySpace.ofPrimary();
+        const auto ax      = os.axis(insetAxis);
+        const Vec3 anchorW = os.pos(anchor);
+
+        float armLen = gizmoSize(anchorW, vp, 1.0f);
+        insetArrow.start = anchorW + ax.dir * (armLen / 6.0f);
+        insetArrow.end   = anchorW + ax.dir * armLen;
+        insetArrow.color = INSET_COLOR;
+
+        toolHandles.begin();
+        toolHandles.add(insetArrow, PART_INSET);
+        if (dragPart >= 0) toolHandles.setHaul(dragPart);
+        else               toolHandles.setHaul(-1);
+        int hmx, hmy;
+        queryMouse(hmx, hmy);
+        toolHandles.update(hmx, hmy, vp);
+
+        insetArrow.draw(shader, vp);
+    }
+
+private:
+    // Anchor = selection centroid; insetAxis = averaged normal of faces
+    // incident to the selected vertices (mirrors EdgeBevelTool's
+    // width-axis derivation, one level down the element hierarchy).
+    void computeGizmoFrame() {
+        PreparedVertexBevelActivationImage image;
+        image.gizmoValid = gizmoValid; image.anchor = anchor;
+        image.baseAnchor = baseAnchor; image.insetAxis = insetAxis;
+        image.gizmoSelHash = gizmoSelHash;
+        computePreparedGizmoFrame(*mesh, image);
+        gizmoValid = image.gizmoValid; anchor = image.anchor;
+        baseAnchor = image.baseAnchor; insetAxis = image.insetAxis;
+        gizmoSelHash = image.gizmoSelHash;
+    }
+
+    private static void computePreparedGizmoFrame(ref Mesh source,
+            ref PreparedVertexBevelActivationImage image) {
+        image.gizmoValid = false;
+        if (source.vertices.length == 0) return;
+        bool any = source.hasAnySelectedVertices();
+        Vec3 sum = Vec3(0, 0, 0);
+        foreach (vi; 0 .. source.vertices.length) {
+            if (any && !source.isVertexSelected(vi)) continue;
+            foreach (fi; source.facesAroundVertex(cast(uint)vi))
+                sum = sum + source.faceNormal(cast(uint)fi);
+        }
+        image.anchor = source.selectionCentroidVertices();
+        float len = sqrt(sum.x*sum.x + sum.y*sum.y + sum.z*sum.z);
+        image.insetAxis = (len > 1e-6f) ? sum * (1.0f/len) : Vec3(0,1,0);
+        image.baseAnchor = image.anchor;
+        image.gizmoSelHash = source.selectionSignature(EditMode.Vertices);
+        image.gizmoValid = true;
+    }
+
+    void rebuildPreview() {
+        if (!active) return;
+        if (previewGated()) return;
+        // Perf (task 1370) — AFTER the guard(s) above, never on the first
+        // line: an early-out must record no sample, or `count` tallies
+        // refusals as work. See Cat.toolPreview for the decomposition.
+        auto zPreview = g_perf.scope_(Cat.toolPreview);
+        built = preview_.run(*mesh, before, &previewKey, &operation) != 0;
+        refreshCaches();
+    }
+
+    // The topology key: the operand mask and the kernel's own no-op
+    // (`!isFinite(amount) || !(amount >= 1e-6f)`, mesh_ops/bevel_vertex.d).
+    PreviewTopologyKey previewKey(ref Mesh cage) {
+        import std.math : isFinite;
+        return PreviewTopologyKey.make(cage.operandVertexMask(EditMode.Vertices),
+            !isFinite(inset_) || !(inset_ >= 1e-6f));
+    }
+    // The one operation (task 9433): preview and scripted
+    // apply. Unrecorded — a preview frame records nothing, and the scripted
+    // apply's snapshot pair belongs to `ToolDoApplyCommand`. The mask is the
+    // L1 funnel (task 0613): the selection, else every VISIBLE element.
+    size_t operation(ref Mesh target) {
+        auto mask = target.operandVertexMask(EditMode.Vertices);
+        auto ed = MeshEditBatch.unrecorded(target, kBevelVertexEditScope);
+        const n = ed.bevelVerticesByMask(mask, inset_);
+        ed.close();
+        return n;
+    }
+
+    final PreparedDeactivateEffect prepareDeactivate(PreparedRecordContext c) {
+        if (c is null) return PreparedDeactivateEffect(
+            preparedToolStateOwner, PreparedDeactivateKind.VertexBevel, false, false);
+        const accepted = c.markNoHistoryInstall();
+        return PreparedDeactivateEffect(preparedToolStateOwner,
+            PreparedDeactivateKind.VertexBevel, false, accepted);
+    }
+
+    void cancelLiveEdit() {
+        if (built && before.filled) before.restore(*mesh);
+        preview_.reset();
+        built    = false;
+        dragPart = -1;
+        toolHandles.clearHaul();
+        refreshCaches();
+    }
+
+    void refreshCaches() {
+        refreshDisplay(mesh, gpu);
+    }
+
+public:
+    version(unittest) final void seedPreparedParamForTest(ref Mesh live,
+            bool interactive = true, float inset = 0.2f) {
+        interactiveParamEdit = interactive; active = true; built = false;
+        inset_ = inset; before = MeshSnapshot.capture(live);
+    }
+    version(unittest) final void mutatePreparedParamForTest(float value)
+            nothrow @nogc { inset_ = value; }
+    version(unittest) final bool preparedParamBuiltForTest() const nothrow @nogc {
+        return built;
+    }
+    version(unittest) final auto preparedOwnerForTest() const nothrow @nogc {
+        return preparedToolStateOwner;
+    }
+    version(unittest) final void seedPreparedActivationForTest(ref Mesh oldMesh) {
+        active = false; built = true; dragPart = 9; inset_ = 7;
+        gizmoValid = false; anchor = Vec3(1,2,3); baseAnchor = Vec3(4,5,6);
+        insetAxis = Vec3(7,8,9); gizmoSelHash = 10;
+        dragLastMX = 11; dragLastMY = 12; dragBaseInset = 13;
+        cachedVp.view[0] = 14; before = MeshSnapshot.capture(oldMesh);
+    }
+    version(unittest) final bool preparedActivationDirtyForTest() const
+            nothrow @nogc {
+        return !active && built && dragPart == 9 && inset_ == 7 && !gizmoValid &&
+            anchor == Vec3(1,2,3) && baseAnchor == Vec3(4,5,6) &&
+            insetAxis == Vec3(7,8,9) && gizmoSelHash == 10 &&
+            dragLastMX == 11 && dragLastMY == 12 && dragBaseInset == 13 &&
+            cachedVp.view[0] == 14;
+    }
+    version(unittest) final bool preparedActivationForTest(size_t count,
+            Vec3 first, const Vec3* livePtr, bool expectedValid,
+            Vec3 expectedAnchor, Vec3 expectedBase, Vec3 expectedAxis,
+            ulong expectedHash) const nothrow @nogc {
+        return active && !built && dragPart == -1 && inset_ == 7 && before.filled &&
+            before.vertices.length == count &&
+            (count == 0 || (before.vertices[0] == first && before.vertices.ptr !is livePtr)) &&
+            gizmoValid == expectedValid && anchor == expectedAnchor &&
+            baseAnchor == expectedBase && insetAxis == expectedAxis &&
+            gizmoSelHash == expectedHash && dragLastMX == 11 && dragLastMY == 12 &&
+            dragBaseInset == 13 && cachedVp.view[0] == 14;
+    }
+    version(unittest) final PreparedVertexBevelActivationImage
+            preparedFrameForTest(ref Mesh source) const {
+        PreparedVertexBevelActivationImage image;
+        image.before = MeshSnapshot.capture(source);
+        image.gizmoValid = gizmoValid; image.anchor = anchor;
+        image.baseAnchor = baseAnchor; image.insetAxis = insetAxis;
+        image.gizmoSelHash = gizmoSelHash;
+        computePreparedGizmoFrame(source, image); return image;
+    }
+}

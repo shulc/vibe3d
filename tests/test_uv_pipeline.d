@@ -34,12 +34,12 @@ import std.file   : write, remove, exists;
 import std.format : format;
 
 import vibe3d.mesh.core.mesh : Mesh, MeshMap, MapDomain, kUvMapName;
-import io.scene_ir       : ImportedScene, flattenToMesh;
-import io.scene_import   : importViaAssimp;
-import io.scene_export   : exportViaAssimp;
-import io.native         : writeV3d, readV3d, kV3dFormatVersion;
-import io.assimp_runtime : initAssimp, isAssimpAvailable;
-import math : Vec3;
+import vibe3d.documents.interchange.io.scene_ir       : ImportedScene, flattenToMesh;
+import vibe3d.documents.interchange.io.scene_import   : importViaAssimp;
+import vibe3d.documents.interchange.io.scene_export   : exportViaAssimp;
+import vibe3d.documents.io.io.native         : writeV3d, readV3d, kV3dFormatVersion;
+import vibe3d.documents.interchange.io.assimp_runtime : initAssimp, isAssimpAvailable;
+import vibe3d.util.math.math : Vec3;
 import std.json : parseJSON;
 import std.file : readText;
 

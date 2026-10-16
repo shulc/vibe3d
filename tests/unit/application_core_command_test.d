@@ -1,10 +1,10 @@
 module tests.unit.application_core_command_test;
 
-import command : Command, g_editTargetResolver, kNoEditTargetReason;
-import command_executor : CommandExecutor;
-import command_history : CommandHistory, RecordMode, HistoryFlags;
-import commands.mesh.triple : MeshTriple;
-import commands.mesh.session_edit : MeshSessionEdit;
+import vibe3d.editing.commands.runtime.command : Command, g_editTargetResolver, kNoEditTargetReason;
+import vibe3d.editing.commands.runtime.command_executor : CommandExecutor;
+import vibe3d.editing.commands.runtime.command_history : CommandHistory, RecordMode, HistoryFlags;
+import vibe3d.editing.commands.editor.commands.mesh.triple : MeshTriple;
+import vibe3d.editing.commands.editor.commands.mesh.session_edit : MeshSessionEdit;
 import vibe3d.documents.model.document : Document;
 import vibe3d.editing.contracts.editmode : EditMode;
 import vibe3d.mesh.core.mesh : Mesh, makeCube, Surface, MapDomain, g_isDocumentMesh;

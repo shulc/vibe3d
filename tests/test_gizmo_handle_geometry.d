@@ -39,9 +39,9 @@
 import std.conv : to;
 import std.math : PI, abs, cos, sin, sqrt;
 
-import handler : MoveHandler, ScaleHandler, gizmoSize, setGizmoPixels,
+import vibe3d.editing.tools.interactive.handler : MoveHandler, ScaleHandler, gizmoSize, setGizmoPixels,
                  getGizmoPixels, setGizmoHandleScale, Handler;
-import math : Vec3, cross, normalize;
+import vibe3d.util.math.math : Vec3, cross, normalize;
 import vibe3d.util.spatial.spatial : Viewport, projectToWindowFull, Orientation;
 import vibe3d.viewport.camera.view : View;
 

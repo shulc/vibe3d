@@ -24,12 +24,12 @@
 // side, and in the split case from BOTH sides, because "visible from both
 // sides" is the visible consequence of the zero normal this rule produces.
 module tests.unit.facing_predicate_test;
-import mesh_visibility : visibleVertices;
+import vibe3d.editing.selection.query.mesh_visibility : visibleVertices;
 
 import std.format : format;
 import std.math : PI;
 
-import math : Vec3, lookAt, perspectiveMatrix, frontFacingLocal;
+import vibe3d.util.math.math : Vec3, lookAt, perspectiveMatrix, frontFacingLocal;
 import vibe3d.util.spatial.spatial : Viewport, ModelSpace;
 import vibe3d.mesh.core.mesh : Mesh, makeCube;
 

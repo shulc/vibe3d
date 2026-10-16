@@ -38,10 +38,10 @@ import tests.unit.census_symbols : exists = wave15Exists;
 // population is the same under `dmd -i` (ut-standalone) as in the full gate.
 // Floor 5(i) makes any divergence loud: a class that falls out of the closure
 // reddens as `ledger row … has no linked class`.
-import edit_tool_registration;
+import vibe3d.apps.desktop.edit_tool_registration;
 
-import command_history : CommandHistory;
-import tool            : Tool;
+import vibe3d.editing.commands.runtime.command_history : CommandHistory;
+import vibe3d.editing.tools.interactive.tool            : Tool;
 import tests.unit.census_symbols : blankNonCode, blankUnittestBodies,
                                    isIdentChar, enclosingSymbols, symbolAt;
 
@@ -127,7 +127,7 @@ private enum string[] kNonSessionIfaces = ["InputBindable", "RunMergeable"];
 /// Every interface the session modules declare, as the compiler sees them.
 private string[] sessionModuleIfaces() {
     import std.meta : AliasSeq;
-    static import command, edit_session, tool;
+    static import command = vibe3d.editing.commands.runtime.command, edit_session = vibe3d.editing.tools.interactive.edit_session, tool = vibe3d.editing.tools.interactive.tool;
     string[] names;
     static foreach (M; AliasSeq!(command, edit_session, tool))
         static foreach (m; __traits(allMembers, M))
@@ -150,7 +150,7 @@ private string[] sessionModuleIfaces() {
 // tests/unit/tool_session_policy_test.d (9).
 private string[] pinnedModuleIfaces() {
     import std.meta : AliasSeq;
-    static import command, edit_session, tool, history_lifecycle_contract;
+    static import command = vibe3d.editing.commands.runtime.command, edit_session = vibe3d.editing.tools.interactive.edit_session, tool = vibe3d.editing.tools.interactive.tool, history_lifecycle_contract = vibe3d.editing.commands.runtime.history_lifecycle_contract;
     string[] names;
     static foreach (M; AliasSeq!(command, edit_session, tool, history_lifecycle_contract))
         static foreach (m; __traits(allMembers, M))

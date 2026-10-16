@@ -1,0 +1,904 @@
+module vibe3d.editing.tools.interactive.tools.edit.bridge_tool;
+import vibe3d.viewport.display_policy.display_state : DrawPlan;
+
+import bindbc.sdl;
+
+import vibe3d.editing.pipeline.contracts.operator : VectorStack;
+import vibe3d.editing.tools.interactive.tool;
+import vibe3d.mesh.core.mesh;
+import vibe3d.viewport.gpu.mesh_gpu : GpuMesh;
+import vibe3d.mesh.ops.mesh_ops.bridge : BridgeOpenParams, openBridgeSegments, bridgeLoopsSpans, bridgeOpenRows, facesBoundedByLoop,
+                         kBridgeEditScope;
+import vibe3d.util.math.math;
+import vibe3d.editing.contracts.editmode : EditMode;
+import vibe3d.editing.params.params : IntEnumEntry, Param;
+import vibe3d.editing.commands.runtime.command_history : CommandHistory;
+import vibe3d.editing.commands.editor.commands.mesh.session_edit : MeshSessionEdit;
+import vibe3d.editing.tools.state.tools.common.session_mesh_key : SessionMeshKey;
+import vibe3d.mesh.snapshot.snapshot : MeshSnapshot;
+import vibe3d.mesh.edit_log.mesh_edit_delta : MeshEditScope;
+import vibe3d.viewport.gpu.shader : Shader, LitShader;
+import vibe3d.editing.tools.interactive.model_preview : ModelPreviewView;
+import std.json : JSONValue;
+import vibe3d.editing.contracts.prepared_tool_effect : PreparedToolStateDelta, PreparedToolStateKind,
+    PreparedSessionActivateEffect, PreparedActivateKind,
+    PreparedDeactivateEffect, PreparedDeactivateKind;
+import vibe3d.editing.tools.interactive.prepared_record_context : PreparedRecordContext, PreparedToolDoorClient,
+    PreparedToolParamDoorClient;
+import vibe3d.editing.tools.interactive.prepared_bridge_activation : PreparedBridgeActivationOwner,
+    PreparedBridgeDeactivateOwner;
+import vibe3d.viewport.gpu.mesh_gpu : GpuCreateOwner, GpuCreateUploadOwner, GpuUploadOwner,
+    GpuResourceOwner;
+import vibe3d.documents.model.document : Layer;
+import vibe3d.editing.commands.runtime.command_history : PreparedHistoryKind;
+import vibe3d.mesh.core.mesh : beginPreparedShadow, drainPreparedShadowDelivery;
+
+version (unittest) import std.conv : to;
+private struct BridgePreparedState {
+    bool engaged; bool consumable;
+    @disable this(this);
+}
+
+struct PreparedBridgeActivationImage {
+    bool valid;
+    bool selectionValid, polygonMode, openRows;
+    uint effectiveSegments;
+    EditMode mode;
+    uint[] loopA, loopB, capFaces;
+    MeshSnapshot baseline;
+    SessionMeshKey sessionKey;
+    Mesh preview;
+    void clear() nothrow @nogc {
+        valid = selectionValid = polygonMode = openRows = false;
+        loopA = loopB = capFaces = null;
+        effectiveSegments = 0;
+        baseline = MeshSnapshot.init; sessionKey = SessionMeshKey.init;
+        preview = Mesh.init;
+    }
+}
+
+struct PreparedBridgeDeactivateImage {
+    bool valid;
+    bool expectedEngaged, expectedValid, expectedPreviewCache, openRows;
+    uint effectiveSegments;
+    BridgeParams params;
+    SessionMeshKey sessionKey;
+    uint[] loopA, loopB, capFaces;
+    void clear() nothrow @nogc {
+        this = PreparedBridgeDeactivateImage.init;
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Task 20261600: factory defaults and shared consumed Bridge attrs. Flip reverses
+// new quads; open twist refuses because its ring law is unknown. Open-row remove
+// is inert, polygon/closed cap deletion retains historical behavior (unmeasured
+// here). Tension is raw, unclamped; Curve/Linear patch invariance is measured,
+// Smooth/tension patch invariance is static. Smooth uses our geometry normals.
+// Rails consume mode/tension (1.0 = 100%); patches bypass both. Connect and
+// autoStep consume open rows only; autoStep=false is static-law based. Orient,
+// steps, continuous and UV mapping have no known consumer; connected UVs read
+// as none; its four-choice panel returns Connected to None after the hook.
+// JSON injection/sticky recall bypass the change hook and may store 3;
+// tool.attr refuses profile attrs while JSON ignores unknown keys. All panel
+// rows stay enabled: command enablement and panel greying disagree in evidence.
+// Sessions commit once at drop; reset uses factory defaults, recall last-used.
+enum BridgeMode { linear=0, curve=1, smooth=2 }
+enum BridgeUvs { none=0, u=1, v=2, connected=3 }
+
+struct BridgeParams {
+    int   segments = 1;
+    float twist    = 0.0f;
+    bool  remove   = true;
+    bool  flip     = false;
+    BridgeMode mode = BridgeMode.curve;
+    float tension = 1.0f;
+    bool connect = true;
+    bool autoStep = true;
+    bool orient = false;
+    BridgeUvs uvs = BridgeUvs.none;
+    int steps = 10;
+    bool continuous = true;
+}
+
+// ---------------------------------------------------------------------------
+// resolveBridgeSelection — builds the two boundary loops + the face
+// index(es), if any, Remove Polygons should delete, from the mesh's LIVE
+// selection state. Shared by activate() (interactive) and applyHeadless()
+// (fold #1, mirroring Mirror/Tack: a throwaway ToolHeadlessCommand instance
+// never calls activate(), so this must be independently callable).
+//
+// Polygon mode: exactly 2 selected faces; capFaces = those 2 faces
+// (unconditional, matching commands.mesh.bridge's existing Polygon-mode
+// behaviour when remove is on).
+//
+// Edge mode: selected edges must form exactly 2 disjoint chains — EITHER
+// both closed simple vertex cycles OR both OPEN rows (task 0395; a mix of
+// one open + one closed is a no-op, deferred — see task 0395 plan).
+// capFaces = whatever EXISTING faces (0, 1, or 2) are exactly bounded by
+// one of the two loops (facesMatchingLoop) — task 0357 generalizes
+// commands.mesh.bridge's Polygon-only Remove Polygons to Edge mode: most
+// edge-mode bridges bound no face at all (an open hole, OR any open-row
+// bridge — an open chain never bounds a face), in which case this is an
+// empty, safe no-op, exactly matching vibe3d's pre-existing edge-mode
+// behaviour.
+// ---------------------------------------------------------------------------
+struct BridgeSelectionResolved {
+    bool   valid;
+    bool   polygonMode;
+    bool   openRows;      // task 0395: true when both chains are OPEN rows
+    uint[] loopA, loopB;
+    uint[] capFaces;
+}
+
+BridgeSelectionResolved resolveBridgeSelection(ref Mesh m, EditMode editMode) {
+    BridgeSelectionResolved r;
+    if (editMode == EditMode.Polygons) {
+        uint[] selFaces;
+        foreach (fi; 0 .. m.faces.length)
+            if (m.isFaceSelected(fi)) selFaces ~= cast(uint)fi;
+        if (selFaces.length != 2) return r;
+        r.loopA       = m.faceVertexRing(selFaces[0]);
+        r.loopB       = m.faceVertexRing(selFaces[1]);
+        r.capFaces    = selFaces;
+        r.polygonMode = true;
+        r.valid       = true;
+    } else if (editMode == EditMode.Edges) {
+        // extractSelectedEdgeChains (task 0395) generalizes the pre-existing
+        // extractSelectedEdgeCycles (closed-only) to also recognize OPEN
+        // rows — extractSelectedEdgeCycles itself is left untouched.
+        auto chains = m.extractSelectedEdgeChains();
+        if (chains.length != 2) return r;
+        immutable bool bothClosed = chains[0].closed && chains[1].closed;
+        immutable bool bothOpen   = !chains[0].closed && !chains[1].closed;
+        if (!bothClosed && !bothOpen) return r;   // mixed open+closed: no-op, deferred (task 0395)
+        r.loopA       = chains[0].verts;
+        r.loopB       = chains[1].verts;
+        r.openRows    = bothOpen;
+        r.capFaces    = facesMatchingLoop(m, r.loopA) ~ facesMatchingLoop(m, r.loopB);
+        r.polygonMode = false;
+        r.valid       = true;
+    }
+    return r;
+}
+
+/// Face indices in `m` whose vertex ring is a cyclic rotation (either
+/// winding direction) of `loop` — the Edge-mode Remove Polygons lookup
+/// (see resolveBridgeSelection's doc comment). Thin wrapper over the shared
+/// `facesBoundedByLoop` (mesh_ops/bridge.d) — the single source of
+/// truth reused by `commands.mesh.bridge`'s Edge-mode cap removal (task
+/// 0467), so tool and one-shot command delete the identical faces.
+///
+/// The body is UNCHANGED by task 1903 Stage D3, and that is the point of the
+/// second receiver cell: `facesBoundedByLoop` became a free function over
+/// `ref const(Mesh)`, which `const ref Mesh m` binds to after this module
+/// imports the operation family directly. A batch receiver could not have
+/// been called from here at all.
+uint[] facesMatchingLoop(const ref Mesh m, const(uint)[] loop) {
+    return m.facesBoundedByLoop(loop);
+}
+
+/// Result of one bridge application — faces added by the kernel (0 = the
+/// kernel rejected the loops) and whether a cap/bounded-face deletion ran
+/// (deleteFacesByMask already rebuilds loops internally when it does).
+enum BridgeApplyFailure { none, openRowsTwistUnsupported }
+
+struct BridgeApplyResult {
+    BridgeApplyFailure failure;
+    size_t added;
+    bool   removed;
+    uint effectiveSegments;
+}
+
+/// Apply one bridge (multi-span + twist kernel, then optional Remove
+/// Polygons) onto `m`. `capFaces` is only consulted when `p.remove` is
+/// true; an empty `capFaces` (the common Edge-mode "no bounding face"
+/// case) is a safe no-op for the deletion step regardless.
+///
+/// `openRows` (task 0395) selects the kernel: closed loops / polygon rings
+/// use the pre-existing `bridgeLoopsSpans`; two OPEN edge rows use
+/// `bridgeOpenRows` (proximity pairing, fan on unequal length, no wrap).
+///
+/// TASK 1903 Stage D3 — THIS is the tool-side boundary that opens the batch.
+/// The two bridge kernels take `ref MeshEditBatch` now, so a bare `Mesh`
+/// receiver is a compile error (plan §4.1); opening it here rather than in each
+/// of `applyBridgeOp`'s four callers is what keeps the interactive path, the
+/// headless path and the two unittest paths on one spelling.
+///
+/// UNRECORDED, and on the preview path that is a HARD requirement rather than a
+/// track-1 economy (plan §9). `rebuildBridgePreview` calls this once per
+/// parameter change, i.e. once per drag frame: a RECORDING batch would build
+/// and throw away a full op-log at 60 Hz, and `changeBus.opLogEntriesRecorded`
+/// would tick for an edit the user has not committed. An unrecorded frame keeps
+/// every tracker hook on its existing `if (editRecorder_ is null) return;`
+/// first line — one predictable branch, exactly today's batchless cost — while
+/// still collapsing the kernel's internal commits into ONE stamp, ONE hidden
+/// derive and ONE delivery per frame. `close()` returns `MeshEditDelta.init`
+/// and there is nothing to read. The commit path is the same shape: `BridgeTool`
+/// undoes through the generic `MeshSessionEdit` snapshot pair, so nothing here
+/// reads an op-log yet either.
+///
+/// The batch is scoped to the KERNEL CALL alone, not to the whole function: the
+/// Remove-Polygons `deleteFacesByMask` and the `buildLoops` below are unchanged
+/// by this stage and folding them in would be a second edit hiding inside a
+/// move.
+BridgeApplyResult applyBridgeOp(ref Mesh m, const(uint)[] loopA, const(uint)[] loopB,
+                                const(uint)[] capFaces, in BridgeParams p,
+                                bool openRows = false) {
+    BridgeApplyResult r;
+    if (openRows && p.twist != 0.0f) {
+        r.failure = BridgeApplyFailure.openRowsTwistUnsupported;
+        return r;
+    }
+    auto op = BridgeOpenParams(p.segments,cast(int)p.mode,p.tension,p.connect,p.autoStep,p.flip);
+    if (openRows) r.effectiveSegments = openBridgeSegments(m,loopA,loopB,op);
+    uint spans = (p.segments < 1) ? 1u : cast(uint)p.segments;
+    {
+        // No `scope(failure)`: `MeshEditBatch.~this` pops the frame during
+        // unwinding without asserting and ticks `changeBus.batchLeaks` (§2.2c).
+        auto ed = MeshEditBatch.unrecorded(m, kBridgeEditScope);
+        r.added = openRows
+            ? ed.bridgeOpenRows(loopA, loopB, op)
+            : ed.bridgeLoopsSpans(loopA, loopB, spans, p.twist, p.flip);
+        ed.close();
+    }
+    if (r.added == 0) return r;
+
+    if (p.remove && !openRows && capFaces.length > 0) {
+        auto mask = new bool[](m.faces.length);
+        bool any = false;
+        foreach (fi; capFaces)
+            if (fi < mask.length) { mask[fi] = true; any = true; }
+        if (any && m.deleteFacesByMask(mask) > 0)
+            r.removed = true;
+    }
+    if (!r.removed) m.buildLoops();
+    return r;
+}
+
+/// Non-cumulative preview rebuild (mirrors tools/mirror.d's
+/// rebuildMirrorPreview / tools/tack.d's rebuildTackPreview): restores
+/// `previewMesh` fully from `baseSnap` EVERY call, then re-applies the
+/// bridge fresh — so N successive evaluate() calls never accumulate new
+/// rings on top of each other.
+BridgeApplyResult rebuildBridgePreview(const ref MeshSnapshot baseSnap, ref Mesh previewMesh,
+                          in uint[] loopA, in uint[] loopB, in uint[] capFaces,
+                          in BridgeParams params_, bool openRows = false) {
+    baseSnap.restore(previewMesh);
+    if (loopA.length == 0 || loopB.length == 0) return BridgeApplyResult.init;
+    return applyBridgeOp(previewMesh, loopA, loopB, capFaces, params_, openRows);
+}
+
+// ---------------------------------------------------------------------------
+// BridgeTool — interactive multi-span/twist bridge (factory id
+// `mesh.bridgeTool`). A generator tool (Mirror/Tack precedent, project
+// memory project_radial_sweep_tool.md): own preview Mesh/GpuMesh that is
+// NEVER the document mesh during interaction; committed once in
+// deactivate() via the generic MeshSessionEdit snapshot-diff undo path.
+//
+// No gizmo/handle (task 0357 toolcard: the reference tool is ACTR-class,
+// same family as edge.slide/sweep — a click-drag single-numeric-value
+// generator, not a T/R/S transform-gizmo tool; the captured viewport
+// screenshot shows no handle drawn on activation). The boundary selection
+// (2 polygons, or 2 disjoint closed edge cycles) is picked BEFORE
+// activation and frozen at activate() time — Bridge does not support
+// re-picking mid-session, matching the reference tool's own documented
+// gesture ("select at least two polygons/edges ... clicking the tool icon
+// activates the tool").
+//
+// Interaction: any LMB click+drag in the viewport (no handle to hit)
+// adjusts Segments, mapping horizontal pixel delta to an integer span
+// count; Other attrs are edited through the ordinary properties panel.
+// ---------------------------------------------------------------------------
+class BridgeTool : Tool, PreparedToolDoorClient, PreparedToolParamDoorClient {
+    override ToolSessionPolicy sessionPolicy() const nothrow @nogc {
+        static immutable ToolSessionPolicy policy = {
+            activationRow: true, sessionSteps: true, historyRecordedSteps: true,
+            postmodeStartsOnPress: true };
+        return policy;
+    }
+private:
+    Mesh* delegate() nothrow @nogc meshSrc_;
+    @property Mesh* mesh() const nothrow @nogc { return meshSrc_(); }
+    GpuMesh*         gpu;
+    LitShader        litShader;
+    EditMode*        editModePtr;
+
+
+    BridgeParams params_;
+
+    // Selection frozen at activate() (fold #1 mirror: applyHeadless()
+    // re-derives its OWN copy via resolveBridgeSelection rather than
+    // reading these fields — a throwaway ToolHeadlessCommand instance
+    // never calls activate()).
+    bool   valid_;
+    bool   polygonMode_;
+    bool   openRows_;      // task 0395: true when both selected chains are OPEN rows
+    uint[] loopA_, loopB_, capFaces_;
+
+    MeshSnapshot baseSnap_;
+    Mesh         previewMesh_;
+    GpuMesh      previewGpu_;
+
+    // Dirty guard (mirrors Mirror's havePreviewCache/cached* fields):
+    // evaluate() is called every frame the Tool Properties panel is open,
+    // and on every drag-motion event — without this, a full snapshot-
+    // restore + kernel run + buildLoops + GPU upload would happen every
+    // such call even when nothing changed.
+    bool  havePreviewCache;
+    int   cachedSegments;
+    float cachedTwist;
+    bool  cachedRemove;
+    bool  cachedFlip;
+    BridgeMode cachedMode;
+    float cachedTension;
+    bool cachedConnect, cachedAutoStep;
+    uint lastEffectiveSegments_;
+    BridgeApplyFailure headlessFailure_;
+
+    // Commit guard: true once the user has actually interacted (click/drag or
+    // panel/headless attr write) — mirrors Mirror's `engaged`.
+    bool engaged;
+
+    // ----- THE SECOND HALF OF THE COMMIT GUARD: evidence about the MESH ----
+    //
+    // `engaged` and `valid_` are both GESTURE state, and neither is
+    // invalidated when the DOCUMENT changes underneath a live tool. Task 2880
+    // (backlog 2760) measured what that costs here: engage a haul on two caps,
+    // then `POST /api/reset?empty=true`, and the process dies with
+    // `ArrayIndexError@source/mesh_ops/bridge.d(204)` — `deactivate()` fed
+    // `loopA_`/`loopB_`, frozen at `activate()`, to a kernel that indexes them
+    // blind, over a mesh that had just been emptied.
+    //
+    // The general argument — why an address term and a bus epoch are BOTH
+    // blind on that path, and why the counter is `topologyVersion` rather than
+    // `mutationVersion` — is on `SessionMeshKey`, with the measurements. What
+    // is specific here: this tool never writes the document mesh between
+    // `activate()` / `resyncSession()` and `deactivate()` (it edits its own
+    // `previewMesh_`), so an unchanged document IS the definition of a legal
+    // commit, and no term of the key can fire on one.
+    SessionMeshKey sessionKey_;
+
+    // Drag state (Segments-only; no handle to hit-test against).
+    bool dragging_;
+    int  dragStartX_;
+    int  dragStartSegments_;
+
+public:
+    this(Mesh* delegate() nothrow @nogc meshSrc, GpuMesh* gpu, LitShader litShader,
+         EditMode* editModePtr) {
+        this.meshSrc_     = meshSrc;
+        this.gpu          = gpu;
+        this.litShader    = litShader;
+        this.editModePtr  = editModePtr;
+        bindModelPreview(&queryModelPreview);
+    }
+
+    void destroy() {}
+
+    override string name() const { return "Bridge"; }
+
+    override ulong previewUploadVersion() const nothrow @nogc {
+        return engaged ? previewGpu_.uploadVersion : 0;
+    }
+
+    override EditMode[] supportedModes() const {
+        return [EditMode.Edges, EditMode.Polygons];
+    }
+
+    private EditMode editModeVal() const nothrow @nogc {
+        return (editModePtr is null) ? EditMode.Polygons : *editModePtr;
+    }
+
+    /// Freeze the identity of the mesh the frozen loops index. Called from the
+    /// two — and only two — places that (re-)derive those loops.
+    private void stampSessionMesh() { sessionKey_.stamp(*mesh); }
+
+    /// Is the document mesh still the one this gesture was armed over? See
+    /// `SessionMeshKey` for what the three terms are and why each is needed.
+    private bool sessionMeshIntact() const { return sessionKey_.matches(*mesh); }
+
+    override void activate() {
+        if (meshSrc_ is null) return;
+        auto resolved = resolveBridgeSelection(*mesh, editModeVal());
+        valid_       = resolved.valid;
+        polygonMode_ = resolved.polygonMode;
+        openRows_    = resolved.openRows;
+        loopA_       = resolved.loopA;
+        loopB_       = resolved.loopB;
+        capFaces_    = resolved.capFaces;
+
+        baseSnap_        = MeshSnapshot.capture(*mesh);
+        stampSessionMesh();
+        engaged          = false;
+        dragging_        = false;
+        havePreviewCache = false;
+        lastEffectiveSegments_ = 0;
+        previewGpu_.init();
+        if (valid_) evaluate();
+    }
+
+    final PreparedBridgeActivationImage buildPreparedActivation(out Mesh* source) {
+        PreparedBridgeActivationImage image;
+        if (meshSrc_ is null) return image;
+        source = meshSrc_();
+        if (source is null) return image;
+        image.mode = editModeVal();
+        auto resolved = resolveBridgeSelection(*source, image.mode);
+        image.selectionValid = resolved.valid;
+        image.polygonMode = resolved.polygonMode;
+        image.openRows = resolved.openRows;
+        image.loopA = resolved.loopA; image.loopB = resolved.loopB;
+        image.capFaces = resolved.capFaces;
+        image.baseline = MeshSnapshot.capture(*source);
+        image.sessionKey.stamp(*source);
+        if (image.selectionValid)
+            image.effectiveSegments = rebuildBridgePreview(image.baseline, image.preview, image.loopA,
+                image.loopB, image.capFaces, params_, image.openRows).effectiveSegments;
+        image.valid = true;
+        return image;
+    }
+    final Mesh* preparedActivationMesh() nothrow @nogc {
+        return meshSrc_ is null ? null : meshSrc_();
+    }
+    final EditMode preparedActivationMode() const nothrow @nogc {
+        return editModeVal();
+    }
+    final GpuMesh* preparedPreviewGpu() nothrow @nogc { return &previewGpu_; }
+    final void installPreparedActivation(ref PreparedBridgeActivationImage image)
+            nothrow @nogc {
+        valid_ = image.selectionValid; polygonMode_ = image.polygonMode;
+        openRows_ = image.openRows;
+        loopA_ = image.loopA; image.loopA = null;
+        loopB_ = image.loopB; image.loopB = null;
+        capFaces_ = image.capFaces; image.capFaces = null;
+        image.baseline.moveInto(baseSnap_);
+        sessionKey_ = image.sessionKey; image.sessionKey = SessionMeshKey.init;
+        previewMesh_ = image.preview; image.preview = Mesh.init;
+        engaged = false; dragging_ = false;
+        havePreviewCache = valid_;
+        lastEffectiveSegments_ = image.effectiveSegments;
+        if (valid_) {
+            cachedSegments = params_.segments; cachedTwist = params_.twist;
+            cachedRemove = params_.remove; cachedFlip = params_.flip;
+            cachedMode = params_.mode; cachedTension = params_.tension;
+            cachedConnect = params_.connect; cachedAutoStep = params_.autoStep;
+        }
+        image.valid = false;
+    }
+    final PreparedSessionActivateEffect prepareActivate(
+            PreparedRecordContext context, GpuCreateOwner createOwner,
+            GpuCreateUploadOwner createUploadOwner) {
+        if (context is null) return PreparedSessionActivateEffect(
+            preparedToolStateOwner, PreparedActivateKind.Bridge, false);
+        scope(failure) { context.discard(); }
+        auto stateOwner = PreparedBridgeActivationOwner.prepare(this);
+        bool ok = stateOwner !is null && context.prepareBridgeActivation(stateOwner);
+        if (ok && stateOwner.selectionValid) {
+            ok = createUploadOwner !is null && createUploadOwner.replacesLikeLegacyInit() &&
+                createUploadOwner.owns(&previewGpu_) &&
+                context.prepareCreateUpload(createUploadOwner, stateOwner.previewMesh);
+        } else if (ok) {
+            ok = createOwner !is null && createOwner.replacesLikeLegacyInit() &&
+                createOwner.owns(&previewGpu_) && context.prepareCreate(createOwner);
+        }
+        ok = ok && context.markNoHistoryInstall();
+        if (!ok) { context.discard(); }
+        return PreparedSessionActivateEffect(preparedToolStateOwner,
+            PreparedActivateKind.Bridge, ok);
+    }
+    override bool prepareDoorActivate(PreparedRecordContext context, Layer,
+            ulong threadIdentity, ulong contextIdentity) {
+        auto create = new GpuCreateOwner(&previewGpu_, threadIdentity,
+            contextIdentity, true);
+        auto upload = new GpuCreateUploadOwner(&previewGpu_, threadIdentity,
+            contextIdentity, true);
+        return prepareActivate(context, create, upload).accepted;
+    }
+
+    version(unittest) final void seedPreparedActivationForTest() {
+        valid_ = polygonMode_ = openRows_ = engaged = dragging_ =
+            havePreviewCache = true;
+        loopA_ = [91u]; loopB_ = [92u]; capFaces_ = [93u];
+        baseSnap_ = MeshSnapshot.init; previewMesh_ = Mesh.init;
+    }
+    version(unittest) final bool preparedActivationInstalledForTest(bool expectedValid)
+            const {
+        return valid_ == expectedValid && !engaged && !dragging_ &&
+            havePreviewCache == expectedValid && baseSnap_.filled &&
+            (expectedValid ? loopA_.length > 0 && loopB_.length > 0 :
+                loopA_.length == 0 && loopB_.length == 0);
+    }
+
+    final PreparedBridgeDeactivateImage buildPreparedDeactivateState() const {
+        PreparedBridgeDeactivateImage image;
+        image.valid = true; image.expectedEngaged = engaged;
+        image.expectedValid = valid_; image.expectedPreviewCache = havePreviewCache;
+        image.openRows = openRows_; image.params = params_; image.sessionKey = sessionKey_;
+        image.effectiveSegments = lastEffectiveSegments_;
+        image.loopA = loopA_.dup; image.loopB = loopB_.dup;
+        image.capFaces = capFaces_.dup; return image;
+    }
+    final bool preparedDeactivateStateMatches(
+            in PreparedBridgeDeactivateImage image) const nothrow @nogc {
+        return image.valid && engaged == image.expectedEngaged &&
+            valid_ == image.expectedValid &&
+            havePreviewCache == image.expectedPreviewCache &&
+            openRows_ == image.openRows && params_ == image.params &&
+            sessionKey_ == image.sessionKey && loopA_ == image.loopA &&
+            loopB_ == image.loopB && capFaces_ == image.capFaces;
+    }
+    final void installPreparedDeactivateState(
+            ref PreparedBridgeDeactivateImage image) nothrow @nogc {
+        lastEffectiveSegments_ = image.effectiveSegments;
+        engaged = false; havePreviewCache = false; image.clear();
+    }
+    final bool ownsPreparedMainUpload(GpuUploadOwner owner) nothrow @nogc {
+        return owner !is null && owner.owns(gpu);
+    }
+    final bool ownsPreparedPreviewDestroy(GpuResourceOwner owner) nothrow @nogc {
+        return owner !is null && owner.owns(&previewGpu_);
+    }
+    private size_t buildPreparedDeactivateCandidate(
+            in PreparedBridgeDeactivateImage image, out Mesh candidate,
+            out MeshSnapshot pre, out uint deliveryFlags,
+            out uint deliveryDomains, out uint effectiveSegments) {
+        effectiveSegments = image.effectiveSegments;
+        if (!(image.expectedEngaged && image.expectedValid &&
+              image.sessionKey.matches(*mesh))) return 0;
+        pre = MeshSnapshot.capture(*mesh); pre.restore(candidate);
+        auto shadow = beginPreparedShadow(candidate);
+        auto result = applyBridgeOp(candidate, image.loopA, image.loopB,
+            image.capFaces, image.params, image.openRows);
+        effectiveSegments = result.effectiveSegments;
+        drainPreparedShadowDelivery(candidate, deliveryFlags, deliveryDomains);
+        shadow.close(); return result.added;
+    }
+    final PreparedDeactivateEffect prepareDeactivate(PreparedRecordContext context,
+            Layer layer, GpuUploadOwner mainUpload,
+            GpuResourceOwner previewDestroy) {
+        if (context is null) return PreparedDeactivateEffect(
+            preparedToolStateOwner, PreparedDeactivateKind.Bridge, false, false);
+        scope(failure) context.discard();
+        auto stateOwner = PreparedBridgeDeactivateOwner.prepare(this);
+        bool ok = stateOwner !is null && layer !is null &&
+            &layer.meshRef() is mesh && ownsPreparedPreviewDestroy(previewDestroy);
+        Mesh candidate; MeshSnapshot pre;
+        size_t inserted; uint deliveryFlags, deliveryDomains, effectiveSegments;
+        if (ok) inserted = buildPreparedDeactivateCandidate(stateOwner.image,
+            candidate, pre, deliveryFlags, deliveryDomains, effectiveSegments);
+        if (ok) ok = stateOwner.setEffectiveSegments(effectiveSegments);
+        if (ok && inserted > 0)
+            ok = ownsPreparedMainUpload(mainUpload) &&
+                context.prepareStampedMeshImage(layer, candidate,
+                    deliveryFlags, deliveryDomains) &&
+                context.prepareUpload(mainUpload, candidate);
+        if (ok) ok = context.prepareDestroy(previewDestroy);
+        bool historyPrepared;
+        if (ok && inserted > 0 && history !is null && gestureFactory !is null) {
+            auto cmd = cast(MeshSessionEdit)gestureFactory();
+            if (cmd !is null) {
+                cmd.setSnapshots(pre, MeshSnapshot.capture(candidate), "Bridge");
+                historyPrepared = context.prepare(cmd,
+                    PreparedHistoryKind.Plain).accepted;
+                if (historyPrepared) sessionTagPreparedCompleted(cmd);
+                ok = historyPrepared;
+            } else ok = context.prepareGestureCarrierMismatch();
+        }
+        if (ok) ok = historyPrepared ? context.markHistoryInstall()
+                                     : context.markNoHistoryInstall();
+        if (ok) ok = context.prepareBridgeDeactivate(stateOwner);
+        if (!ok) context.discard();
+        return PreparedDeactivateEffect(preparedToolStateOwner,
+            PreparedDeactivateKind.Bridge, historyPrepared, ok);
+    }
+    override bool prepareDoorDeactivate(PreparedRecordContext context, Layer layer,
+            ulong threadIdentity, ulong contextIdentity) {
+        auto upload = new GpuUploadOwner(gpu, threadIdentity, contextIdentity);
+        auto destroy = new GpuResourceOwner(&previewGpu_, threadIdentity,
+            contextIdentity);
+        return prepareDeactivate(context, layer, upload, destroy).resourceAccepted;
+    }
+
+    version(unittest) final void seedPreparedDeactivateStateForTest()
+            nothrow @nogc {
+        engaged = valid_ = havePreviewCache = true;
+    }
+    version(unittest) final bool seedPreparedDeactivateCommitForTest() {
+        auto resolved = resolveBridgeSelection(*mesh, editModeVal());
+        valid_ = resolved.valid; polygonMode_ = resolved.polygonMode;
+        openRows_ = resolved.openRows; loopA_ = resolved.loopA;
+        loopB_ = resolved.loopB; capFaces_ = resolved.capFaces;
+        baseSnap_ = MeshSnapshot.capture(*mesh); stampSessionMesh();
+        engaged = havePreviewCache = true; return valid_;
+    }
+    version(unittest) final bool preparedDeactivateStateInstalledForTest()
+            const nothrow @nogc {
+        return !engaged && !havePreviewCache;
+    }
+    version(unittest) final void mutatePreparedDeactivateForTest()
+            nothrow @nogc {
+        ++params_.segments;
+    }
+
+    override void deactivate() {
+        // THREE terms, and the third is the one this tool was missing: the
+        // first two describe the GESTURE, `sessionMeshIntact()` describes the
+        // MESH. Without it a document change under a live gesture (reset, File
+        // → New, load, layer switch) reached the kernel with stale indices and
+        // killed the process — see the `sessionKey_` field note. The refusal is
+        // SILENT, matching `LoopSliceTool.commitEdit`'s own swap guard: a throw
+        // here would fail the `/api/reset` that legitimately caused it.
+        bool willCommit = engaged && valid_ && sessionMeshIntact();
+        MeshSnapshot pre;
+        if (willCommit) pre = MeshSnapshot.capture(*mesh);
+
+        size_t inserted = 0;
+        if (willCommit) {
+            auto res = applyBridgeOp(*mesh, loopA_, loopB_, capFaces_, params_, openRows_);
+            lastEffectiveSegments_ = res.effectiveSegments;
+            inserted = res.added;
+            if (inserted > 0) gpu.upload(*mesh);
+        }
+
+        previewGpu_.destroy();
+        if (willCommit && inserted > 0) commitBridgeEdit(pre);
+        engaged          = false;
+        havePreviewCache = false;
+    }
+
+    // ----- History-coordination hooks (mirror Mirror's, tools/mirror.d) ----
+
+    public override bool hasUncommittedEdit() const { return engaged; }
+
+    public override void cancelUncommittedEdit() {
+        // The document mesh was never touched during interaction (own
+        // preview mesh) — nothing to revert, just drop the guard.
+        engaged = false;
+    }
+
+    public override void resyncSession() {
+        // External undo/redo moved geometry beneath the tool — re-resolve
+        // the selection against the now-current mesh and force the
+        // preview to rebuild from the new baseline.
+        auto resolved = resolveBridgeSelection(*mesh, editModeVal());
+        valid_       = resolved.valid;
+        polygonMode_ = resolved.polygonMode;
+        openRows_    = resolved.openRows;
+        loopA_       = resolved.loopA;
+        loopB_       = resolved.loopB;
+        capFaces_    = resolved.capFaces;
+        baseSnap_        = MeshSnapshot.capture(*mesh);
+        // The loops above were re-derived against the now-current mesh, so the
+        // session identity is re-frozen with them. Without this the guard in
+        // `deactivate()` would refuse a commit that undo/redo had legitimately
+        // re-baselined — the "reddens on correct code" half of the contract.
+        stampSessionMesh();
+        havePreviewCache = false;
+        if (valid_) evaluate();
+    }
+
+    private void commitBridgeEdit(MeshSnapshot pre) {
+        if (history is null || gestureFactory is null) return;
+        auto cmd = cast(MeshSessionEdit) gestureFactory();
+        if (cmd is null) { noteGestureCarrierMismatch(); return; }
+        auto post = MeshSnapshot.capture(*mesh);
+        cmd.setSnapshots(pre, post, "Bridge");
+        recordGestureEdit(cmd, GestureRecordMode.Plain);
+    }
+
+    // ----- Params / panel ----------------------------------------------
+
+    override Param[] params() {
+        return [
+            Param.int_("segments", "Segments", &params_.segments, 1)
+                .min(1).max(64).enforceBounds(),
+            Param.float_("twist", "Twist", &params_.twist, 0.0f)
+                .min(-16.0f).max(16.0f).enforceBounds(),
+            Param.intEnum_("mode", "Mode", cast(int*)&params_.mode, [IntEnumEntry(0,"linear","Linear"),IntEnumEntry(1,"curve","Curve"),IntEnumEntry(2,"smooth","Smooth")], 1),
+            Param.float_("tension", "Tension", &params_.tension, 1.0f),
+            Param.bool_("connect", "Auto Connection", &params_.connect, true),
+            Param.bool_("remove", "Remove Polygons", &params_.remove, true),
+            Param.bool_("flip", "Flip Polygons", &params_.flip, false),
+            Param.bool_("orient", "Orient", &params_.orient, false),
+            Param.intEnum_("uvs", "UVs", cast(int*)&params_.uvs,
+                [IntEnumEntry(0,"none","None"), IntEnumEntry(1,"u","U"),
+                 IntEnumEntry(2,"v","V"), IntEnumEntry(3,"connected","Connected")], 0),
+            Param.bool_("autoStep", "Automatic", &params_.autoStep, true),
+            Param.int_("steps", "Steps", &params_.steps, 10).min(1).enforceBounds(),
+            Param.bool_("continuous", "Continuous", &params_.continuous, true),
+        ];
+    }
+
+    override void onParamChanged(string name) {
+        normalizeUvs(name);
+        auto prepared = prepareParamState(name);
+        BridgePreparedState handle;
+        if (validatePreparedState(prepared, handle)) installLegacyPreparedState(handle);
+    }
+
+    override bool prepareDoorParamChanged(string name, PreparedRecordContext,
+            Layer, ulong, ulong) {
+        normalizeUvs(name);
+        auto prepared = prepareParamState(name);
+        BridgePreparedState handle;
+        if (!validatePreparedState(prepared, handle)) return false;
+        installLegacyPreparedState(handle);
+        return true;
+    }
+
+private:
+    void normalizeUvs(string name) nothrow @nogc {
+        if (name == "uvs" && params_.uvs == BridgeUvs.connected)
+            params_.uvs = BridgeUvs.none;
+    }
+    PreparedToolStateDelta prepareParamState(string) const nothrow @nogc {
+        return PreparedToolStateDelta.boolean(preparedToolStateOwner, true);
+    }
+    bool validatePreparedState(ref PreparedToolStateDelta prepared,
+                               out BridgePreparedState handle) nothrow @nogc {
+        if (prepared.owner != preparedToolStateOwner ||
+            prepared.kind != PreparedToolStateKind.Bool) return false;
+        handle = BridgePreparedState(prepared.boolValue, true);
+        return true;
+    }
+    void installLegacyPreparedState(ref BridgePreparedState handle) nothrow @nogc {
+        if (!handle.consumable) return;
+        handle.consumable = false;
+        engaged = handle.engaged;
+    }
+public:
+
+    // ----- Headless one-shot (fold #1: builds its OWN selection from the
+    // live mesh — ToolHeadlessCommand never calls activate()). -----------
+
+    string headlessRefusalReason() const {
+        return headlessFailure_ == BridgeApplyFailure.openRowsTwistUnsupported
+            ? "Twist on open rows is not supported." : "";
+    }
+
+    override bool applyHeadless() {
+        headlessFailure_ = BridgeApplyFailure.none;
+        auto resolved = resolveBridgeSelection(*mesh, editModeVal());
+        if (!resolved.valid) return false;
+        auto res = applyBridgeOp(*mesh, resolved.loopA, resolved.loopB,
+                                 resolved.capFaces, params_, resolved.openRows);
+        headlessFailure_ = res.failure;
+        if (res.added == 0) return false;
+        gpu.upload(*mesh);
+        return true;
+    }
+
+    // ----- Test-introspection (task 0234 pattern, GET /api/tool/state) ----
+
+    public override JSONValue toolStateJson() const {
+        auto root = JSONValue.emptyObject;
+        root["tool"]        = JSONValue("mesh.bridgeTool");
+        root["valid"]       = JSONValue(valid_);
+        root["polygonMode"] = JSONValue(polygonMode_);
+        root["openRows"]    = JSONValue(openRows_);
+        root["engaged"]     = JSONValue(engaged);
+        root["segments"]    = JSONValue(params_.segments);
+        root["twist"]       = JSONValue(params_.twist);
+        root["remove"]      = JSONValue(params_.remove);
+        root["flip"]        = JSONValue(params_.flip);
+        root["mode"] = JSONValue(cast(int)params_.mode);
+        root["tension"] = JSONValue(params_.tension);
+        root["connect"] = JSONValue(params_.connect);
+        root["orient"] = JSONValue(params_.orient);
+        root["uvs"] = JSONValue(cast(int)(params_.uvs == BridgeUvs.connected
+            ? BridgeUvs.none : params_.uvs));
+        root["autoStep"] = JSONValue(params_.autoStep);
+        root["steps"] = JSONValue(params_.steps);
+        root["continuous"] = JSONValue(params_.continuous);
+        root["effectiveSegments"] = JSONValue(lastEffectiveSegments_);
+        root["twistRefused"] = JSONValue(openRows_ && params_.twist != 0.0f);
+        return root;
+    }
+
+    // ----- Live preview ---------------------------------------------------
+
+    private void rebuildPreviewMesh() {
+        lastEffectiveSegments_ = rebuildBridgePreview(baseSnap_, previewMesh_, loopA_, loopB_, capFaces_, params_, openRows_).effectiveSegments;
+    }
+
+    override void evaluate() {
+        if (!valid_) return;
+        if (havePreviewCache
+            && cachedSegments == params_.segments
+            && cachedTwist    == params_.twist
+            && cachedRemove   == params_.remove
+            && cachedFlip     == params_.flip
+            && cachedMode     == params_.mode
+            && cachedTension  == params_.tension
+            && cachedConnect  == params_.connect
+            && cachedAutoStep == params_.autoStep)
+            return;
+
+        rebuildPreviewMesh();
+        previewGpu_.upload(previewMesh_);
+
+        cachedSegments   = params_.segments;
+        cachedTwist      = params_.twist;
+        cachedRemove     = params_.remove;
+        cachedFlip       = params_.flip;
+        cachedMode       = params_.mode;
+        cachedTension    = params_.tension;
+        cachedConnect    = params_.connect;
+        cachedAutoStep   = params_.autoStep;
+        havePreviewCache = true;
+    }
+
+    // Preparation retains the detached candidate; only engagement publishes it
+    // (20261690; doc/tasks/evidence/20261690-bridge-live-lifecycle/model.md).
+    private final bool queryModelPreview(out ModelPreviewView view) {
+        view = ModelPreviewView.init;
+        if (!engaged || !valid_ || !havePreviewCache || !sessionMeshIntact()) return false;
+        view = ModelPreviewView(&previewMesh_, &previewGpu_);
+        return true;
+    }
+
+    // ----- Segments drag (no handle — any LMB click+drag adjusts it) ------
+
+    override bool onMouseButtonDown(ref const SDL_MouseButtonEvent e, ref VectorStack vts) {
+        if (!valid_) return false;
+        if (e.button != SDL_BUTTON_LEFT) return false;
+        SDL_Keymod mods = SDL_GetModState();
+        if (mods & (KMOD_ALT | KMOD_SHIFT | KMOD_CTRL)) return false;   // reserved for camera
+
+        // Task 20261640: click engages the standing preview; later drags
+        // edit it until the existing explicit release/cancel closes it.
+        engaged            = true;
+        dragging_          = true;
+        dragStartX_        = e.x;
+        dragStartSegments_ = params_.segments;
+        return true;
+    }
+
+    override bool onMouseButtonUp(ref const SDL_MouseButtonEvent e, ref VectorStack vts) {
+        if (e.button != SDL_BUTTON_LEFT) return false;
+        if (!dragging_) return false;
+        dragging_ = false;
+        return true;
+    }
+
+    override bool onMouseMotion(ref const SDL_MouseMotionEvent e, ref VectorStack vts) {
+        if (!dragging_) return false;
+
+        enum int pxPerSegment = 20;   // drag sensitivity — unmeasured (see task 0357 toolcard:
+                                       // the reference drag-to-Segments pixel sensitivity was
+                                       // never RFB-captured, only the resulting Segments->
+                                       // geometry law was verified numerically via tool.attr)
+        int dx = e.x - dragStartX_;
+        int newSegments = dragStartSegments_ + (dx / pxPerSegment);
+        if (newSegments < 1)  newSegments = 1;
+        if (newSegments > 64) newSegments = 64;   // mirrors the Param's own UI max
+
+        if (newSegments != params_.segments) {
+            params_.segments = newSegments;
+            engaged = true;
+            evaluate();
+        }
+        return true;
+    }
+}
+
+unittest {
+    Mesh owned;
+    auto tool = new BridgeTool(() => &owned, null, LitShader.init, null);
+    tool.engaged = false;
+    auto prepared = tool.prepareParamState("segments");
+    assert(!tool.engaged);
+    assert(prepared.boolValue); // using the original false state instead REDs
+    BridgePreparedState handle;
+    assert(tool.validatePreparedState(prepared, handle));
+    tool.installLegacyPreparedState(handle);
+    assert(tool.engaged); // installed state == legacy assignment
+    tool.engaged = false;
+    tool.installLegacyPreparedState(handle);
+    assert(!tool.engaged);
+}
+
+static assert(!__traits(compiles, { BridgePreparedState a; BridgePreparedState b = a; }));
+
+

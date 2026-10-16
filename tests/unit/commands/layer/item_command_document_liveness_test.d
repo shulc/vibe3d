@@ -1,9 +1,9 @@
 module tests.unit.commands.layer.item_command_document_liveness_test;
 
-import command : Command;
-import command_args : bindArgs;
+import vibe3d.editing.commands.runtime.command : Command;
+import vibe3d.editing.commands.runtime.command_args : bindArgs;
 import vibe3d.documents.model.document : Document, ImageData, Layer;
-import item_command_registration : ItemLifecycleDoors, registerItemCommands;
+import vibe3d.apps.desktop.item_command_registration : ItemLifecycleDoors, registerItemCommands;
 import vibe3d.documents.model.item_kinds : ItemKind;
 import vibe3d.mesh.core.mesh : makeCube;
 import tests.unit.live_registration_rig : LiveRegistrationRig;

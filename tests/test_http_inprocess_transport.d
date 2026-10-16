@@ -6,7 +6,7 @@ module test_http_inprocess_transport;
 import http_client : ClientResponse, clearInProcessTransport, getJson,
     inProcessTransportInstalled, postJson, postRaw,
     postRawAllowingErrorStatus, setInProcessTransport;
-import http_server : HttpServer, InProcessHttpTransport;
+import vibe3d.runtime.http.http_server : HttpServer, InProcessHttpTransport;
 import std.algorithm : canFind;
 import std.json : JSONValue;
 

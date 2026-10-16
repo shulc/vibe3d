@@ -125,21 +125,21 @@ import vibe3d.mesh.ops.mesh_edge_slice : edgeIndexOfVerts, edgeSliceEx;
 import std.format : format;
 import std.json   : JSONValue, parseJSON;
 
-import command;
+import vibe3d.editing.commands.runtime.command;
 import vibe3d.mesh.core.mesh;
 import vibe3d.viewport.camera.view;
 import vibe3d.editing.contracts.editmode;
-import math      : Vec3;
-import http_json : meshPlanesJson, PlaneDumpMeta;
+import vibe3d.util.math.math      : Vec3;
+import vibe3d.runtime.application_core.http_json : meshPlanesJson, PlaneDumpMeta;
 
 import tests.unit.fixtures            : makeTaggedGridFull;
 import tests.unit.undo_parity_l0_test : ParityCell, comparePlanes, fixturePath,
                                         fixtureJson, setF, setI;
 
-import commands.mesh.axis_slice   : MeshAxisSlice, MeshJulienne;
-import commands.mesh.screen_slice : MeshScreenSlice;
-import commands.mesh.edge_slice   : MeshEdgeSlice;
-import commands.mesh.cut_         : MeshCut;
+import vibe3d.editing.commands.editor.commands.mesh.axis_slice   : MeshAxisSlice, MeshJulienne;
+import vibe3d.editing.commands.editor.commands.mesh.screen_slice : MeshScreenSlice;
+import vibe3d.editing.commands.editor.commands.mesh.edge_slice   : MeshEdgeSlice;
+import vibe3d.editing.commands.editor.commands.mesh.cut_         : MeshCut;
 
 enum string kL4Family = "slice_cut";
 enum string kL4Stand  = "makeTaggedGridFull(3)";

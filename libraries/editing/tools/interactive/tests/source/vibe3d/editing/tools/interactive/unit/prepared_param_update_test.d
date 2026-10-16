@@ -1,0 +1,578 @@
+module vibe3d.editing.tools.interactive.unit.prepared_param_update_test;
+import vibe3d.mesh.ops.mesh_ops.triangulate : triangulateFacesByMask;
+
+// Tasks 9426/9427: ONE `PreparedParamUpdateOwner` and ONE record-context slot
+// serve sixteen tools' parameter writes at arm time. Each row is a tool as DATA
+// (constructor, operand selection, seed, the stale write, the built probe, the
+// mesh measure, the written names and the effect kinds and install traces they
+// expect); every row runs the same cells: armed write, noop install, stale
+// image refused, refusals. Since task 9489 no image but Edge Slice's carries a
+// mesh: an armed write installs its state and leaves the mesh alone. The slot's
+// install-trace code is 43 for every row.
+
+import std.meta : AliasSeq;
+import vibe3d.editing.commands.runtime.command_history : CommandHistory;
+import vibe3d.documents.model.document : Layer;
+import vibe3d.editing.contracts.editmode : EditMode;
+import vibe3d.util.math.math : Vec3;
+import vibe3d.mesh.core.mesh : Mesh, makeCube;
+import vibe3d.viewport.gpu.mesh_gpu : GpuMesh, GpuUploadOwner;
+import vibe3d.editing.tools.interactive.prepared_param_update : PreparedParamUpdateOwner;
+import vibe3d.editing.tools.interactive.prepared_record_context : PreparedRecordContext;
+import vibe3d.editing.contracts.prepared_tool_effect;
+import vibe3d.editing.commands.runtime.record_observer_hub : RecordObserverHub;
+import vibe3d.viewport.gpu.shader : LitShader;
+import vibe3d.editing.tools.interactive.tools.alignment.array_tool : ArrayTool;
+import vibe3d.editing.tools.interactive.tools.deform.magnet : MagnetTool;
+import vibe3d.editing.tools.interactive.tools.deform.smooth_shift_tool : SmoothShiftTool;
+import vibe3d.editing.tools.interactive.tools.edit.edge_bevel : EdgeBevelTool;
+import vibe3d.editing.tools.interactive.tools.edit.edge_extend : EdgeExtendTool;
+import vibe3d.editing.tools.interactive.tools.edit.edge_extrude : EdgeExtrudeTool;
+import vibe3d.editing.tools.interactive.tools.edit.poly_bevel : PolyBevelTool;
+import vibe3d.editing.tools.interactive.tools.edit.poly_extrude : PolyExtrudeTool;
+import vibe3d.editing.tools.interactive.tools.edit.poly_inset_tool : PolyInsetTool, PreparedPolyInsetParamImage;
+import vibe3d.editing.tools.interactive.tools.edit.reduce : ReductionTool;
+import vibe3d.editing.tools.interactive.tools.edit.vert_merge_tool : VertexMergeTool;
+import vibe3d.editing.tools.interactive.tools.edit.vertex_bevel_tool : VertexBevelTool;
+import vibe3d.editing.tools.interactive.tools.edit.vertex_extrude_tool : VertexExtrudeTool;
+import vibe3d.editing.tools.interactive.tools.slice.edge_slice_tool : EdgeSliceTool;
+import vibe3d.editing.tools.interactive.tools.slice.loop_slice_tool : LoopSliceTool;
+import vibe3d.editing.tools.interactive.tools.slice.slice_tool : SliceTool;
+
+private size_t vertexCount(ref Mesh m) { return m.vertices.length; }
+private size_t faceCount(ref Mesh m) { return m.faces.length; }
+private void pickFace(ref Mesh m) { m.syncSelection(); m.selectFace(0); }
+private void pickEdge(ref Mesh m) { m.syncSelection(); m.selectEdge(0); }
+private void pickVertex(ref Mesh m) { m.syncSelection(); m.selectVertex(0); }
+private void pickTwoVertices(ref Mesh m) {
+    m.syncSelection(); m.selectVertex(0); m.selectVertex(1);
+}
+private void triangulateAll(ref Mesh m) {
+    auto mask = m.operandFaceMask(); triangulateFacesByMask(m, mask);
+}
+private void noOperand(ref Mesh) {}
+private Vec3 firstVertex(ref Mesh m) { return m.vertices[0]; }
+private Vec3[] positions(ref Mesh m) { return m.vertices.dup; }
+
+/// A row: `Tool`, `Kind`, `mode`, `operand` (the selection the session acts
+/// on), `seed`, `stale` (a write the frozen image must refuse), `built` (the
+/// session probe an install must not move), `count` (the mesh measure), the
+/// armed / noop names with their kinds and traces. A row's own declaration
+/// overrides any of these defaults.
+private mixin template Row(ToolT, KindT, EditMode m, alias pick, alias countFn) {
+    alias Tool = ToolT; alias Kind = KindT; enum mode = m;
+    static Tool make(Layer l, GpuMesh* g, EditMode* e) {
+        static if (__traits(compiles, new Tool(() => &l.meshRef(), g, e, LitShader.init)))
+            return new Tool(() => &l.meshRef(), g, e, LitShader.init);
+        else return new Tool(() => &l.meshRef(), g, e);
+    }
+    static void operand(ref Mesh mesh) { pick(mesh); }
+    static auto count(ref Mesh mesh) { return countFn(mesh); }
+    enum armedName = "", noopName = "";
+    enum armedKind = KindT.Noop, noopKind = KindT.Noop;
+    enum armedMovesMesh = false;
+    enum int[] armedTrace = [43,8], noopTrace = [43,8];
+}
+private mixin template LitRow(ToolT, KindT, EditMode m, alias pick, alias countFn,
+        float staleValue) {
+    mixin Row!(ToolT, KindT, m, pick, countFn);
+    static void stale(Tool t) { t.mutatePreparedParamForTest(staleValue); }
+    static void seed(Tool t, ref Mesh m, bool i, CommandHistory) {
+        t.seedPreparedParamForTest(m, i);
+    }
+}
+private struct PolyInsetRow {
+    mixin LitRow!(PolyInsetTool, PreparedPolyInsetParamKind, EditMode.Polygons,
+        pickFace, vertexCount, 17.0f);
+    static bool built(Tool t, ref Mesh) { return t.preparedParamBuiltForTest(); }
+}
+private struct PolyBevelRow {
+    mixin LitRow!(PolyBevelTool, PreparedPolyBevelParamKind, EditMode.Polygons,
+        pickFace, vertexCount, 17.0f);
+    static bool built(Tool t, ref Mesh) { return t.preparedParamInstalledForTest(); }
+}
+private struct PolyExtrudeRow {
+    mixin LitRow!(PolyExtrudeTool, PreparedPolyExtrudeParamKind, EditMode.Polygons,
+        pickFace, vertexCount, 17.0f);
+    static bool built(Tool t, ref Mesh) { return t.preparedParamBuiltForTest(); }
+}
+private struct EdgeBevelRow {
+    mixin LitRow!(EdgeBevelTool, PreparedEdgeBevelParamKind, EditMode.Edges,
+        pickEdge, vertexCount, 17.0f);
+    static bool built(Tool t, ref Mesh) { return t.preparedParamInstalledForTest(); }
+}
+private struct EdgeExtrudeRow {
+    mixin LitRow!(EdgeExtrudeTool, PreparedEdgeExtrudeParamKind, EditMode.Edges,
+        pickEdge, vertexCount, 17.0f);
+    static bool built(Tool t, ref Mesh) { return t.preparedParamBuiltForTest(); }
+}
+private struct ReductionRow {
+    mixin LitRow!(ReductionTool, PreparedReductionParamKind, EditMode.Polygons,
+        triangulateAll, faceCount, 0.25f);
+    static bool built(Tool t, ref Mesh) { return t.preparedParamBuiltForTest(); }
+}
+private struct SmoothShiftRow {
+    mixin LitRow!(SmoothShiftTool, PreparedSmoothShiftParamKind, EditMode.Polygons,
+        pickFace, faceCount, 17.0f);
+    static bool built(Tool t, ref Mesh) { return t.preparedParamBuiltForTest(); }
+}
+private struct VertexMergeRow {
+    mixin LitRow!(VertexMergeTool, PreparedVertexMergeParamKind, EditMode.Vertices,
+        pickTwoVertices, vertexCount, 0.25f);
+    static bool built(Tool t, ref Mesh) { return t.preparedParamBuiltForTest(); }
+}
+private struct VertexBevelRow {
+    mixin LitRow!(VertexBevelTool, PreparedVertexBevelParamKind, EditMode.Vertices,
+        pickVertex, vertexCount, 0.4f);
+    static bool built(Tool t, ref Mesh) { return t.preparedParamBuiltForTest(); }
+}
+private struct VertexExtrudeRow {
+    mixin LitRow!(VertexExtrudeTool, PreparedVertexExtrudeParamKind, EditMode.Vertices,
+        pickVertex, vertexCount, 0.4f);
+    static bool built(Tool t, ref Mesh) { return t.preparedParamBuiltForTest(); }
+}
+private struct ArrayRow {
+    mixin Row!(ArrayTool, PreparedArrayParamKind, EditMode.Polygons, pickFace,
+        faceCount);
+    static void stale(Tool t) { t.mutatePreparedParamForTest(17); }
+    static void seed(Tool t, ref Mesh m, bool i, CommandHistory) {
+        t.seedPreparedParamForTest(m, i, true, false);
+    }
+    static bool built(Tool t, ref Mesh) { return t.preparedParamStateForTest(true); }
+}
+// The rows whose image names an effect beyond Noop.
+private struct MagnetRow {
+    mixin LitRow!(MagnetTool, PreparedMagnetParamKind, EditMode.Vertices,
+        pickVertex, firstVertex, 17.0f);
+    enum armedName = "dist", noopName = "dist";
+    static bool built(Tool t, ref Mesh) { return t.preparedParamStateForTest(true); }
+}
+private struct SliceRow {
+    mixin Row!(SliceTool, PreparedSliceParamKind, EditMode.Polygons, noOperand,
+        faceCount);
+    enum armedName = "split", noopName = "axis", noopKind = Kind.AxisLatch;
+    static void stale(Tool t) { t.mutatePreparedParamForTest(); }
+    static void seed(Tool t, ref Mesh m, bool i, CommandHistory) {
+        t.seedPreparedParamForTest(m, i);
+    }
+    static bool built(Tool t, ref Mesh m) {
+        return t.preparedParamInstalledForTest(m) && !t.preparedAxisLockedForTest();
+    }
+}
+private struct EdgeSliceRow {   // a pointT write rebakes the armed chain (a mesh image)
+    mixin Row!(EdgeSliceTool, PreparedEdgeSliceParamKind, EditMode.Edges,
+        noOperand, positions);
+    enum armedName = "pointT", noopName = "activePoint";
+    enum armedKind = Kind.Preview, noopKind = Kind.ActivePoint;
+    enum armedMovesMesh = true;
+    enum int[] armedTrace = [3,4,2,1,43], noopTrace = [8,43];
+    static void stale(Tool t) { t.mutatePreparedParamForTest(); }
+    static void seed(Tool t, ref Mesh m, bool, CommandHistory h) {
+        if (h !is null) t.setGestureBindings(h, null);
+        t.seedPreparedParamForTest(m, true); t.setPreparedPointProxyForTest(0.4f);
+    }
+    static bool built(Tool t, ref Mesh) { return t.preparedParamStateForTest(true, 1); }
+}
+private struct LoopSliceRow {   // a position write moves the armed slice
+    mixin Row!(LoopSliceTool, PreparedLoopSliceParamKind, EditMode.Edges,
+        noOperand, positions);
+    enum armedName = "position", noopName = "count";
+    enum armedKind = Kind.State, noopKind = Kind.State;
+    static void stale(Tool t) { t.mutatePreparedDeactivateForTest(); }
+    static void seed(Tool t, ref Mesh m, bool i, CommandHistory h) {
+        if (h !is null) t.setGestureBindings(h, null);
+        if (i) { t.seedPreparedDeactivateForTest(m, true); t.setPreparedPositionForTest(0.3f); }
+        else t.setPreparedCountForTest(2);
+    }
+    static bool built(Tool t, ref Mesh) { return t.preparedParamStateForTest(true, 1); }
+}
+private struct EdgeExtendRow {
+    mixin LitRow!(EdgeExtendTool, PreparedEdgeExtendParamKind, EditMode.Edges,
+        pickEdge, vertexCount, 17.0f);
+    enum armedName = "inset", noopName = "rotateHandle";
+    enum noopKind = Kind.BankSwitch;
+    static bool built(Tool t, ref Mesh) { return t.preparedParamInstalledForTest(true, false); }
+}
+
+private alias kRows = AliasSeq!(ArrayRow, SmoothShiftRow, EdgeBevelRow,
+    EdgeExtrudeRow, PolyBevelRow, PolyExtrudeRow, PolyInsetRow, ReductionRow,
+    VertexMergeRow, VertexBevelRow, VertexExtrudeRow, MagnetRow, SliceRow,
+    EdgeSliceRow, LoopSliceRow, EdgeExtendRow);
+
+private struct Rig(R) {
+    Layer layer; GpuMesh gpu; EditMode mode = R.mode; R.Tool tool;
+    PreparedRecordContext context;
+    static Rig* make(bool operand, bool interactive, CommandHistory history = null) {
+        auto r = new Rig;
+        r.layer = new Layer; r.layer.meshRef() = makeCube();
+        if (operand) R.operand(r.layer.meshRef());
+        r.tool = R.make(r.layer, &r.gpu, &r.mode);
+        R.seed(r.tool, r.layer.meshRef(), interactive, history);
+        r.context = new PreparedRecordContext(history, new RecordObserverHub());
+        return r;
+    }
+}
+
+static assert(kRows.length == 16, "prepared param-update table lost a row");
+
+/// Every row runs every cell; a failed cell is collected, not thrown, so ONE
+/// red line names each row a shared-owner mutation breaks.
+unittest {
+    import std.array : join;
+    size_t rows; string[] bad;
+    void check(bool ok, string cell) { if (!ok) bad ~= cell; }
+    // A refused prepare discards its transaction: the context takes nothing
+    // more (and is never validated while still open).
+    bool closed(PreparedRecordContext c) { return !c.markNoHistoryInstall() && !c.validate(); }
+    static foreach (R; kRows) {{
+        enum name = R.Tool.stringof;
+        // Armed write: an interactive session's write installs the image's
+        // state once (a second install is a no-op) in trace order; only Edge
+        // Slice's image carries a mesh, every other row leaves mesh and session.
+        auto p = Rig!R.make(true, true, new CommandHistory());
+        p.context.setResourceIdentity(7, 11);
+        const before = R.count(p.layer.meshRef());
+        const builtBefore = R.built(p.tool, p.layer.meshRef());
+        auto effect = p.tool.prepareParamChanged(R.armedName, p.context, p.layer,
+            GpuUploadOwner.fakeForTest(&p.gpu));
+        check(effect.accepted && effect.kind == R.armedKind, name ~ ": armed write refused");
+        check(R.count(p.layer.meshRef()) == before, name ~ ": armed write wrote before install");
+        check(p.context.validate(), name ~ ": armed write did not validate");
+        p.context.install(); p.context.install();
+        static if (R.armedMovesMesh)
+            check(R.count(p.layer.meshRef()) != before && R.built(p.tool, p.layer.meshRef()),
+                name ~ ": preview install did not land");
+        else
+            check(R.count(p.layer.meshRef()) == before &&
+                R.built(p.tool, p.layer.meshRef()) == builtBefore,
+                name ~ ": an armed write moved the mesh or the session");
+        check(p.context.installTraceForTest() == R.armedTrace,
+            name ~ ": armed write install trace");
+
+        // Noop install: an edit on an unseeded tool enlists the slot and
+        // NoHistory only; its kind is the image's (Noop, or the tool's own effect).
+        auto n = Rig!R.make(false, false);
+        const cube = R.count(n.layer.meshRef());
+        auto noop = n.tool.prepareParamChanged(R.noopName, n.context, n.layer, null);
+        check(noop.accepted && noop.kind == R.noopKind && n.context.validate(),
+            name ~ ": noop refused");
+        n.context.install();
+        check(R.count(n.layer.meshRef()) == cube &&
+            n.context.installTraceForTest() == R.noopTrace, name ~ ": noop install");
+
+        // Stale image: a parameter write after prepare is refused at validate.
+        auto s = Rig!R.make(true, true);
+        s.context.setResourceIdentity(7, 11);
+        const staleBefore = R.count(s.layer.meshRef());
+        check(s.tool.prepareParamChanged(R.armedName, s.context, s.layer,
+            GpuUploadOwner.fakeForTest(&s.gpu)).accepted, name ~ ": stale prepare");
+        R.stale(s.tool);
+        check(!s.context.validate(), name ~ ": a stale image validated");
+        check(R.count(s.layer.meshRef()) == staleBefore, name ~ ": stale wrote");
+
+        // Moved mesh: a mesh write after prepare is refused at validate (the
+        // image's live witness), and the install never runs.
+        auto mv = Rig!R.make(true, true);
+        mv.context.setResourceIdentity(7, 11);
+        check(mv.tool.prepareParamChanged(R.armedName, mv.context, mv.layer,
+            GpuUploadOwner.fakeForTest(&mv.gpu)).accepted, name ~ ": moved-mesh prepare");
+        mv.layer.meshRef().vertices[0].x += 0.5f;
+        check(!mv.context.validate(), name ~ ": an image over a moved mesh validated");
+
+        // Refusals before the slot: no context, no layer, a layer whose mesh
+        // the tool does not edit.
+        auto q = Rig!R.make(true, true);
+        auto noContext = q.tool.prepareParamChanged(R.armedName, null, q.layer, null);
+        check(!noContext.accepted && noContext.kind == R.Kind.None,
+            name ~ ": accepted without a context");
+        auto foreignLayer = new Layer; foreignLayer.meshRef() = makeCube();
+        foreach (layer; [null, foreignLayer]) {
+            auto f = Rig!R.make(true, true);
+            f.context.setResourceIdentity(7, 11);
+            auto refused = f.tool.prepareParamChanged(R.armedName, f.context, layer,
+                GpuUploadOwner.fakeForTest(&f.gpu));
+            check(!refused.accepted && refused.kind == R.Kind.None && closed(f.context),
+                name ~ (layer is null ? ": accepted a null layer" : ": accepted a foreign layer"));
+        }
+        ++rows;
+    }}
+    assert(rows == 16, "prepared param-update table lost a row");
+    assert(bad.length == 0, bad.join("; "));
+}
+
+// The generic image clears all retained projection data and refuses a cleared
+// image even against its own default projection. Exact float bytes survive the
+// fold: signed zero differs, and identical NaN payloads compare equal.
+unittest {
+    import vibe3d.editing.tools.interactive.tools.deform.magnet : MagnetParamProjection, PreparedMagnetParamImage;
+    import vibe3d.editing.tools.interactive.tools.alignment.array_tool : ArrayParamProjection, PreparedArrayParamImage;
+    import core.stdc.string : memcpy;
+    auto layer = new Layer; layer.meshRef() = makeCube();
+    MagnetParamProjection projection;
+    projection.touchedIdx = [0u]; projection.touchedPrev = [Vec3(1, 2, 3)];
+    auto image = PreparedMagnetParamImage.prepare(projection, layer.meshRef());
+    assert(image.matches(projection, layer.meshRef()), "generic image lost its projection");
+    image.valid = false;
+    assert(!image.matches(projection, layer.meshRef()), "an invalid generic image matched");
+    image.valid = true;
+    image.clear();
+    assert(!image.valid && image.expected.touchedIdx.length == 0 &&
+        image.expected.touchedPrev.length == 0 && !image.expectedLive.filled,
+        "generic image retained projection data after clear");
+    assert(!image.matches(MagnetParamProjection.init, layer.meshRef()),
+        "a cleared generic image matched");
+
+    auto array = PreparedArrayParamImage.prepare(ArrayParamProjection.init, layer.meshRef());
+    array.expected.item = "retained";
+    array.clear();
+    assert(array.expected.item is null, "generic image retained the Array item");
+
+    MagnetParamProjection a, b;
+    a.dist = 0.0f; b.dist = -0.0f;
+    assert(a != b, "Magnet projection lost exact signed-zero equality");
+    uint payload = 0x7fc00001;
+    memcpy(&a.dist, &payload, float.sizeof); memcpy(&b.dist, &payload, float.sizeof);
+    assert(a == b, "Magnet projection rejected identical NaN bytes");
+    a.touchedIdx = [0u]; b.touchedIdx = [1u];
+    assert(a != b, "Magnet projection omitted touched indices");
+    uint[] sharedIndices = [0u, 1u];
+    a.touchedIdx = sharedIndices[0 .. 1]; b.touchedIdx = sharedIndices;
+    assert(a != b, "Magnet projection omitted touched-array length");
+    a.touchedIdx = [0u]; b.touchedIdx = [0u]; a.touchedPrev = [Vec3(1, 2, 3)];
+    b.touchedPrev = [Vec3(1, 2, 4)];
+    assert(a != b, "Magnet projection omitted touched positions");
+}
+
+// Array's active/built flags and Magnet's full drag state remain projected
+// data. Each changed member alone must refuse while the live mesh holds still.
+unittest {
+    auto ar = Rig!ArrayRow.make(true, true);
+    size_t flagCases;
+    foreach (isActive; [false, true]) foreach (isBuilt; [false, true]) {
+        ar.tool.seedPreparedParamForTest(ar.layer.meshRef(), true, isActive, isBuilt);
+        auto image = ar.tool.buildPreparedParamUpdate("", ar.layer.meshRef());
+        assert(image.expected.active == isActive && image.expected.built == isBuilt,
+            "Array projection omitted the actual session flags");
+        ++flagCases;
+    }
+    assert(flagCases == 4, "Array projection flag table lost a case");
+    static foreach (member; ["active", "built"]) {{
+        auto image = ar.tool.buildPreparedParamUpdate("", ar.layer.meshRef());
+        assert(ar.tool.preparedParamUpdateMatches(image, ar.layer.meshRef()));
+        __traits(getMember, image.expected, member) =
+            !__traits(getMember, image.expected, member);
+        assert(!ar.tool.preparedParamUpdateMatches(image, ar.layer.meshRef()),
+            "Array projection omitted " ~ member);
+    }}
+    auto mr = Rig!MagnetRow.make(true, true);
+    mr.gpu.suppressCageUpload = true;
+    mr.tool.notifyInteractiveParamChanged("dist");
+    auto first = mr.tool.buildPreparedParamUpdate("dist", mr.layer.meshRef());
+    auto second = mr.tool.buildPreparedParamUpdate("dist", mr.layer.meshRef());
+    assert(first.expected.sessionMatches, "Magnet projection omitted the live session key");
+    assert(first.expected.touchedIdx.length == 1 && first.expected.touchedPrev.length == 1,
+        "Magnet projection rig must touch the selected vertex");
+    assert(first.expected.touchedIdx.ptr !is second.expected.touchedIdx.ptr &&
+        first.expected.touchedPrev.ptr !is second.expected.touchedPrev.ptr,
+        "Magnet images must own separate touched-array copies");
+    static foreach (member; ["active", "dragging", "built", "sessionMatches",
+            "pickedVi", "center", "target", "strength", "dist", "touchedIdx", "touchedPrev"]) {{
+        auto image = mr.tool.buildPreparedParamUpdate("dist", mr.layer.meshRef());
+        assert(mr.tool.preparedParamUpdateMatches(image, mr.layer.meshRef()));
+        alias FieldT = typeof(__traits(getMember, image.expected, member));
+        static if (is(FieldT == bool))
+            __traits(getMember, image.expected, member) =
+                !__traits(getMember, image.expected, member);
+        else static if (is(FieldT == int) || is(FieldT == float))
+            __traits(getMember, image.expected, member) += 1;
+        else static if (is(FieldT == Vec3))
+            __traits(getMember, image.expected, member).x += 1;
+        else static if (member == "touchedIdx")
+            image.expected.touchedIdx = [image.expected.touchedIdx[0] + 1];
+        else
+            image.expected.touchedPrev = [image.expected.touchedPrev[0] + Vec3(1, 0, 0)];
+        assert(!mr.tool.preparedParamUpdateMatches(image, mr.layer.meshRef()),
+            "Magnet projection omitted " ~ member);
+    }}
+}
+
+// Edge Slice is the one row whose armed write carries a mesh image (its chain
+// re-bake), so its GPU upload refuses a foreign or a missing upload owner.
+unittest {
+    alias R = EdgeSliceRow;
+    auto w = Rig!R.make(true, true);
+    w.context.setResourceIdentity(7, 11);
+    const before = R.count(w.layer.meshRef());
+    GpuMesh foreignGpu;
+    assert(!w.tool.prepareParamChanged(R.armedName, w.context, w.layer,
+        GpuUploadOwner.fakeForTest(&foreignGpu)).accepted &&
+        !w.context.markNoHistoryInstall() && !w.context.validate() &&
+        R.count(w.layer.meshRef()) == before, "Edge Slice: foreign GPU accepted");
+    auto q = Rig!R.make(true, true);
+    q.context.setResourceIdentity(7, 11);
+    assert(!q.tool.prepareParamChanged(R.armedName, q.context, q.layer, null).accepted &&
+        !q.context.markNoHistoryInstall() && !q.context.validate(),
+        "Edge Slice: a mesh image accepted without an upload owner");
+}
+
+
+// Polygon Bevel (slice M3b): the session image beyond the haul is in the
+// projection, so an `applied` / `op` raw write between prepare and install
+// is a mismatch.
+unittest {
+    foreach (name; ["applied", "op"]) {
+        auto r = Rig!PolyBevelRow.make(true, true);
+        r.context.setResourceIdentity(7, 11);
+        assert(r.tool.prepareParamChanged("", r.context, r.layer,
+            GpuUploadOwner.fakeForTest(&r.gpu)).accepted);
+        foreach (ref p; r.tool.params()) if (p.name == name) {
+            if (name == "applied") *p.bptr = false; else *p.iptr = 1;
+        }
+        assert(!r.context.validate(),
+            "M3b: a prepared bevel update validated over a changed " ~ name);
+    }
+}
+
+// Polygon Extrude: every shift axis and the Extent frame are in the projection.
+unittest {
+    void setShift(PolyExtrudeTool t, string name, float value) {
+        bool found;
+        foreach (ref p; t.params()) if (p.name == name) { *p.fptr = value; found = true; }
+        assert(found, "Polygon parameter list lost " ~ name);
+    }
+    auto f = Rig!PolyExtrudeRow.make(true, true);
+    assert(f.tool.prepareParamChanged("", f.context, f.layer, null).accepted);
+    f.tool.mutatePreparedFrameForTest(Vec3(0, 1, 0));
+    assert(!f.context.validate() && f.layer.meshRef().vertices.length == 8,
+        "prepared Polygon projection omitted its frozen Extent frame");
+
+    foreach (shiftName; ["shiftX", "shiftY", "shiftZ"]) {
+        auto s = Rig!PolyExtrudeRow.make(true, true);
+        assert(s.tool.prepareParamChanged("", s.context, s.layer, null).accepted);
+        setShift(s.tool, shiftName, 0.25f);
+        assert(!s.context.validate() && s.layer.meshRef().vertices.length == 8,
+            "prepared Polygon parameter projection omitted " ~ shiftName);
+    }
+}
+
+// The tool effects beyond Noop install their own state: Slice latches
+// the axis, Loop Slice takes the count, Edge Slice arms the chain from the
+// edges param, Edge Extend switches banks (activating the move bank) and
+// updates the pivot override.
+unittest {
+    auto sl = Rig!SliceRow.make(false, false);
+    assert(sl.tool.prepareParamChanged("axis", sl.context, sl.layer, null).accepted &&
+        sl.context.validate()); sl.context.install();
+    assert(sl.tool.preparedAxisLockedForTest(), "Slice: the axis write did not latch");
+    auto ls = Rig!LoopSliceRow.make(false, false);
+    assert(ls.tool.prepareParamChanged("count", ls.context, ls.layer, null).accepted &&
+        ls.context.validate()); ls.context.install();
+    assert(ls.tool.preparedParamStateForTest(false, 2), "Loop Slice: count not installed");
+
+    auto es = Rig!EdgeSliceRow.make(false, false, new CommandHistory());
+    es.tool.seedPreparedParamForTest(es.layer.meshRef(), false);
+    es.context.setResourceIdentity(7, 11);
+    auto arm = es.tool.prepareParamChanged("chainArm", es.context, es.layer,
+        GpuUploadOwner.fakeForTest(&es.gpu));
+    assert(arm.accepted && arm.kind == PreparedEdgeSliceParamKind.ChainArm &&
+        es.context.validate()); es.context.install();
+    assert(es.tool.preparedParamStateForTest(true, 1) &&
+        es.context.installTraceForTest() == [3,4,2,1,43], "Edge Slice: chainArm");
+
+    auto ee = Rig!EdgeExtendRow.make(true, true);
+    ee.tool.setPreparedBanksForTest(true, true, true);
+    auto bank = ee.tool.prepareParamChanged("rotateHandle", ee.context, ee.layer, null);
+    assert(bank.accepted && bank.kind == PreparedEdgeExtendParamKind.BankSwitch &&
+        ee.context.validate() && !ee.tool.preparedBanksActivatedForTest());
+    ee.context.install();
+    assert(ee.tool.preparedParamInstalledForTest(false, true) &&
+        ee.tool.preparedBanksActivatedForTest(), "Edge Extend: bank switch");
+    auto pv = Rig!EdgeExtendRow.make(true, true);
+    auto pivot = pv.tool.prepareParamChanged("_dragPivot", pv.context, pv.layer, null);
+    assert(pivot.accepted && pivot.kind == PreparedEdgeExtendParamKind.Pivot &&
+        pv.context.validate()); pv.context.install();
+    assert(pv.context.installTraceForTest() == [43,8], "Edge Extend: pivot");
+}
+
+// The owner's own transaction order, on one instantiation (the body is shared):
+// prepare refuses a missing target or layer; validate needs begin; begin,
+// validate and install each happen once; abort and install consume the owner.
+unittest {
+    alias O = PreparedParamUpdateOwner!(PolyInsetTool, PreparedPolyInsetParamImage,
+        PreparedPolyInsetParamKind);
+    auto r = Rig!PolyInsetRow.make(true, true);
+    assert(O.prepare(null, r.layer, "") is null && O.prepare(r.tool, null, "") is null,
+        "owner prepared without a target or layer");
+    auto o = O.prepare(r.tool, r.layer, "");
+    assert(o !is null && o.effectKind == PreparedPolyInsetParamKind.Noop);
+    o.install();
+    assert(o.effectKind == PreparedPolyInsetParamKind.Noop, "owner installed before begin");
+    assert(!o.validate(), "owner validated before begin");
+    assert(o.begin() && !o.begin(), "owner began twice");
+    o.install();
+    assert(o.effectKind == PreparedPolyInsetParamKind.Noop, "owner installed before validate");
+    assert(o.validate() && !o.validate(), "owner validated twice");
+    o.install();
+    assert(o.effectKind == PreparedPolyInsetParamKind.None, "owner install did not consume");
+    assert(!o.begin(), "a consumed owner began again");
+
+    auto a = Rig!PolyInsetRow.make(true, true);
+    auto aborted = O.prepare(a.tool, a.layer, "");
+    assert(aborted.begin()); aborted.abort();
+    assert(!aborted.validate() && !aborted.begin(), "an aborted owner stayed live");
+
+    // The context slot: discard aborts the enlisted owner; a validated
+    // context takes no further slot.
+    auto d = Rig!PolyInsetRow.make(true, true);
+    auto enlisted = O.prepare(d.tool, d.layer, "");
+    assert(d.context.prepareParamUpdate(enlisted));
+    d.context.discard();
+    assert(enlisted.effectKind == PreparedPolyInsetParamKind.None,
+        "discard left the enlisted owner live");
+    auto v = Rig!PolyInsetRow.make(true, true);
+    assert(v.context.prepareParamUpdate(O.prepare(v.tool, v.layer, "")) &&
+        v.context.markNoHistoryInstall() && v.context.validate());
+    assert(!v.context.prepareParamUpdate(O.prepare(v.tool, v.layer, "")),
+        "a validated context enlisted another slot");
+
+    // A throw while enlisting aborts the owner and discards the whole transaction.
+    auto t = Rig!PolyInsetRow.make(true, true);
+    auto thrown = O.prepare(t.tool, t.layer, "");
+    PreparedRecordContext.failAfterResourceBeginForTest(true);
+    bool enlistThrew;
+    try t.context.prepareParamUpdate(thrown); catch (Exception) enlistThrew = true;
+    PreparedRecordContext.failAfterResourceBeginForTest(false);
+    assert(enlistThrew && thrown.effectKind == PreparedPolyInsetParamKind.None,
+        "a failed enlist left the owner live");
+    auto x = Rig!PolyInsetRow.make(true, true);
+    x.context.setResourceIdentity(7, 11);
+    PreparedRecordContext.failAfterResourceBeginForTest(true);
+    bool threw;
+    try x.tool.prepareParamChanged("", x.context, x.layer, GpuUploadOwner.fakeForTest(&x.gpu));
+    catch (Exception) threw = true;
+    PreparedRecordContext.failAfterResourceBeginForTest(false);
+    assert(threw && !x.context.markNoHistoryInstall() && !x.context.validate(),
+        "a failed enlist left the transaction live");
+}
+
+unittest { // Magnet: the param rebuild weighs the drag by the stage's Element falloff
+           // anchored at the grabbed vertex, radius `dist` (task 9491).
+    // An empty selection (re-seeded into the baseline) makes the whole mesh
+    // the moving set; the interactive `dist` write rebuilds the live preview.
+    size_t movedBy(float dist) {
+        auto r = Rig!MagnetRow.make(true, true);
+        r.gpu.suppressCageUpload = true;   // no GL: the upload becomes a publish
+        r.layer.meshRef().clearVertexSelection();
+        r.tool.seedPreparedParamForTest(r.layer.meshRef());
+        r.tool.mutatePreparedParamForTest(dist);
+        const cube = r.layer.meshRef().vertices.dup;
+        r.tool.notifyInteractiveParamChanged("dist");
+        size_t moved;
+        foreach (i, v; r.layer.meshRef().vertices) if (v != cube[i]) ++moved;
+        return moved;
+    }
+    // The pull is toward the target, which sits on vertex 1: seven move.
+    assert(movedBy(100.0f) == 7, "control: dist 100 must move the whole cube");
+    assert(movedBy(0.0f) == 1,
+           "dist 0 must move only the grabbed vertex (the Element anchor)");
+}

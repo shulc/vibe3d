@@ -28,9 +28,9 @@ import vibe3d.mesh.core.mesh;
 import vibe3d.mesh.core.mesh_selsets;
 import vibe3d.mesh.ops.mesh_stats;
 import vibe3d.editing.contracts.seltype  : SelType, SelMode;
-import ui.stat_rows;
+import vibe3d.ui.editor.ui.stat_rows;
 import tests.unit.ui.stat_dispatch : dispatchStatAction;
-import math     : Vec3;
+import vibe3d.util.math.math     : Vec3;
 import std.algorithm : canFind;
 import std.conv  : to;
 
@@ -283,7 +283,7 @@ unittest {
 // ---------------------------------------------------------------------------
 unittest {
     import vibe3d.viewport.camera.view : View;
-    import commands.layer.commands : LayerSelect;
+    import vibe3d.runtime.document_actions.commands.layer.commands : LayerSelect;
     import vibe3d.editing.params.params : injectParamsInto;
     import std.json : parseJSON;
 

@@ -1,5 +1,5 @@
 module tests.unit.topology_pen_election_consumers_test;
-import tools.edit.topology_pen.tool : TopologyPenTool;
+import vibe3d.editing.tools.interactive.tools.edit.topology_pen.tool : TopologyPenTool;
 
 import tests.unit.census_symbols : readText = wave15ReadText;
 import std.path : buildPath, dirName;

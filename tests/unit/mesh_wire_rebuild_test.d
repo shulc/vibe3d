@@ -1,6 +1,6 @@
 module tests.unit.mesh_wire_rebuild_test;
 
-import math : Vec3;
+import vibe3d.util.math.math : Vec3;
 import vibe3d.mesh.core.mesh : Mesh;
 
 private bool hasWire(in Mesh m, uint a, uint b) {

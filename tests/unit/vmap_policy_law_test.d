@@ -47,10 +47,10 @@ import std.file   : readText;
 import std.format : format;
 import std.algorithm : canFind, sort;
 
-import math         : Vec3;
+import vibe3d.util.math.math         : Vec3;
 import vibe3d.mesh.core.mesh;
 import vibe3d.mesh.core.mesh_selsets;
-import weightmap_view : resolveWeightMap;
+import vibe3d.viewport.display_policy.weightmap_view : resolveWeightMap;
 
 private enum string kWeld   = "tests/fixtures/selset_weld_membership.json";
 private enum string kRename = "tests/fixtures/vertex_map_selection_rename.json";

@@ -9,7 +9,7 @@
 // index-based assertion cannot tell "still correct" from "still stale".
 module tests.unit.mesh_selsets_polygon_carry_test;
 
-import math : Vec3;
+import vibe3d.util.math.math : Vec3;
 import vibe3d.mesh.core.mesh;
 import vibe3d.mesh.core.mesh_selsets;
 

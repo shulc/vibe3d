@@ -47,7 +47,7 @@ private auto polyBevelOnce(alias kernel, Args...)(ref Mesh m, auto ref Args args
     return n;
 }
 
-import math : Vec3;
+import vibe3d.util.math.math : Vec3;
 
 void main() {}
 

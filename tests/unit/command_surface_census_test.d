@@ -23,7 +23,7 @@ import std.path : buildPath, dirName;
 import std.regex : ctRegex, matchAll;
 import std.string : count, indexOf, split, splitLines, startsWith, strip;
 
-import buttonset : ActionKind, allButtons, loadButtons;
+import vibe3d.ui.editor.buttonset : ActionKind, allButtons, loadButtons;
 import tests.unit.census_symbols : blankNonCode, balancedSpan, registrationFamilyText, pilotRegistrationIds;
 
 private enum repoRoot = dirName(dirName(dirName(__FILE_FULL_PATH__)));

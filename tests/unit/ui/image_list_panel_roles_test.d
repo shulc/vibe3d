@@ -13,35 +13,35 @@ import std.string : indexOf;
 import tests.unit.census_symbols : blankNonCode;
 
 import bindbc.sdl : KMOD_NONE, SDL_SetModState, loadSDL, sdlSupport;
-import application_command_binding : ApplicationCommandBinding;
-import command : Command, g_testMode;
-import command_executor : CommandExecutor;
-import command_history : CommandHistory, RecordMode;
-import commands.image.commands : ImageLoad, ImageRemove, ImageRemoveWarning;
-import commands.layer.commands : LayerDelete, LayerRename, LayerReorder,
+import vibe3d.apps.desktop.application_command_binding : ApplicationCommandBinding;
+import vibe3d.editing.commands.runtime.command : Command, g_testMode;
+import vibe3d.editing.commands.runtime.command_executor : CommandExecutor;
+import vibe3d.editing.commands.runtime.command_history : CommandHistory, RecordMode;
+import vibe3d.runtime.document_actions.commands.image.commands : ImageLoad, ImageRemove, ImageRemoveWarning;
+import vibe3d.runtime.document_actions.commands.layer.commands : LayerDelete, LayerRename, LayerReorder,
     LayerSelect;
 import vibe3d.documents.model.document : Document, ImageData, ItemKind, Layer;
-import edit_session : EditSession;
-import forms_render : FormsPanel;
-import guarded_action_controller : GuardObservationPorts,
+import vibe3d.editing.tools.interactive.edit_session : EditSession;
+import vibe3d.ui.editor.forms_render : FormsPanel;
+import vibe3d.apps.desktop.guarded_action_controller : GuardObservationPorts,
     GuardedActionController, GuardedActionPorts;
 import vibe3d.mesh.core.mesh : makeCube;
-import registry : Registry;
-import session_owner : Session;
+import vibe3d.editing.tools.interactive.registry : Registry;
+import vibe3d.runtime.application_core.session_owner : Session;
 import tests.unit.ui.headless_panel : HeadlessPanel, KEY_LEFT_CTRL, MOD_CTRL,
     openPanel;
-import tool : Tool;
-import tool_activation_ownership : ToolTransition;
-import ui.discard_guard : GuardRecord;
-import ui.image_list_panel : ImageListDrawSnapshot, ImageListDrawnRow,
+import vibe3d.editing.tools.interactive.tool : Tool;
+import vibe3d.editing.commands.runtime.tool_activation_ownership : ToolTransition;
+import vibe3d.ui.editor.ui.discard_guard : GuardRecord;
+import vibe3d.ui.editor.ui.image_list_panel : ImageListDrawSnapshot, ImageListDrawnRow,
     ImageListPanelRoles, ImageListReadRole, bindImageListPanel, drawImageListPanel,
     imageListDrawSnapshot, resetImageListDrawSnapshot;
-import ui.image_rows : ImageRemoveConfirm, ImageRemoveTarget, ImageRow;
-import ui.item_rename : ItemRenameState;
-import ui.layer_list_panel : LayerListDrawnRow, LayerListPanelRoles,
+import vibe3d.ui.editor.ui.image_rows : ImageRemoveConfirm, ImageRemoveTarget, ImageRow;
+import vibe3d.ui.editor.ui.item_rename : ItemRenameState;
+import vibe3d.ui.editor.ui.layer_list_panel : LayerListDrawnRow, LayerListPanelRoles,
     bindLayerListPanel, drawLayerListPanel, layerListDrawSnapshot,
     resetLayerListDrawSnapshot;
-import ui.retained_item : RetainedItem;
+import vibe3d.ui.editor.ui.retained_item : RetainedItem;
 import vibe3d.viewport.camera.view : View;
 import ImGui = d_imgui;
 import d_imgui.imgui_h : ImGuiKey, ImVec2;

@@ -2,10 +2,10 @@
 // production wiring; the Edge release/close witness is recorded in the card.
 module tests.unit.topology_r_history_probe_test;
 
-import command_history : CommandHistory, HistoryFlags;
-import commands.mesh.session_edit : MeshSessionEdit;
+import vibe3d.editing.commands.runtime.command_history : CommandHistory, HistoryFlags;
+import vibe3d.editing.commands.editor.commands.mesh.session_edit : MeshSessionEdit;
 import vibe3d.editing.contracts.editmode : EditMode;
-import math : Vec3;
+import vibe3d.util.math.math : Vec3;
 import vibe3d.mesh.core.mesh : Mesh, makeCube;
 import vibe3d.mesh.snapshot.snapshot : MeshSnapshot;
 import vibe3d.viewport.camera.view : View;

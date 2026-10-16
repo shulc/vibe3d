@@ -1,0 +1,43 @@
+{
+  "name": "cli",
+  "description": "Native document command runner",
+  "license": "MIT",
+  "targetType": "executable",
+  "sourcePaths": [
+    "source"
+  ],
+  "importPaths": [
+    "source"
+  ],
+  "dflags": [],
+  "dependencies": {
+    "vibe3d:log": {
+      "path": "../.."
+    },
+    "vibe3d:document-model": {
+      "path": "../.."
+    },
+    "vibe3d:document-io": {
+      "path": "../.."
+    },
+    "vibe3d:command-runtime": {
+      "path": "../.."
+    },
+    "vibe3d:application-core": {
+      "path": "../.."
+    }
+  },
+  "toolchainRequirements": {
+    "dmd": ">=2.111.0"
+  },
+  "subConfigurations": {
+    "vibe3d:log": "modeling-noai",
+    "vibe3d:document-model": "modeling-noai",
+    "vibe3d:document-io": "modeling-noai",
+    "vibe3d:command-runtime": "modeling-noai",
+    "vibe3d:application-core": "modeling-noai"
+  },
+  "targetName": "vibe3d-cli",
+  "targetPath": "../..",
+  "mainSourceFile": "source/vibe3d/apps/cli/main.d"
+}

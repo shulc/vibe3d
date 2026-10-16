@@ -7,10 +7,10 @@ module tests.unit.commands.mesh.surface_attr_test;
 import std.format : format;
 
 import vibe3d.editing.contracts.editmode : EditMode;
-import math     : Vec3;
+import vibe3d.util.math.math     : Vec3;
 import vibe3d.mesh.core.mesh     : Mesh, Surface, kSurfaceSlots;
 import vibe3d.viewport.camera.view     : View;
-import commands.mesh.surface_attr : MeshSurfaceAttr, surfaceSlotCount, kSurfaceAttrs;
+import vibe3d.editing.commands.editor.commands.mesh.surface_attr : MeshSurfaceAttr, surfaceSlotCount, kSurfaceAttrs;
 
 /// Two quads; `faceMaterial` as given.
 private Mesh* plate(uint[] mats) {
@@ -45,7 +45,7 @@ private void refuses(Mesh* m, int surface, string attr, float value, string why)
 }
 
 unittest { // the attribute table names exactly the two S1e rows and S1d's sidedness row
-    import commands.mesh.surface_attr : SurfaceAttrKind;
+    import vibe3d.editing.commands.editor.commands.mesh.surface_attr : SurfaceAttrKind;
     assert(kSurfaceAttrs.length == 3 && kSurfaceAttrs[0].name == "smoothing"
         && kSurfaceAttrs[1].name == "smoothingAngle", "kSurfaceAttrs rows moved");
     assert(kSurfaceAttrs[2].name == "twoSided" && kSurfaceAttrs[2].kind == SurfaceAttrKind.Bool
@@ -57,7 +57,7 @@ unittest { // every kSurfaceAttrs row has a Surfaces widget, and the panel draws
     import std.path : buildPath, dirName;
     import std.algorithm : canFind;
     import std.string : indexOf;
-    import commands.mesh.surface_attr : surfaceAttrWidget, SurfaceAttrWidget;
+    import vibe3d.editing.commands.editor.commands.mesh.surface_attr : surfaceAttrWidget, SurfaceAttrWidget;
     size_t rows;
     foreach (r; kSurfaceAttrs) {
         // The final switch in `surfaceAttrWidget` is the compile-time half; this

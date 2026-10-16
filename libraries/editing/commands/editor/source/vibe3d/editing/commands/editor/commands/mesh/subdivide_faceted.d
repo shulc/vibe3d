@@ -1,0 +1,118 @@
+module vibe3d.editing.commands.editor.commands.mesh.subdivide_faceted;
+
+import vibe3d.editing.commands.runtime.command;
+import vibe3d.editing.pipeline.contracts.operator : Operator, Task, VectorStack, PacketKind, OperatorActrCommon;
+import vibe3d.mesh.core.mesh;
+import vibe3d.viewport.camera.view;
+import vibe3d.editing.contracts.editmode;
+import vibe3d.mesh.snapshot.snapshot : MeshSnapshot;
+import vibe3d.mesh.change.change_bus : MeshEditScope;
+
+/// Shared kernel dispatcher for the faceted family (flat and smooth modes).
+/// Runs `facetedSubdivide` (smooth=false) or `smoothSubdivide` (smooth=true),
+/// then rebuilds the post-op face selection from the kernel's origin record
+/// and publishes the Geometry change-bus notification.
+/// Snapshot capture is the caller's responsibility; the display refresh is
+/// bus-driven (the main loop's flush site consumes the Geometry flag
+/// published below — task 0427).
+package(vibe3d.editing.commands.editor.commands.mesh) void runFacetedFamily(Mesh* mesh, EditMode editMode, bool smooth)
+{
+    // Selection-aware split only makes sense in Polygons mode where the user
+    // can see and curate the face selection.  Vertices / Edges mode ignores
+    // any stale face selection and falls through to the all-true mask.
+    bool polygonMode  = editMode == EditMode.Polygons;
+    bool hadSelection = polygonMode && mesh.hasAnySelectedFaces();
+    auto prevSelectedFaces = polygonMode
+        ? mesh.selectedFaces.dup : null;
+    // Mode-gated fallback — visibleFaceMask(), not operandFaceMask()
+    // (task 0613, S5; see the helper's doc comment in mesh.d). This is the
+    // operand-exclusion half of task 0632: a hidden face is never in the
+    // operand, so it is carried through whole. The other half — carrying its
+    // Hide bit ACROSS the rebuild instead of dropping it — lives in
+    // `facetedSubdivide` itself.
+    const bool[] mask = hadSelection
+        ? mesh.selectedFaces
+        : mesh.visibleFaceMask();
+    // Corner-provenance (task 0901, `CornerDrop.SubdivideNoLaw`): verified NOT
+    // APPLICABLE, same shape as `commands/mesh/subdivide.d`'s ccsds mode —
+    // `facetedSubdivide`/`smoothSubdivide` return a fresh `Mesh result` with
+    // no PolyVertex map of its own, and this `*mesh = ...` REPLACES the whole
+    // value. The old map disappears with the old mesh; nothing here zeroes it.
+    // TASK 1903 STAGE L5-P0 — the axis-0 commit seam (plan §5.0: a row whose
+    // undo stays a snapshot still owes the batch). Everything from the install
+    // to the tail publish runs inside ONE unrecorded batch, so the six-odd
+    // `commitChange`es below (`resetSelection`, one per re-selected face, the
+    // final `publishChange`) defer and stamp once at `close()` instead of
+    // ticking `changeBus.unbatchedGeometryCommits` one at a time.
+    //
+    // UNRECORDED, deliberately: this family is declined on axis 2 (§6.6) —
+    // the kernel builds a FRESH `Mesh` and installs it wholesale, so there is
+    // no op-log an inverse could be built from and the undo image stays the
+    // caller's `MeshSnapshot`.
+    //
+    // `*mesh = …` INSIDE the frame is safe because the batch state is
+    // MODULE-level and keyed by `Mesh*` (§2.2a): the assignment replaces the
+    // pointee's contents, not the pointer, so the frame the handle owns is
+    // still found by `close()`. A `batchDepth_` FIELD on `Mesh` would have
+    // been zeroed by this very line.
+    auto ed = MeshEditBatch.unrecorded(*mesh, MeshEditScope.Geometry);
+    uint[] origin;
+    *mesh = smooth ? smoothSubdivide(*mesh, mask, &origin)
+                   : facetedSubdivide(*mesh, mask, &origin);
+    mesh.resetSelection();
+    // Task 5911 Phase 4a: selection follows what the kernel actually emitted,
+    // not a replayed arity estimate; SD-W pins the bystanding-face boundary.
+    foreach (k, parentFi; origin)
+        if (parentFi < prevSelectedFaces.length && prevSelectedFaces[parentFi])
+            mesh.selectFace(cast(int) k);
+    // Change-notification (Stage 1): faceted kernel REPLACED the whole mesh
+    // (new verts AND faces). No version bump: the `*mesh = ...` swap reset the
+    // version counters to 0; the bus only needs the class so caches rebuild.
+    // TASK 1906 STAGE 2 PRECONDITION — `publishChange`, not `noteChange`.
+    // `noteChange` accumulates and NEVER delivers (that is its contract:
+    // safe inside loops, safe mid-drag), so a command whose LAST mesh
+    // publisher is a note delivers only if some EARLIER call happened to
+    // register the mesh with the open delivery batch — incidental, not
+    // structural. Stage 2a moved the display family off the frame-drain
+    // pull and onto the bus, and a wholesale replace that delivers nothing
+    // would leave the mid-batch pull guard (`ensureDisplayCurrent`) with
+    // no reason to re-upload before the next VBO reader. `publishChange`
+    // accumulates identically and delivers at depth 0 / at the batch
+    // close, so the delivery COUNT per command is unchanged (one) while
+    // the delivery itself is now guaranteed.
+    mesh.publishChange(MeshEditScope.Geometry);
+    ed.close();
+}
+
+class SubdivideFaceted : Command, Operator {
+    mixin OperatorActrCommon;
+    private void delegate() onTopologyChange;
+    private MeshSnapshot snap;
+
+    this(Mesh* mesh, ref View view, EditMode editMode,
+         void delegate() onTopologyChange) {
+        super(mesh, view, editMode);
+        this.onTopologyChange = onTopologyChange;
+    }
+
+    override string name() const { return "mesh.subdivide_faceted"; }
+
+    override EditMode[] supportedModes() const {
+        return [EditMode.Vertices, EditMode.Edges, EditMode.Polygons];
+    }
+
+    bool evaluate(ref VectorStack vts) {
+        import vibe3d.editing.pipeline.contracts.toolpipe.packets : SubjectPacket;
+        auto subj = vts.get!SubjectPacket();
+        if (subj is null) return false;
+        snap = MeshSnapshot.capture(*mesh);
+        noteUndoRecorded();   // task 2500 — the flag and the image, one statement apart
+        if (onTopologyChange !is null) onTopologyChange();
+        runFacetedFamily(mesh, editMode, /*smooth=*/false);
+        return true;
+    }
+
+    protected override void revertImpl() {
+        snap.restore(*mesh);
+    }
+}

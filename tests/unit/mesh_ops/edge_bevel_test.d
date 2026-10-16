@@ -18,11 +18,11 @@
 module tests.unit.mesh_ops.edge_bevel_test;
 import vibe3d.mesh.edit_replay.mesh_edit_replay : apply, revert;
 
-import subpatch_factories : subdivideCube;
+import vibe3d.viewport.subpatch.subpatch_factories : subdivideCube;
 import vibe3d.mesh.core.mesh;
 import vibe3d.mesh.ops.mesh_ops.edge_bevel;
 import vibe3d.mesh.ops.mesh_ops.bevel_vertex;
-import math;
+import vibe3d.util.math.math;
 import vibe3d.util.spatial.spatial : Pin;
 import tests.unit.fixtures;
 

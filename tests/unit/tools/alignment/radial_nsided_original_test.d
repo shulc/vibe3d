@@ -3,12 +3,12 @@ module tests.unit.tools.alignment.radial_nsided_original_test;
 import std.file : readText;
 import std.json : JSONValue, JSONType, parseJSON;
 import std.format : format;
-import math : Vec3;
-import tool;
+import vibe3d.util.math.math : Vec3;
+import vibe3d.editing.tools.interactive.tool;
 import vibe3d.mesh.core.mesh : Mesh;
 import vibe3d.editing.contracts.editmode : EditMode;
-import tools.alignment.align_kernels : radialAlignTargets, extractAlignChain;
-import falloff : weightedLerp;
+import vibe3d.editing.tools.alignment.tools.alignment.align_kernels : radialAlignTargets, extractAlignChain;
+import vibe3d.editing.pipeline.runtime.falloff : weightedLerp;
 
 private double number(JSONValue v) {
     return v.type == JSONType.integer ? cast(double)v.integer : v.floating;
@@ -207,7 +207,7 @@ unittest { // N-sided bypasses outside search, with a flipping Circle control.
     }
 }
 
-private void radialAttrs(tool.Tool t, JSONValue cell) {
+private void radialAttrs(vibe3d.editing.tools.interactive.tool.Tool t, JSONValue cell) {
     foreach(p;t.params()) {
         if(p.name=="mode") *p.sptr="nside";
         if(p.name=="side") *p.iptr=cast(int)cell["side"].integer;
@@ -218,10 +218,10 @@ private void radialAttrs(tool.Tool t, JSONValue cell) {
 }
 unittest { // Actual registered session, same object/token and position delivery.
     import tests.unit.live_registration_rig : LiveRegistrationRig;
-    import tools.alignment.radial_align_tool : RadialAlignTool;
-    import tool : Tool, HeadlessSourcePolicy;
-    import tools.transform.transform : TransformTool;
-    import command_history : RecordMode;
+    import vibe3d.editing.tools.interactive.tools.alignment.radial_align_tool : RadialAlignTool;
+    import vibe3d.editing.tools.interactive.tool : Tool, HeadlessSourcePolicy;
+    import vibe3d.editing.tools.interactive.tools.transform.transform : TransformTool;
+    import vibe3d.editing.commands.runtime.command_history : RecordMode;
     import vibe3d.mesh.change.change_bus : changeBus, MeshEditScope;
     import vibe3d.mesh.core.mesh : g_isDocumentMesh;
     auto f=fixture(); auto rig=new LiveRegistrationRig;
@@ -326,10 +326,10 @@ unittest { // Actual registered session, same object/token and position delivery
         coldBytes,warmBytes,refusalBytes,closedBytes);
 }
 unittest { // Outside-neighbor coordinates use the same explicit source domain.
-    import tools.alignment.align_kernels : alignOutsideNeighbours;
-    import tools.alignment.radial_align_tool : RadialAlignTool;
-    import tool : Tool;
-    import mesh_gpu : GpuMesh;
+    import vibe3d.editing.tools.alignment.tools.alignment.align_kernels : alignOutsideNeighbours;
+    import vibe3d.editing.tools.interactive.tools.alignment.radial_align_tool : RadialAlignTool;
+    import vibe3d.editing.tools.interactive.tool : Tool;
+    import vibe3d.viewport.gpu.mesh_gpu : GpuMesh;
     auto f=fixture(); auto m=original(f); auto ring=source(f,m);
     auto positions=m.vertices.dup;
     // Change only the borrowed complement; ring input remains bit-identical.
@@ -366,10 +366,10 @@ unittest { // Outside-neighbor coordinates use the same explicit source domain.
 
 unittest { // Radial leaf uses the fresh legitimate input after common boundaries.
     import tests.unit.live_registration_rig : LiveRegistrationRig;
-    import tools.alignment.radial_align_tool : RadialAlignTool;
-    import tools.alignment.align_kernels : alignOutsideNeighbours;
-    import command_history : RecordMode;
-    import tool_activation_ownership : CloseReason, CommandDoor;
+    import vibe3d.editing.tools.interactive.tools.alignment.radial_align_tool : RadialAlignTool;
+    import vibe3d.editing.tools.alignment.tools.alignment.align_kernels : alignOutsideNeighbours;
+    import vibe3d.editing.commands.runtime.command_history : RecordMode;
+    import vibe3d.editing.commands.runtime.tool_activation_ownership : CloseReason, CommandDoor;
     foreach(boundary;["close","navigation","rearm","primary","selection","document"]) {
         auto f=fixture(); auto rig=new LiveRegistrationRig;
         rig.session.editMesh()=original(f); rig.session.editMode=EditMode.Polygons;

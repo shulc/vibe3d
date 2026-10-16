@@ -15,7 +15,7 @@ import std.string : indexOf;
 import std.json : JSONType, JSONValue, parseJSON;
 import ImGui = d_imgui;
 import d_imgui.imgui_h : ImGuiConfigFlags, ImGuiKey;
-import imgui_event_gate : escapeReachesEditor, imguiPopupOpen;
+import vibe3d.ui.editor.imgui_event_gate : escapeReachesEditor, imguiPopupOpen;
 import vibe3d.platform.input.input_context : EscapeRung, escapeRungFor;
 import tests.unit.census_symbols : blankNonCode, countOccurrences;
 import tests.unit.ui.headless_panel : openPanel;

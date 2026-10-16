@@ -56,10 +56,10 @@ module tests.unit.tool_gesture_runopen_g3_test;
 
 import std.conv    : to;
 
-import command_history : CommandHistory;
-import commands.mesh.session_edit : MeshSessionEdit;
+import vibe3d.editing.commands.runtime.command_history : CommandHistory;
+import vibe3d.editing.commands.editor.commands.mesh.session_edit : MeshSessionEdit;
 import vibe3d.editing.contracts.editmode : EditMode;
-import math : Vec3;
+import vibe3d.util.math.math : Vec3;
 import vibe3d.mesh.core.mesh : Mesh;
 import vibe3d.mesh.edit_log.mesh_edit_delta : MeshEditScope;
 import vibe3d.mesh.snapshot.snapshot : MeshSnapshot;

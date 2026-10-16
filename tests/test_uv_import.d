@@ -26,9 +26,9 @@ import std.process : thisProcessID;
 import std.uuid   : randomUUID;
 
 import vibe3d.mesh.core.mesh : Mesh, MeshMap, MapDomain, kUvMapName;
-import io.scene_ir     : ImportedScene, ImportedPart, ImportedSurface, flattenToMesh;
-import io.scene_import : importViaAssimp;
-import io.assimp_runtime : initAssimp, isAssimpAvailable;
+import vibe3d.documents.interchange.io.scene_ir     : ImportedScene, ImportedPart, ImportedSurface, flattenToMesh;
+import vibe3d.documents.interchange.io.scene_import : importViaAssimp;
+import vibe3d.documents.interchange.io.assimp_runtime : initAssimp, isAssimpAvailable;
 
 void main() {}
 
@@ -305,6 +305,6 @@ unittest {  // GAP-4 seam: geometry welded to the no-UV count, per-corner UV dif
 
 // Local Vec3 literal helper (mesh.Vec3 is math.Vec3).
 private auto Vec3Lit(float x, float y, float z) {
-    import math : Vec3;
+    import vibe3d.util.math.math : Vec3;
     return Vec3(x, y, z);
 }

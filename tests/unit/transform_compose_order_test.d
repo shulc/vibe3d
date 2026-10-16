@@ -1,9 +1,9 @@
 module tests.unit.transform_compose_order_test;
 
-import math : Vec3, applyAffine, cross, matMul4, pivotRotationMatrix,
+import vibe3d.util.math.math : Vec3, applyAffine, cross, matMul4, pivotRotationMatrix,
               pivotScaleMatrix, pivotScaleMatrixBasis, translationMatrix;
 import std.math : PI, fabs;
-import tools.transform.xform_kernels : composeRunMatrix, runScaleAxes;
+import vibe3d.editing.tools.transform.tools.transform.xform_kernels : composeRunMatrix, runScaleAxes;
 
 private bool near(float a, float b, float tolerance = 1e-5f)
 {

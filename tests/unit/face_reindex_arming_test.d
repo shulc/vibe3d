@@ -50,7 +50,7 @@ import std.path                : buildPath, dirName, relativePath;
 import std.string              : indexOf, strip, startsWith;
 
 import vibe3d.mesh.core.mesh;
-import math;
+import vibe3d.util.math.math;
 import vibe3d.mesh.edit_log.mesh_edit_delta;
 import vibe3d.mesh.snapshot.snapshot : MeshSnapshot;
 import vibe3d.mesh.ops.mesh_ops.extrude;

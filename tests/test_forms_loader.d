@@ -25,7 +25,7 @@
 // responsive /api/camera means the on-disk config passed strict validation.
 
 import http_client : testBaseUrl;
-import forms;
+import vibe3d.ui.forms.forms;
 import vibe3d.editing.params.params : Param, ParamHints, IntEnumEntry;
 
 import std.exception : assertThrown, collectExceptionMsg;
@@ -357,7 +357,7 @@ YAML";
 // ---------------------------------------------------------------------------
 
 unittest {
-    import toolpipe.stages.falloff : FalloffStage;
+    import vibe3d.editing.pipeline.evaluation.toolpipe.stages.falloff : FalloffStage;
     import vibe3d.editing.pipeline.contracts.toolpipe.packets : FalloffType, FalloffShape;
     import vibe3d.mesh.core.mesh     : Mesh;
     import vibe3d.editing.contracts.editmode : EditMode;

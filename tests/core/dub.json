@@ -7,9 +7,9 @@
   "sourceFiles": [
     "../unit/application_core_command_test.d",
     "../unit/application_core_mesh_test.d",
-    "../../packages/application-core/tests/source/tests/unit/command_invocation_test.d",
-    "../../packages/command-runtime/tests/source/tests/unit/command_registry_test.d",
-    "../../packages/application-core/tests/source/tests/unit/standalone_application_test.d"
+    "../../libraries/runtime/application-core/tests/source/vibe3d/runtime/application_core/tests/unit/command_invocation_test.d",
+    "../../libraries/editing/commands/runtime/tests/source/vibe3d/editing/commands/runtime/tests/unit/command_registry_test.d",
+    "../../libraries/runtime/application-core/tests/source/vibe3d/runtime/application_core/tests/unit/standalone_application_test.d"
   ],
   "importPaths": [],
   "dflags": [],
@@ -50,17 +50,17 @@
     "vibe3d:document-model": {
       "path": "../.."
     },
-    "vibe3d-pipe-runtime": {
-      "path": "../../packages/pipe-runtime"
+    "vibe3d:pipe-runtime": {
+      "path": "../.."
     },
     "vibe3d:param-schema": {
       "path": "../.."
     },
-    "vibe3d-command-runtime": {
-      "path": "../../packages/command-runtime"
+    "vibe3d:command-runtime": {
+      "path": "../.."
     },
-    "vibe3d-application-core": {
-      "path": "../../packages/application-core"
+    "vibe3d:application-core": {
+      "path": "../.."
     }
   },
   "toolchainRequirements": {
@@ -73,7 +73,7 @@
       "subConfigurations": {
         "vibe3d:document-model": "isolated-tests",
         "vibe3d:edit-contracts": "isolated-tests",
-        "vibe3d-pipe-runtime": "isolated-tests",
+        "vibe3d:pipe-runtime": "isolated-tests",
         "vibe3d:param-schema": "isolated-tests"
       }
     }
@@ -90,7 +90,7 @@
     "vibe3d:spatial": "isolated-tests",
     "vibe3d:pipe-contracts": "isolated-tests",
     "vibe3d:mesh-preview": "isolated-tests",
-    "vibe3d-command-runtime": "isolated-tests",
-    "vibe3d-application-core": "isolated-tests"
+    "vibe3d:command-runtime": "isolated-tests",
+    "vibe3d:application-core": "isolated-tests"
   }
 }

@@ -2,31 +2,31 @@
 // input and the parent ordering so helper correctness cannot hide mis-wiring.
 module tests.unit.commands.tool.tool_lifecycle_registration_test;
 
-import application_command_binding : CommandInvocationContext,
+import vibe3d.apps.desktop.application_command_binding : CommandInvocationContext,
     CommandInvocationOutcome;
-import command : Command, CommandOrigin, g_editTargetResolver, g_testMode,
+import vibe3d.editing.commands.runtime.command : Command, CommandOrigin, g_editTargetResolver, g_testMode,
     kNoEditTargetReason;
-import commands.tool.attr : ToolAttrCommand;
-import commands.tool.begin_session : ToolBeginSessionCommand,
+import vibe3d.editing.tools.interactive.commands.tool.attr : ToolAttrCommand;
+import vibe3d.editing.tools.interactive.commands.tool.begin_session : ToolBeginSessionCommand,
     ToolClearSoftPinForTestCommand;
-import commands.tool.do_apply : ToolDoApplyCommand;
-import commands.tool.host : ToolHost;
-import commands.tool.panel_edit : ToolPanelEditCommand;
-import commands.tool.pipe : ToolPipeAttrCommand;
-import commands.tool.reset : ToolResetCommand;
-import commands.tool.set : ToolReleaseCommand, ToolSetCommand;
-import commands.ui.about : UiAboutCommand;
-import commands.ui.channels : UiChannelsCommand, g_channelsShown;
-import commands.ui.image_list : UiImageListCommand, g_imageListShown;
-import commands.ui.layer_list : UiLayerListCommand, g_layerListShown;
-import commands.ui.pie : UiPieCommand;
-import commands.ui.statistics : UiStatisticsCommand, UiStatisticsExpandCommand,
+import vibe3d.editing.tools.interactive.commands.tool.do_apply : ToolDoApplyCommand;
+import vibe3d.editing.tools.interactive.commands.tool.host : ToolHost;
+import vibe3d.editing.tools.interactive.commands.tool.panel_edit : ToolPanelEditCommand;
+import vibe3d.editing.tools.interactive.commands.tool.pipe : ToolPipeAttrCommand;
+import vibe3d.editing.tools.interactive.commands.tool.reset : ToolResetCommand;
+import vibe3d.editing.tools.interactive.commands.tool.set : ToolReleaseCommand, ToolSetCommand;
+import vibe3d.apps.desktop.commands.ui.about : UiAboutCommand;
+import vibe3d.apps.desktop.commands.ui.channels : UiChannelsCommand, g_channelsShown;
+import vibe3d.apps.desktop.commands.ui.image_list : UiImageListCommand, g_imageListShown;
+import vibe3d.apps.desktop.commands.ui.layer_list : UiLayerListCommand, g_layerListShown;
+import vibe3d.apps.desktop.commands.ui.pie : UiPieCommand;
+import vibe3d.apps.desktop.commands.ui.statistics : UiStatisticsCommand, UiStatisticsExpandCommand,
     g_statisticsShown;
-import commands.ui.tool_properties : UiToolPropertiesCommand,
+import vibe3d.apps.desktop.commands.ui.tool_properties : UiToolPropertiesCommand,
     g_toolPropertiesShown;
-import commands.ui.viewport_props : UiViewportPropsCommand,
+import vibe3d.apps.desktop.commands.ui.viewport_props : UiViewportPropsCommand,
     g_viewportPropsShown;
-import edit_session : LiveEvalClient, ParameterChangeBatch;
+import vibe3d.editing.tools.interactive.edit_session : LiveEvalClient, ParameterChangeBatch;
 import vibe3d.editing.contracts.editmode : EditMode;
 import vibe3d.editing.params.params : Param;
 import std.algorithm : count;
@@ -38,7 +38,7 @@ import std.string : indexOf;
 import tests.unit.census_symbols : blankNonCode, LedgerRow, reconcile,
     registrationFamilyBytes, statementsContaining, symbolTokenHits;
 import tests.unit.live_registration_rig : LiveRegistrationRig;
-import tool : Tool;
+import vibe3d.editing.tools.interactive.tool : Tool;
 
 private enum repoRoot = buildNormalizedPath(dirName(__FILE_FULL_PATH__),
     "..", "..", "..", "..");

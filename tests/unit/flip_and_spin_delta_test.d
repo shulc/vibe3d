@@ -35,13 +35,13 @@ import vibe3d.mesh.core.mesh;
 import vibe3d.mesh.edit_log.mesh_edit_delta;
 import vibe3d.viewport.camera.view;
 import vibe3d.editing.contracts.editmode;
-import command;
-import command_history : CommandHistory;
+import vibe3d.editing.commands.runtime.command;
+import vibe3d.editing.commands.runtime.command_history : CommandHistory;
 import vibe3d.mesh.change.change_bus      : changeBus;
 
-import commands.mesh.flip            : MeshFlip;
-import commands.mesh.fix_orientation : MeshFixOrientation;
-import commands.mesh.spin_edge       : MeshSpinEdge;
+import vibe3d.editing.commands.editor.commands.mesh.flip            : MeshFlip;
+import vibe3d.editing.commands.editor.commands.mesh.fix_orientation : MeshFixOrientation;
+import vibe3d.editing.commands.editor.commands.mesh.spin_edge       : MeshSpinEdge;
 
 import tests.unit.fixtures : makeTaggedGridBent, findEdge;
 

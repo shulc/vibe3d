@@ -1,26 +1,26 @@
 module tests.unit.ui.history_panel_test;
 
-import application_command_binding : ApplicationCommandBinding;
-import command : Command;
-import command_executor : CommandExecutor;
-import command_history : CommandHistory, RecordMode, HistoryFlags;
-import edit_session : EditSession;
-import tool : ToolSessionPolicy;
+import vibe3d.apps.desktop.application_command_binding : ApplicationCommandBinding;
+import vibe3d.editing.commands.runtime.command : Command;
+import vibe3d.editing.commands.runtime.command_executor : CommandExecutor;
+import vibe3d.editing.commands.runtime.command_history : CommandHistory, RecordMode, HistoryFlags;
+import vibe3d.editing.tools.interactive.edit_session : EditSession;
+import vibe3d.editing.tools.interactive.tool : ToolSessionPolicy;
 import vibe3d.editing.contracts.editmode : EditMode;
-import guarded_action_controller : GuardedActionController,
+import vibe3d.apps.desktop.guarded_action_controller : GuardedActionController,
     GuardedActionPorts, GuardObservationPorts;
-import commands.macros.record : MacroRecord;
-import macro_recorder : MacroRecorder;
+import vibe3d.editing.commands.editor.commands.macros.record : MacroRecord;
+import vibe3d.editing.commands.editor.macro_recorder : MacroRecorder;
 import vibe3d.mesh.core.mesh : Mesh, makeCube;
-import registry : Registry;
-import tool : Tool;
-import tool;
+import vibe3d.editing.tools.interactive.registry : Registry;
+import vibe3d.editing.tools.interactive.tool : Tool;
+import vibe3d.editing.tools.interactive.tool;
 import vibe3d.mesh.snapshot.snapshot;
-import tool_activation_ownership : ToolTransition;
-import ui.history_panel;
-import ui.panels : drawCommandHistoryPanel, historyMacroStripSnapshot,
+import vibe3d.editing.commands.runtime.tool_activation_ownership : ToolTransition;
+import vibe3d.ui.editor.ui.history_panel;
+import vibe3d.ui.editor.ui.panels : drawCommandHistoryPanel, historyMacroStripSnapshot,
     historyPopupSnapshot;
-import imgui_event_gate : imguiPopupOpen;
+import vibe3d.ui.editor.imgui_event_gate : imguiPopupOpen;
 import d_imgui.imgui_h : ImVec2;
 import tests.unit.ui.headless_panel : HeadlessPanel, openPanel;
 import vibe3d.viewport.camera.view : View;
@@ -71,7 +71,7 @@ private final class HistoryPanelKeepAliveTool : Tool {
     }
 }
 
-private final class HistoryPanelModelTool : Tool, tool.TopologyStepClient {
+private final class HistoryPanelModelTool : Tool, vibe3d.editing.tools.interactive.tool.TopologyStepClient {
     Mesh* mesh;
     size_t rebases;
     override ToolSessionPolicy sessionPolicy() const nothrow @nogc {
@@ -86,7 +86,7 @@ private final class HistoryPanelModelTool : Tool, tool.TopologyStepClient {
     override string topologyStepLabel() { return "Model"; }
     override void setTopologyDormant(bool) {}
     override void rebaseTopologyStep(vibe3d.mesh.snapshot.snapshot.MeshSnapshot) { ++rebases; }
-    override void restoreTopologyStep(in tool.AttrImage, vibe3d.mesh.snapshot.snapshot.MeshSnapshot) { assert(false); }
+    override void restoreTopologyStep(in vibe3d.editing.tools.interactive.tool.AttrImage, vibe3d.mesh.snapshot.snapshot.MeshSnapshot) { assert(false); }
 }
 
 private final class HistoryPanelActionHarness {
@@ -465,8 +465,8 @@ unittest { // the History panel seam cannot silently grow EditorApp back
 }
 
 unittest { // Real marker rows retain panel identity and an empty Copy argstring.
-    import tests.unit.command_history_test : ResidualRig;
-    import command_history : HistoryFlags;
+    import vibe3d.editing.tools.interactive.tests.unit.command_history_test : ResidualRig;
+    import vibe3d.editing.commands.runtime.command_history : HistoryFlags;
     auto harness = new HistoryPanelActionHarness();
     auto r = new ResidualRig(false); r.h = harness.history;
     r.h.recordToolLifecycle(r.activation);
@@ -491,8 +491,8 @@ unittest { // Real marker rows retain panel identity and an empty Copy argstring
 }
 
 unittest { // A new pending edit responds before the marker underneath it.
-    import tests.unit.command_history_test : ResidualRig;
-    import command_history : HistoryFlags;
+    import vibe3d.editing.tools.interactive.tests.unit.command_history_test : ResidualRig;
+    import vibe3d.editing.commands.runtime.command_history : HistoryFlags;
     auto harness = new HistoryPanelActionHarness();
     auto r = new ResidualRig(false); r.h = harness.history;
     r.press("press", 1, true); r.close(); assert(r.h.undo());
@@ -511,7 +511,7 @@ unittest { // A new pending edit responds before the marker underneath it.
 }
 
 unittest { // A real residual row cannot settle another bound model client.
-    import tests.unit.command_history_test : ResidualRig;
+    import vibe3d.editing.tools.interactive.tests.unit.command_history_test : ResidualRig;
     auto harness = new HistoryPanelActionHarness();
     auto r = new ResidualRig(false); r.h = harness.history;
     r.h.recordToolLifecycle(r.activation);

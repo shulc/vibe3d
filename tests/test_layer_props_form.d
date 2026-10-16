@@ -26,8 +26,8 @@
 // ?` answered correctly the whole time the channel was unreachable. Asserting
 // through it would reproduce the original mistake in test form.
 
-import forms;
-import layer_params : LayerPropsProvider, layerAttrUniverse, itemPropsTarget;
+import vibe3d.ui.forms.forms;
+import vibe3d.documents.channels.layer_params : LayerPropsProvider, layerAttrUniverse, itemPropsTarget;
 import vibe3d.editing.params.params : Param;
 
 import std.algorithm : canFind;

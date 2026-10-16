@@ -1,0 +1,1645 @@
+module vibe3d.ui.editor.ui.viewport_render;
+
+// Task 0722 (audit §2C A3). The scene renderer is not a panel: 871
+// lines, 22 gl* calls, and NOT ONE reference to ImGui. It ended up inside
+// `ui/panels.d` as a side effect of 0419, which moved every remaining
+// draw-something entry point out of app.d's main() in one sweep and did not
+// separate the ImGui panels from the one GL scene pass among them. This file
+// is that separation, and nothing else: the body below is byte-identical to
+// what stood in panels.d, including its function-local `import bindbc.opengl`.
+//
+// Consequence measured, not assumed: after the move `ui/panels.d` contains
+// ZERO gl* calls and zero GL_ constants, so it drops `bindbc.opengl` and seven
+// other imports that only this function needed.
+//
+// Import surface: built by the COMPILER, not harvested. panels.d and
+// editor_app.d both carry a copied block of ~250 imports from app.d and say so
+// in their own headers; repeating that here would have made the third copy.
+// Instead the module started with no imports at all and each one below was
+// added in answer to a named error from a semantic-only pass over this single
+// module -- which is why the list is short.
+
+import vibe3d.util.math.math;
+import vibe3d.util.spatial.spatial : ModelSpace, Orientation, Viewport, isOrtho;                 // Vec3, Viewport, ModelSpace, identityMatrix, matMul4
+import vibe3d.viewport.host.bg_gpu_cache          : BgGpuDrawCache;
+import vibe3d.mesh.core.mesh;                 // Mesh, MeshStructKey, MeshTopoKey
+import vibe3d.mesh.ops.mesh_ops.loop_slice   : loopSliceRingEdges;
+import vibe3d.editing.contracts.editmode;             // EditMode
+import vibe3d.editing.contracts.seltype;              // SelType, viewportPickType
+import vibe3d.viewport.gpu.mesh_gpu              : BaseDots, BaseWire, FacePass, GpuMesh, OccludedPass;
+import vibe3d.viewport.display_policy.retopology_line_shade : lineShade;
+import vibe3d.viewport.display_policy.retopology_dot_cull  : cullEyeOf, DotCullKey, DotList, visibleDots;
+import vibe3d.viewport.display_policy.retopology_order     : entersItemSequence, retopologyDrawSequence, SeqEntry;
+import vibe3d.viewport.display_policy.viewport_scheme       : schemeColor, SchemeColor;
+import vibe3d.editing.tools.interactive.handles.gl_util       : setThickLineScreenSize;
+import vibe3d.documents.model.document              : Document, Layer, kindInfo;
+import vibe3d.viewport.host.viewport              : Viewport3D;
+import vibe3d.viewport.display_policy.viewport_overlay_mode : OverlayMode;
+import vibe3d.viewport.display_policy.display_state         : DrawPlan, SurfaceShading;
+import vibe3d.util.profiling.perf_probe            : g_fc, g_perf, DrawPass, Cat;
+import vibe3d.viewport.gpu.gpu_pass_timer        : GpuPassTimer, GpuSeg, resolveGpuTimingArmed,
+                                g_gpuTimerPerfMode;
+import vibe3d.editing.tools.interactive.tool                  : Tool, rolloverDraws;
+import vibe3d.editing.tools.interactive.model_preview : ModelPreviewView, ModelPreviewResolution, ModelPreviewKey,
+                       resolveModelPreview;
+import vibe3d.viewport.subpatch.subpatch_preview : SubpatchPreview;
+import vibe3d.editing.pipeline.runtime.toolpipe.pipeline     : ToolPipeContext;
+import vibe3d.editing.pipeline.runtime.toolpipe.stage        : TaskCode;
+import vibe3d.editing.pipeline.contracts.toolpipe.packets      : SubjectPacket;
+import vibe3d.editing.pipeline.evaluation.toolpipe.stages.workplane : WorkplaneStage;
+import vibe3d.editing.tools.interactive.tools.create.create_common : pickMostFacingPlane;
+import vibe3d.editing.pipeline.contracts.operator              : VectorStack;
+import vibe3d.editing.selection.query.viewgrid              : ViewGridPrefs, viewGridSizeFor, viewGridFadeRadius,
+                               axisComp, viewWorkPlaneAnchor;
+import vibe3d.viewport.gpu.shader                : Shader, LitShader, CheckerShader, GridShader;
+import vibe3d.viewport.host.viewport_composite    : ViewportCompositor, curvatureTapPx;
+import vibe3d.editing.tools.interactive.pipe_gizmo_host       : PipeGizmoHost;
+import vibe3d.editing.tools.interactive.tools.slice.loop_slice_tool : LoopSliceTool;
+import vibe3d.editing.tools.interactive.tools.transform.transform   : TransformTool;
+
+// The copilot ghost overlay at the tail of the scene pass; compiled out of
+// `modeling-noai` exactly as it is in ui/panels.d, whose block this mirrors.
+version (WithAI) {
+    import vibe3d.runtime.ai_advisor.ai.copilot_gate : kCopilotEnabled;
+    import vibe3d.runtime.ai_advisor.ai.state : EditorAiState;
+    import vibe3d.ui.editor.copilot_panel : CopilotPanel;
+    import vibe3d.ui.editor.copilot_overlay : drawCopilotFindingOverlay;
+}
+
+// =============================================================================
+// Task 0782 / plan §9: the scene pass consumes role-specific inputs. None of
+// these structs is a renamed application context: the document and mesh stay
+// borrowed from their owners, display policy is already resolved by the frame
+// loop, GPU handles are grouped separately, and renderer scratch lives on the
+// renderer instance below. BgGpuDrawCache stays a separate draw-only view so
+// its GL lifetime remains owned by FrameRunner.
+// =============================================================================
+
+alias BuildToolSubject = void delegate(out SubjectPacket, ref VectorStack);
+
+// ---- The per-item draw bracket (task 8590, plan M-C) -----------------------
+// An item's draw is `beginItem` → faces (`facePassFor`) → edges → dots, each
+// read from the item's `DrawPlan` alone; nothing here names a display mode.
+
+/// The face pass of an item drawn under `plan` through `model`: a copy of the
+/// plan's face-pass fields, deciding nothing itself (the order is the plan's
+/// `reverseFaceOrder`, not inferred from the alpha). `mirrored` is the sign of
+/// the model's 3x3 determinant.
+FacePass facePassFor(const ref DrawPlan plan, const ref float[16] model)
+    @safe pure nothrow @nogc
+{
+    FacePass fp;
+    fp.cullBack     = plan.cullBackFaces;
+    fp.alpha        = plan.faceAlpha;
+    fp.reverseOrder = plan.reverseFaceOrder;
+    fp.mirrored     = matrixMirrorsWinding(model);
+    fp.bySurface    = plan.cullBySurface;
+    return fp;
+}
+
+/// The base line pass of an item drawn under `plan` through `model`: the
+/// plan's colour, shaded by the light function at the item's local +Z when
+/// the plan says so (`shadeLinesByItem`), and its opacity. `view` is the
+/// camera's view matrix, the one the lit program's normal matrix composes
+/// (the light rig is view-relative).
+BaseWire baseWireFor(const ref DrawPlan plan, const ref float[16] model,
+                     const ref float[16] view, int locAlpha) @safe pure nothrow @nogc
+{
+    Vec3 c = Vec3(plan.wireColor[0], plan.wireColor[1], plan.wireColor[2]);
+    if (plan.shadeLinesByItem) c = lineShade(c, model, view, plan.lightGain);
+    return BaseWire(plan.drawWire, locAlpha, plan.wireAlpha, c);
+}
+
+/// The base dot pass of an item, the twin of `baseWireFor`: the plan's dot
+/// colour (shaded the same way), opacity and size. Whether it draws and which
+/// dots it draws are the caller's (the vertex-dot block and the cull).
+BaseDots baseDotsFor(const ref DrawPlan plan, const ref float[16] model,
+                     const ref float[16] view, int locAlpha) @safe pure nothrow @nogc
+{
+    BaseDots d;
+    Vec3 c = Vec3(plan.vertColor[0], plan.vertColor[1], plan.vertColor[2]);
+    if (plan.shadeLinesByItem) c = lineShade(c, model, view, plan.lightGain);
+    d.color    = c;
+    d.alpha    = plan.vertAlpha;
+    d.size     = plan.pointSize;
+    d.locAlpha = locAlpha;
+    return d;
+}
+
+/// The G-buffer surface id of layer `layerIndex` (model M4): index + 1, so
+/// 0 means "no surface"; an index past the RGBA16UI channel shares 65535.
+uint surfaceIdForLayer(size_t layerIndex) @safe pure nothrow @nogc {
+    return layerIndex >= 65534 ? 65535u : cast(uint)(layerIndex + 1);
+}
+
+/// Head of an item's draw: with `clearDepthFirst` the item starts on a clear
+/// depth buffer (captured: one depth clear per foreground item). The depth
+/// mask is forced on first because a depth clear honours it; no current path
+/// reaches here with it off (`endHighlightPasses` restores it), so the line is
+/// defensive.
+private void beginItem(const ref DrawPlan plan) {
+    import bindbc.opengl : glClear, glDepthMask, GL_DEPTH_BUFFER_BIT, GL_TRUE;
+    if (plan.clearDepthFirst) {
+        glDepthMask(GL_TRUE);
+        glClear(GL_DEPTH_BUFFER_BIT);
+    }
+}
+
+struct SceneInputs {
+    Document* document;
+    Mesh* mesh;
+    int subpatchDepth;
+    ToolPipeContext pipeContext;
+    version (WithAI) {
+        EditorAiState aiState;
+        CopilotPanel copilotPanel;
+    }
+}
+
+struct SceneViewInputs {
+    Viewport3D cell;
+    Viewport* viewport;
+}
+
+struct SceneDisplayInputs {
+    DrawPlan activePlan;
+    DrawPlan backdropPlan;
+    ViewGridPrefs grid;
+    string weightMapName;
+    SelType feedbackType;
+    SelType currentType;
+    int hoveredVertex = -1;
+    int hoveredEdge = -1;
+    int hoveredFace = -1;
+    int hoveredItem = -1;
+    bool showVertexHover;
+    bool showEdgeHover;
+    bool showFaceHover;
+    version (WithAI) {
+        bool testMode;
+        bool copilotPanelShown;
+    }
+}
+
+struct SceneGpuInputs {
+    GpuMesh* primary;
+    Shader shader;
+    LitShader litShader;
+    CheckerShader checkerShader;
+    GridShader gridShader;
+    uint gridVao;
+    int gridOnlyVertCount;
+}
+
+struct ToolOverlayInputs {
+    Tool activeTool;
+    PipeGizmoHost gizmoHost;
+    BuildToolSubject buildSubject;
+    DrawPlan plan;
+    bool falloffActive;
+}
+
+// -------------------------------------------------------------------------
+// Phase 2 — FBO scene render
+// -------------------------------------------------------------------------
+/// The grid's model matrix: the unit XZ lattice scaled by `step` and laid in
+/// the plane the work plane stands for in this view. Pinned: the stage's basis
+/// through its centre (the translation is a world point, so it is not scaled).
+/// Auto: in ortho the most-facing world plane through the origin, the stage's
+/// own auto pick (`pickMostFacingPlane`); in perspective the world XZ ground
+/// grid, beside `workPlaneLatticeModel`. Tasks 9451, 9509 (capture K-GR).
+float[16] gridPlaneModel(const ref Viewport vp, float step, const WorkplaneStage wp) {
+    Vec3 n = Vec3(0, 1, 0), a1 = Vec3(1, 0, 0), a2 = Vec3(0, 0, 1), c = Vec3(0, 0, 0);
+    if (wp !is null && !wp.isAuto) {
+        wp.currentBasis(n, a1, a2);
+        c = wp.center;
+    } else if (isOrtho(vp)) {
+        immutable bp = pickMostFacingPlane(vp);
+        n = bp.normal; a1 = bp.axis1; a2 = bp.axis2;
+    }
+    return planeModel(n, a1, a2, c, step);
+}
+
+/// The perspective work-plane lattice (capture K-GR rule 3, GR_P_*): the auto
+/// plane (`pickMostFacingPlane`) shifted along its normal to the click law's
+/// rounded focus channel (`viewWorkPlaneAnchor`, measured_laws §13); in-plane
+/// the lattice stays on the world lines (gdb: a normal-only translation).
+float[16] workPlaneLatticeModel(const ref Viewport vp, float step) {
+    immutable bp = pickMostFacingPlane(vp);
+    immutable int k = bp.normal.x != 0 ? 0 : (bp.normal.y != 0 ? 1 : 2);
+    return planeModel(bp.normal, bp.axis1, bp.axis2,
+                      bp.normal * axisComp(viewWorkPlaneAnchor(vp, k), k), step);
+}
+
+private float[16] planeModel(Vec3 n, Vec3 a1, Vec3 a2, Vec3 c, float step) {
+    return [
+        a1.x * step, a1.y * step, a1.z * step, 0,
+        n.x  * step, n.y  * step, n.z  * step, 0,
+        a2.x * step, a2.y * step, a2.z * step, 0,
+        c.x,         c.y,         c.z,         1,
+    ];
+}
+
+
+// Renders the active viewport's scene (mesh + grid + gizmos) into v.fbo.
+// Called AFTER picking / hover-resolution (so hover state is current for
+// this frame) and BEFORE ImGui.Render() (so the ImGui.Image draw command
+// recorded inside the "Viewport" window samples the freshly-filled texture
+// at RenderDrawData → same-frame content, zero latency).
+//
+// Inputs are named above by role; the only mutable render scratch is owned by
+// the ViewportSceneRenderer instance.
+final class ViewportSceneRenderer {
+    // One detached derived display, shared across cells (20261660). Cage marks
+    // and surfaces remain authoritative; GPU origins map the limit surface back.
+    private SubpatchPreview modelPreview_;
+    private GpuMesh modelPreviewGpu_;
+    private ModelPreviewKey modelPreviewKey_;
+    private bool haveModelPreviewKey_;
+    private bool haveModelPreviewGpu_;
+
+    private void retireModelPreview() {
+        if (haveModelPreviewGpu_) modelPreviewGpu_.destroy();
+        modelPreviewGpu_ = GpuMesh();
+        haveModelPreviewGpu_ = false;
+        modelPreview_.deactivate();
+        modelPreview_.dropTopologyCache();
+        modelPreview_ = SubpatchPreview.init;
+        modelPreviewKey_ = ModelPreviewKey.init;
+        haveModelPreviewKey_ = false;
+    }
+
+    /// Runs even when every cell's dirty key skips drawing.
+    void reconcileModelPreview(Tool tool) {
+        auto chosen = resolveModelPreview(tool, ModelPreviewView.init);
+        if (!chosen.replacement) retireModelPreview();
+    }
+
+    void shutdown() { retireModelPreview(); }
+
+    private ModelPreviewResolution primaryRepresentation(SceneInputs scene,
+                                                          SceneGpuInputs gpu,
+                                                          Tool tool) {
+        auto chosen = resolveModelPreview(tool, ModelPreviewView(scene.mesh, gpu.primary));
+        if (!chosen.replacement) {
+            retireModelPreview();
+            return chosen;
+        }
+        if (scene.subpatchDepth <= 0 || !chosen.view.mesh.hasAnySubpatch()) {
+            retireModelPreview();
+            return chosen;
+        }
+        auto key = ModelPreviewKey.from(chosen, scene.subpatchDepth);
+        if (!haveModelPreviewKey_ || modelPreviewKey_ != key) {
+            modelPreview_.rebuild(*chosen.view.mesh, scene.subpatchDepth);
+            if (modelPreview_.active) {
+                if (!haveModelPreviewGpu_) {
+                    modelPreviewGpu_.init();
+                    haveModelPreviewGpu_ = true;
+                }
+                modelPreviewGpu_.upload(modelPreview_.mesh,
+                    modelPreview_.trace.edgeOrigin, modelPreview_.trace.vertOrigin,
+                    modelPreview_.trace.faceOrigin);
+            }
+            modelPreviewKey_ = key;
+            haveModelPreviewKey_ = true;
+        }
+        if (modelPreview_.active) chosen.view.gpu = &modelPreviewGpu_;
+        return chosen;
+    }
+
+public:
+    version(unittest)
+    void drawToolOverlaysForTest(ToolOverlayInputs inputs, OverlayMode mode,
+                                 ref Viewport viewport, Shader shader) {
+        drawToolOverlays(inputs, mode, viewport, shader);
+    }
+
+private:
+    // ---- the base-dot cull cache ------------------------------------------
+    // One slot per (cell, item mesh); recomputed only when its `DotCullKey`
+    // no longer matches, counted per cell (`Viewport3D.dotCullRecomputes`, on
+    // `/api/viewport/display`). A cell's slots not visited by its latest draw
+    // are dropped at the end of that draw, so the table stays bounded.
+    static struct DotCullId { size_t cell; size_t mesh; }
+    static struct DotCullSlot { DotCullKey key; DotList list; ulong id; ulong visit; }
+    DotCullSlot[DotCullId] dotCull_;
+    ulong dotCullNextId_;
+    ulong drawSerial_;
+
+    /// The cached dot list of `mesh` drawn through `model` in cell `v`.
+    const(DotList)* dotCullFor(Viewport3D v, ref const Mesh mesh,
+                               const ref float[16] model, const ref Viewport vp,
+                               out ulong listId) {
+        import vibe3d.mesh.change.mesh_dirty : g_displayEpochs;
+        import vibe3d.runtime.application_core.morph_target : displayVertices;
+        immutable DotCullId id = DotCullId(cast(size_t)cast(void*)v,
+                                           cast(size_t)&mesh);
+        immutable ulong dispEpoch = g_displayEpochs.epochFor(cast(size_t)&mesh);
+        DotCullSlot* slot = id in dotCull_;
+        if (slot is null) {
+            dotCull_[id] = DotCullSlot.init;
+            slot = id in dotCull_;
+        }
+        slot.visit = drawSerial_;
+        if (!slot.key.matches(mesh, dispEpoch, vp.view, vp.proj, model)) {
+            auto dv = displayVertices(&mesh);
+            const(Vec3)[] vpos = (dv.length == mesh.vertices.length)
+                ? dv : mesh.vertices;
+            slot.list = visibleDots(mesh, vpos, model,
+                                    cullEyeOf(vp.view, vp.proj, vp.eye));
+            slot.key.stamp(mesh, dispEpoch, vp.view, vp.proj, model);
+            slot.id = ++dotCullNextId_;
+            ++v.dotCullRecomputes;
+        }
+        listId = slot.id;
+        return &slot.list;
+    }
+
+    /// Drop cell `v`'s slots that its latest draw did not visit.
+    void dropUnvisitedDotCull(Viewport3D v) {
+        immutable size_t cell = cast(size_t)cast(void*)v;
+        DotCullId[] stale;
+        foreach (k, ref sl; dotCull_)
+            if (k.cell == cell && sl.visit != drawSerial_) stale ~= k;
+        foreach (k; stale) dotCull_.remove(k);
+    }
+
+    /// `d` restricted to the dots the cull keeps, when the plan culls and the
+    /// item's vertex buffer is in cage slots (no live subpatch preview:
+    /// `faceOriginGpu` empty); otherwise `d` unchanged.
+    BaseDots culledBaseDots(BaseDots d, const ref DrawPlan plan, ref GpuMesh g,
+                            ref const Mesh m, const ref float[16] model,
+                            Viewport3D v, const ref Viewport vp) {
+        if (d.draw && plan.cullHiddenVerts && g.faceOriginGpu.length == 0) {
+            ulong listId;
+            const(DotList)* dl = dotCullFor(v, m, model, vp, listId);
+            d.useDrawList   = true;
+            d.drawList      = dl.slots;
+            d.drawListSlots = dl.slotCount;
+            d.drawListId    = listId;
+        }
+        return d;
+    }
+
+    // ---- GPU pass timing (model M7, task 9140) ----------------------------
+    // The drawing cell's timer for the duration of `draw` (helpers below
+    // mark through it); the arm is resolved once, on the first draw.
+    GpuPassTimer* segTimer_;
+
+    // The composite stage (model M4): one for every cell, built
+    // on the first frame whose active plan has a non-empty composite.
+    ViewportCompositor compositor_;
+    bool gpuTimingResolved_;
+    bool gpuTimingArmed_;
+
+    // ---- the item sequence (task 8610, plan §10.3 / §10.12) ----------------
+    // Under a plan with `clearDepthFirst` every item is drawn through the same
+    // bracket: the non-primary ones by `drawPlainItem`, in the order
+    // `retopologyDrawSequence` gives, around the primary's own bracket; the
+    // primary's selection and hover feedback follows the LAST entry (captured:
+    // depth-tested against what the sequence left, with the occluded pass).
+    SeqEntry[] seqBefore_;
+    SeqEntry[] seqAfter_;
+
+    /// Bind layer `lyr`'s own materials (and, under the weight style, its own
+    /// weight colours) on the lit program, which must already be in use. The
+    /// materials buffer is SHARED by every lit draw, so each item binds its own.
+    void bindLayerSurfaces(ref GpuMesh g, Layer lyr, const ref DrawPlan plan,
+                           LitShader lit, string weightMapName) {
+        lit.setSurfaces(lyr.meshRef().surfaces);
+        if (plan.shading == SurfaceShading.Weight)
+            g.uploadWeightColors(lyr.meshRef(), weightMapName);
+    }
+
+    /// The base line and dot passes of an item under `plan`, with no selection
+    /// or hover: edges iff the plan draws wire, dots iff it draws vertices
+    /// (culled per `culledBaseDots`), both at the plan's dim, restored after.
+    void drawItemLinesAndDots(ref GpuMesh g, ref const Mesh m,
+                              const ref float[16] model, const ref DrawPlan plan,
+                              Shader shader, Viewport3D v, const ref Viewport vp) {
+        shader.useProgram(model, vp);
+        shader.setDim(plan.dim);
+        if (plan.drawWire) {
+            segTimer_.mark(GpuSeg.edges);
+            g.drawEdges(shader.locColor, -1, MarkView.init, [],
+                        baseWireFor(plan, model, vp.view, shader.locAlpha));
+        }
+        if (plan.drawVerts) {
+            segTimer_.mark(GpuSeg.verts);
+            g.drawVertices(shader.locColor, shader.locPointSize, -1,
+                           MarkView.init, OccludedPass.init,
+                           culledBaseDots(baseDotsFor(plan, model, vp.view,
+                                                      shader.locAlpha),
+                                          plan, g, m, model, v, vp));
+        }
+        shader.setDim(1.0f);
+    }
+
+    /// One non-primary item: the bracket's head, the face pass in the item's
+    /// own materials through its own matrix, then its base lines and dots. No
+    /// selection, hover or tool state reaches it; every uniform it sets is
+    /// restored.
+    void drawPlainItem(ref GpuMesh g, Layer lyr, size_t layerIndex,
+                       const ref float[16] model,
+                       const ref DrawPlan plan, Shader shader, LitShader lit,
+                       Viewport3D v, const ref Viewport vp, string weightMapName) {
+        beginItem(plan);
+        if (plan.drawFaces) {
+            segTimer_.mark(GpuSeg.faces);
+            lit.useProgram(model, vp);
+            bindLayerSurfaces(g, lyr, plan, lit, weightMapName);
+            lit.applyPlan(plan, surfaceIdForLayer(layerIndex));
+            g.drawFaces(lit, facePassFor(plan, model));
+            lit.restorePlanDefaults();
+        }
+        drawItemLinesAndDots(g, lyr.meshRef(), model, plan, shader, v, vp);
+    }
+
+    /// Draw `entries` in order: a foreground entry under `activePlan`, a joined
+    /// backdrop entry under `backdropPlan`, each from the buffers the backdrop
+    /// pass kept current this frame, attributed to the backdrop counters.
+    void drawItemSequence(const(SeqEntry)[] entries, ref Document document,
+                          BgGpuDrawCache cache, const ref DrawPlan activePlan,
+                          const ref DrawPlan backdropPlan, Shader shader,
+                          LitShader lit, Viewport3D v, const ref Viewport vp,
+                          string weightMapName) {
+        foreach (e; entries) {
+            Layer lyr = document.layers[e.layerIndex];
+            // The backdrop pass called `gpuFor` on every layer of the sequence
+            // earlier in this frame (its loop skips only the DRAW of them), so
+            // the entry exists; a null here means that upkeep moved.
+            GpuMesh* g = cache.find(lyr);
+            assert(g !is null, "item sequence: the backdrop pass did not keep this "
+                               ~ "layer's upload current");
+            auto zBackdrop = g_fc.backdrop();
+            float[16] model = lyr.xform.composedMatrix();
+            drawPlainItem(*g, lyr, e.layerIndex, model,
+                          e.foreground ? activePlan : backdropPlan,
+                          shader, lit, v, vp, weightMapName);
+        }
+    }
+
+    // ---- the backdrop pass (model M4) --------------------------------------
+    // One kept backdrop layer of this frame: built by the upkeep loop, read by
+    // the faces loop and the wire loop (the cache is not consulted again).
+    struct BgDraw {
+        size_t layer;
+        GpuMesh* g;
+        float[16] model;
+    }
+    BgDraw[] bgDraw_;
+
+    /// Layer `i` keeps its background upload current this frame: a visible
+    /// non-primary geometry layer. Never gated on a draw flag or the item
+    /// sequence — `drawItemSequence` reads the entries this upkeep keeps.
+    /// A non-mesh layer participates in neither upload nor draw (task 0615).
+    bool backdropKeepsUpload(ref Document document, size_t i) {
+        Layer lyr = document.layers[i];
+        return !document.isPrimary(lyr) && lyr.visible
+            && kindInfo(lyr.kind).drawsGeometry;
+    }
+
+    /// Layer `i` is DRAWN by the backdrop pass: kept, and not left to the item
+    /// sequence (which draws its own layers through `drawItemSequence`).
+    bool backdropDrawsLayer(ref Document document, size_t i, bool itemSequence,
+                            const ref DrawPlan backdropPlan) {
+        return backdropKeepsUpload(document, i)
+            && !(itemSequence && entersItemSequence(document, i,
+                                                    backdropPlan.joinsItemSequence));
+    }
+
+    /// The backdrop face pass of one kept layer, in its own materials (and,
+    /// under the weight style, its own weight colours — task 1090, D6).
+    /// Submissions are attributed to the BACKDROP perf slots.
+    void drawBackdropFaces(ref BgDraw e, ref Document document,
+                           const ref DrawPlan backdropPlan, LitShader lit,
+                           const ref Viewport vp, string weightMapName) {
+        segTimer_.mark(GpuSeg.backdropFaces);
+        auto zBackdrop = g_fc.backdrop();
+        lit.useProgram(e.model, vp);
+        bindLayerSurfaces(*e.g, document.layers[e.layer], backdropPlan, lit,
+                          weightMapName);
+        lit.applyPlan(backdropPlan, surfaceIdForLayer(e.layer));
+        (*e.g).drawFaces(lit, facePassFor(backdropPlan, e.model));
+        lit.restorePlanDefaults();
+    }
+
+    /// The backdrop base wire of one kept layer, iff the plan draws wire —
+    /// independent of `drawFaces`. Backdrop layers carry no selection or
+    /// hover, and the pass reads the BACKDROP side of the activity axis.
+    void drawBackdropWire(ref BgDraw e, const ref DrawPlan backdropPlan,
+                          Shader shader, const ref Viewport vp) {
+        if (!backdropPlan.drawWire) return;
+        segTimer_.mark(GpuSeg.backdropWire);
+        auto zBackdrop = g_fc.backdrop();
+        shader.useProgram(e.model, vp);
+        shader.setDim(backdropPlan.dim);
+        (*e.g).drawEdges(shader.locColor, -1, MarkView.init, [],
+            baseWireFor(backdropPlan, e.model, vp.view, shader.locAlpha));
+        shader.setDim(1.0f);
+    }
+
+    uint[] faceSelEdgesCache_;
+    uint[] faceSelEdgesPrevSel_;
+    MeshStructKey faceSelEdgesKey_;
+    bool[] loopHoverEdgesCache_;
+    int loopHoverPrevEdge_ = -2;
+    MeshTopoKey loopHoverKey_;
+    bool loopHoverPrevSlice_;
+
+    const(bool)[] rebuildLoopHoverMask(ref Mesh mesh, int hovEdge,
+                                       bool sliceRing) {
+        mesh.assertLoopsValid();
+        mesh.assertEdgeMapValid();
+        if (loopHoverPrevEdge_ == hovEdge
+            && loopHoverKey_.matches(mesh)
+            && loopHoverPrevSlice_ == sliceRing
+            && loopHoverEdgesCache_.length == mesh.edges.length)
+            return loopHoverEdgesCache_;
+
+        loopHoverPrevEdge_ = hovEdge;
+        loopHoverKey_.stamp(mesh);
+        loopHoverPrevSlice_ = sliceRing;
+        if (loopHoverEdgesCache_.length != mesh.edges.length)
+            loopHoverEdgesCache_ = new bool[](mesh.edges.length);
+        loopHoverEdgesCache_[] = false;
+
+        if (hovEdge < 0 || hovEdge >= cast(int)mesh.edges.length)
+            return loopHoverEdgesCache_;
+        if (sliceRing) {
+            foreach (ei; mesh.loopSliceRingEdges(cast(uint)hovEdge))
+                if (ei >= 0 && ei < cast(int)loopHoverEdgesCache_.length)
+                    loopHoverEdgesCache_[ei] = true;
+            return loopHoverEdgesCache_;
+        }
+
+        auto seed = mesh.edges[hovEdge];
+        uint[] ring = edgeLoopRing(mesh, seed[0], seed[1]);
+        if (ring.length < 2) return loopHoverEdgesCache_;
+        foreach (i; 0 .. ring.length) {
+            uint a = ring[i];
+            uint b = ring[(i + 1) % ring.length];
+            if (a == b) continue;
+            if (auto p = edgeKey(a, b) in mesh.edgeIndexMap) {
+                uint ei = *p;
+                if (ei < loopHoverEdgesCache_.length)
+                    loopHoverEdgesCache_[ei] = true;
+            }
+        }
+        return loopHoverEdgesCache_;
+    }
+
+    package(vibe3d.ui.editor.ui) void drawToolOverlays(ToolOverlayInputs inputs, OverlayMode mode,
+                                  ref Viewport viewport, Shader shader) {
+        if (mode == OverlayMode.None) return;
+        // Keep the pass below the off-overlay guard: a disabled cell must not
+        // publish an empty handle pass (task 5490, witness cell 2(j)/(k)).
+        auto handlePassScope = g_fc.handlePass();
+        auto zOv = g_perf.scope_(Cat.drawOverlays);
+        bool visualOnly = (mode == OverlayMode.Visual);
+        if (inputs.activeTool) {
+            SubjectPacket subj; VectorStack vts;
+            inputs.buildSubject(subj, vts);
+            inputs.activeTool.draw(shader, viewport, vts, inputs.plan, visualOnly);
+        } else if (inputs.falloffActive) {
+            import vibe3d.editing.pipeline.contracts.toolpipe.packets : FalloffPacket;
+            SubjectPacket subj; VectorStack vts;
+            inputs.buildSubject(subj, vts);
+            FalloffPacket fp;
+            if (auto p = vts.get!FalloffPacket()) fp = *p;
+            if (fp.enabled)
+                inputs.gizmoHost.draw(shader, viewport, fp,
+                                      inputs.gizmoHost.ownPool(), visualOnly);
+        }
+    }
+
+public:
+    void draw(SceneInputs scene, SceneViewInputs view,
+              SceneDisplayInputs display, SceneGpuInputs gpuInputs,
+              BgGpuDrawCache bgGpuCache, ToolOverlayInputs overlays,
+              OverlayMode overlayMode) {
+    assert(scene.document !is null && scene.mesh !is null
+           && scene.pipeContext !is null);
+    assert(view.cell !is null && view.viewport !is null);
+    assert(gpuInputs.primary !is null);
+    if (!gpuTimingResolved_) {
+        import std.process : environment;
+        import vibe3d.editing.commands.runtime.command : g_testMode;
+        gpuTimingResolved_ = true;
+        gpuTimingArmed_ = resolveGpuTimingArmed(
+            g_testMode, environment.get("VIBE3D_GPU_TIMING", ""));
+    }
+    segTimer_ = &view.cell.gpuTimer;
+    view.cell.gpuTimer.beginFrame(gpuTimingArmed_, g_gpuTimerPerfMode);
+    scope (exit) { view.cell.gpuTimer.endFrame(); segTimer_ = null; }
+    ++drawSerial_;
+    ref Document document = *scene.document;
+    auto chosen = primaryRepresentation(scene, gpuInputs, overlays.activeTool);
+    ref Mesh mesh = *chosen.view.mesh;
+    Viewport3D v = view.cell;
+    ref Viewport vp = *view.viewport;
+    ref GpuMesh gpu = *chosen.view.gpu;
+    auto shader = gpuInputs.shader;
+    auto litShader = gpuInputs.litShader;
+    auto checkerShader = gpuInputs.checkerShader;
+    auto gridShader = gpuInputs.gridShader;
+    immutable uint gridVao = gpuInputs.gridVao;
+    immutable int gridOnlyVertCount = gpuInputs.gridOnlyVertCount;
+    auto activeTool = overlays.activeTool;
+    immutable int hoveredVertex = chosen.geometryHover(display.hoveredVertex);
+    immutable int hoveredEdge = chosen.geometryHover(display.hoveredEdge);
+    immutable int hoveredFace = chosen.geometryHover(display.hoveredFace);
+    immutable bool showVertHover = display.showVertexHover;
+    immutable bool showEdgeHover = display.showEdgeHover;
+    immutable bool showFaceHover = display.showFaceHover;
+    import bindbc.opengl;
+
+    // H7 (tool session model, slice M6): the ONE read of the rollover data.
+    // With no tool armed the selection type decides (the branches below). With
+    // one, the hovered element of `type` is drawn iff the tool's policy flag or
+    // a flag of its pipe's stages draws it (`tool.rolloverDraws`: none /
+    // target / vertices; C-H7, C-H7-vert, C-H7-elem, gap 309/312).
+    // Which elements are hovered at all is the tool's pick need, not this.
+    bool rolloverShown(EditMode type) {
+        if (activeTool is null) return true;
+        immutable bool drag = activeTool.isDragging();
+        return rolloverDraws(activeTool.sessionPolicy().rollovers, type, drag)
+            || scene.pipeContext.pipeline.rolloverDraws(type, drag);
+    }
+    immutable int vertHovForDraw = rolloverShown(EditMode.Vertices) ? hoveredVertex : -1;
+    immutable int edgeHovForDraw = rolloverShown(EditMode.Edges)    ? hoveredEdge   : -1;
+    immutable int faceHovForDraw = rolloverShown(EditMode.Polygons) ? hoveredFace   : -1;
+
+    // ---- Resolve this cell's display state into what each pass may draw ----
+    //
+    // Task 0559 Phase 1 (doc/viewport_display_modes_plan.md). Before this,
+    // every mesh pass below was unconditional: faces always, edges always,
+    // background layers always the same two passes dimmed. That left no way
+    // to observe — let alone test — what the renderer decided to draw.
+    //
+    // Now the passes read a resolved plan and nothing else, so the renderer
+    // is structurally unable to draw what the plan does not describe. The
+    // display endpoint dumps these same two structs, which is what makes a
+    // plan dump a real assertion about drawing rather than a re-derivation
+    // that can drift.
+    //
+    // The plan is resolved FROM THE CELL (`v.display`), not from a frame
+    // value — display style is the first genuinely per-cell render input, and
+    // the cell's dirty key is stamped from these same two calls.
+    //
+    // Phase-1 neutrality: `v.display` defaults to today's behaviour and
+    // nothing writes it yet, so both plans resolve to exactly the set of
+    // passes that ran before — faces lit, wireframe on, no forced vertex
+    // dots, backdrop dimmed by the same factor that used to be a local
+    // constant here.
+    immutable DrawPlan activePlan   = display.activePlan;
+    immutable DrawPlan backdropPlan = display.backdropPlan;
+
+    // The item sequence runs iff the active plan clears depth per item; the
+    // backdrop pass below then leaves every layer the sequence draws to it.
+    immutable bool itemSequence = activePlan.clearDepthFirst;
+    if (itemSequence)
+        retopologyDrawSequence(document, backdropPlan.joinsItemSequence,
+                               seqBefore_, seqAfter_);
+
+    // Bind FBO — scene draws go here instead of the default framebuffer.
+    // Viewport covers the entire FBO (offsets zeroed: FBO origin IS the
+    // viewport corner).
+    glBindFramebuffer(GL_FRAMEBUFFER, v.fbo.fbo);
+    glViewport(0, 0, v.fbo.w, v.fbo.h);
+    // Per-cell thick-line screen size. g_thickLine.screenW/H is now a
+    // per-cell scratch: each cell sets its own FBO size here before its
+    // overlay gizmos draw, so the vertex-expanded line extrusion is
+    // always correct for the current cell (not the full window).
+    setThickLineScreenSize(v.fbo.w, v.fbo.h);
+
+    glClearColor(0.36f, 0.40f, 0.42f, 1.0f);
+    glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
+
+    // ---- Reference-image planes (task 0612) ------------------------------
+    //
+    // FIRST, immediately after the clear and BEFORE the grid below: the grid,
+    // the background layers and the primary all draw over
+    // it, which is what "behind the geometry" means.
+    //
+    // The draw contains NO placement logic. `resolvePlacement` is a pure
+    // function of the plane's channels, the linked clip's pixel dimensions and
+    // the item transform, and it also answers whether THIS cell shows THIS
+    // plane — so this loop is a lookup and a submission, and the geometry is
+    // asserted as numbers in `image_plane.d` rather than as pixels here.
+    //
+    // The cache is only ever LOOKED UP here. It cannot decode from a draw, by
+    // construction (`lookup` has no load path), which is what stops the
+    // per-cell dirty skip from turning into a decode-per-frame loop. A `Ready`
+    // placement whose path is somehow not resident draws nothing this frame —
+    // a state the once-per-frame `reconcile` in `app.d` makes unreachable, and
+    // which must be treated as "skip", never as "decode now".
+    //
+    // Ordered far-to-near by view-space depth of the centre, so several planes
+    // in one perspective cell composite in the right order under
+    // `transparency`. With the depth test off, submission order IS the
+    // ordering, so this is not optional the moment there is more than one.
+    {
+        import vibe3d.viewport.host.image_plane : resolvePlacementFor, ImagePlanePlacement;
+        import vibe3d.viewport.host.image_cache : imagePixelCache;
+        import vibe3d.editing.tools.interactive.handles.gl_util : drawImagePlane;
+        import vibe3d.viewport.camera.view : ProjKind;
+        import std.algorithm : sort;
+
+        static struct Drawable { float depth; ImagePlanePlacement pl; }
+        Drawable[] drawables;
+        foreach (lyr; document.layers) {
+            if (lyr is null || !lyr.hasImagePlane) continue;
+            // The clip lookup + the pure law, in one call (task 0643's
+            // extraction): the item ray asks the identical question, and two
+            // spellings of it could hit-test a quad this pass never drew.
+            auto pl = resolvePlacementFor(document, lyr,
+                                          v.camera.viewPreset,
+                                          v.camera.projKind == ProjKind.Ortho);
+            if (!pl.drawn) continue;
+            // View-space Z of the centre; more negative = further away under
+            // the GL convention, so ascending sort is far-to-near.
+            immutable Vec3 c = pl.center;
+            immutable float z = vp.view[2]*c.x + vp.view[6]*c.y
+                              + vp.view[10]*c.z + vp.view[14];
+            drawables ~= Drawable(z, pl);
+        }
+        if (drawables.length > 1)
+            drawables.sort!((a, b) => a.depth < b.depth);
+        if (drawables.length > 0) segTimer_.mark(GpuSeg.imagePlanes);
+        foreach (d; drawables) {
+            immutable uint tex = imagePixelCache().lookup(d.pl.sourcePath);
+            drawImagePlane(d.pl.center, d.pl.halfU, d.pl.halfV,
+                           d.pl.flipU, d.pl.invert, d.pl.smooth,
+                           d.pl.brightness, d.pl.contrast, d.pl.transparency,
+                           // restore to NO program: the very next statement
+                           // below is `shader.useProgram(...)`, which binds
+                           // the one this pass would otherwise have to guess.
+                           tex, vp, 0);
+        }
+    }
+
+    // Per-item (per-layer) transform — RENDER-ONLY (channels P4). Feed-site #1.
+    // NOTE (task 0617): `document.primaryModelSpace()`, the ModelSpace picking
+    // resolves against, folds ONLY `itemMatrix` — not the `tt.gpuMatrix` fold
+    // below. Currently fine because picking isn't exercised mid-drag; see
+    // `primaryModelSpace()`'s doc comment in document.d if that ever changes.
+    // Task 0654 — with an empty item selection there is no primary and no
+    // foreground geometry: `app.mesh` resolves to the empty stand-in, so the
+    // pass below submits zero triangles and the matrix only has to be
+    // well-formed. IDENTITY, never layer 0's transform — borrowing an
+    // unrelated item's frame here would place the (empty) foreground somewhere
+    // arbitrary the moment anything is selected again mid-frame.
+    float[16] itemMatrix = document.hasEditTarget()
+        ? document.primary.xform.composedMatrix() : identityMatrix;
+    float[16] meshModel  = itemMatrix;
+    {
+        TransformTool tt = cast(TransformTool)activeTool;
+        if (tt !is null)
+            // Task 6450: a preview-written VBO already contains the edit.
+            meshModel = matMul4(itemMatrix,
+                gpu.displayToolMatrix(tt.gpuMatrix));
+    }
+
+    shader.useProgram(meshModel, vp);
+
+    // Deliberately UNINSTRUMENTED in v1 (task 0196): the grid
+    // draws below (tiny constant cost) and the
+    // background-layer faces/edges loop further down (skipped entirely
+    // when document.layers.length == 1) have no Cat timer — a choice,
+    // not an omission. If wanted later, background faces fold into
+    // Cat.drawMesh and background edges into Cat.drawEdges.
+    // ---- Grid axis lines (alpha-blended, distance + edge fade) ----
+    glEnable(GL_BLEND);
+    glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
+
+    // ---- The grid step (task 0570) ----
+    //
+    // The lattice in `gridVao` is a UNIT lattice; the step it is drawn at is
+    // this cell's own, derived from this cell's own zoom. So the model matrix
+    // carries a uniform scale of `gridStep` and the buffer is never rebuilt.
+    //
+    // `gridStep` is always a LADDER RUNG, so the drawn spacing moves in
+    // visible steps as the camera zooms rather than gliding — that difference
+    // is the feature, not a rounding of it.
+    //
+    // A zero step means the view has no usable scale (a degenerate camera);
+    // fall back to the unit lattice rather than collapsing the grid to a
+    // point.
+    float gridStep = viewGridSizeFor(vp, display.grid);
+    if (!(gridStep > 0)) gridStep = 1.0f;
+
+    auto workStage = cast(WorkplaneStage) scene.pipeContext.pipeline.findByTask(TaskCode.Work);
+    immutable float[16] gridModel = gridPlaneModel(vp, gridStep, workStage);
+
+    // The distance fade radius is the grid's OWN half-extent, not a multiple
+    // of the camera distance.
+    //
+    // It used to be `camera.distance * 2`, which happened to sit inside the
+    // fixed 50-unit lattice at ordinary zooms and outside it when you pulled
+    // far back — a latent hard square edge nobody hit often. With a
+    // screen-anchored step the coincidence is gone in the other direction:
+    // the lattice's half-extent becomes `50 * step`, which at the bottom of a
+    // rung is ~1250 screen pixels while `2 * distance` is ~3 * the pane
+    // height, so on a tall pane the fade would reach PAST the lattice and the
+    // square boundary would be visible at every zoom. Tying the fade to the
+    // extent removes that class of defect at every zoom and every pane size:
+    // the grid always fades to nothing exactly where it ends.
+    immutable float gridFade = viewGridFadeRadius(gridStep);
+
+    segTimer_.mark(GpuSeg.grid);
+    glBindVertexArray(gridVao);
+    // Perf: the grid is three fixed submissions whose vertex count tracks the
+    // lattice size, so it is a CONSTANT floor under every scene frame.
+    // Counting it separately from the mesh passes is what lets a reader say
+    // "the model costs N draws" without the grid in the number.
+    if (isOrtho(vp)) {
+        // The ortho grid (capture K-GR): an UNDERLAY (no depth
+        // write, so any later geometry hides it, in front of the plane or
+        // behind), opaque and unfaded; minor lines every step, majors every 10
+        // steps (the same lattice at 10x), the two origin lines black. The
+        // fade is switched off through its uniforms: a radius past any
+        // lattice and a screen span that puts every fragment mid-screen.
+        glDepthMask(GL_FALSE);
+        scope (exit) glDepthMask(GL_TRUE);
+        gridShader.useProgram(gridModel, vp, 1e30f, 1e9f, 1e9f, -5e8f, -5e8f);
+        glUniform3f(gridShader.locColor, 83 / 255.0f, 92 / 255.0f, 97 / 255.0f);
+        glDrawArrays(GL_LINES, 0, gridOnlyVertCount);
+        g_fc.draw(DrawPass.grid, gridOnlyVertCount);
+        float[16] majorModel = gridModel;
+        majorModel[0 .. 12] *= 10.0f;
+        glUniformMatrix4fv(gridShader.locModel, 1, GL_FALSE, majorModel.ptr);
+        glUniform3f(gridShader.locColor, 65 / 255.0f, 72 / 255.0f, 75 / 255.0f);
+        glDrawArrays(GL_LINES, 0, gridOnlyVertCount);
+        g_fc.draw(DrawPass.grid, gridOnlyVertCount);
+        // The origin lines pass through the lattice origin, so the major
+        // model draws them in place (only longer).
+        glUniform3f(gridShader.locColor, 0.0f, 0.0f, 0.0f);
+        glDrawArrays(GL_LINES, gridOnlyVertCount, 4);
+        g_fc.draw(DrawPass.grid, 4);
+    } else {
+        // Width/height in PIXELS = FBO dims; offsets zeroed (FBO origin = corner).
+        gridShader.useProgram(gridModel, vp,
+            gridFade,
+            cast(float)v.fbo.w, cast(float)v.fbo.h,
+            0.0f, 0.0f);
+        glUniform3f(gridShader.locColor, 0.5f, 0.5f, 0.5f);
+        glDrawArrays(GL_LINES, 0, gridOnlyVertCount);
+        g_fc.draw(DrawPass.grid, gridOnlyVertCount);
+        glUniform3f(gridShader.locColor, 0.5f, 0.15f, 0.15f);
+        glDrawArrays(GL_LINES, gridOnlyVertCount, 2);
+        g_fc.draw(DrawPass.grid, 2);
+        glUniform3f(gridShader.locColor, 0.15f, 0.15f, 0.5f);
+        glDrawArrays(GL_LINES, gridOnlyVertCount + 2, 2);
+        g_fc.draw(DrawPass.grid, 2);
+        // The second lattice (capture K-GR rule 3): the auto work plane,
+        // uncoloured and lighter than the background — lines every 5 steps,
+        // majors every 10, its two world-axis lines brightest (colours: the
+        // near-focus readings of the GR_P_z frame). An underlay like the
+        // ortho grid (rule 1, measured in ortho only), so a later line draws
+        // over a coincident earlier one. Unfaded, through the ortho grid's
+        // neutral uniforms: the ground's fade is radial from the world origin
+        // and would erase a lattice 5 m away; the reference's fade, and a
+        // pinned plane's grid, are uncaptured (gap rows).
+        if (workStage is null || workStage.isAuto) {
+            glDepthMask(GL_FALSE);
+            scope (exit) glDepthMask(GL_TRUE);
+            immutable float[16] wpModel = workPlaneLatticeModel(vp, gridStep);
+            float[16] m = wpModel;
+            m[0 .. 12] *= 5.0f;
+            gridShader.useProgram(m, vp, 1e30f, 1e9f, 1e9f, -5e8f, -5e8f);
+            glUniform3f(gridShader.locColor, 96 / 255.0f, 106 / 255.0f, 111 / 255.0f);
+            glDrawArrays(GL_LINES, 0, gridOnlyVertCount);
+            g_fc.draw(DrawPass.grid, gridOnlyVertCount);
+            m = wpModel;
+            m[0 .. 12] *= 10.0f;
+            glUniformMatrix4fv(gridShader.locModel, 1, GL_FALSE, m.ptr);
+            glUniform3f(gridShader.locColor, 113 / 255.0f, 123 / 255.0f, 131 / 255.0f);
+            glDrawArrays(GL_LINES, 0, gridOnlyVertCount);
+            g_fc.draw(DrawPass.grid, gridOnlyVertCount);
+            glUniform3f(gridShader.locColor, 119 / 255.0f, 129 / 255.0f, 138 / 255.0f);
+            glDrawArrays(GL_LINES, gridOnlyVertCount, 4);
+            g_fc.draw(DrawPass.grid, 4);
+        }
+    }
+    glBindVertexArray(0);
+
+    glDisable(GL_BLEND);
+
+    // ---- Surface passes (model M4) ----
+    // Every face pass from here to `endSurfacePasses` (backdrop faces, the
+    // item sequence, the primary's faces) writes the G-buffer when the cell's
+    // composite plan is non-empty. Never under the item sequence: cavity
+    // resolves Off under retopology, so the bracket there is {C0}.
+    assert(!itemSequence || activePlan.composite.empty,
+           "the item sequence must resolve an empty composite plan");
+    v.fbo.beginSurfacePasses(activePlan.composite);
+
+    // ---- Background layers ----
+    //
+    // TASK 0654 — the `> 1` fast path is now `> 1 || no edit target`, and that
+    // second clause is the difference between "everything is background" and
+    // "everything went dark". (Formula updated, task 0678 D4: background is
+    // derived by `Document.roleOf` over the selection HISTORY since 0671 —
+    // the old `visible && !selected` reading here was the one 0671 struck
+    // out.) This DRAW pass and BgGpuCache's eviction predicate deliberately test
+    // `visible && !isPrimary`, NOT `document.background()`: a Foreground-role
+    // non-primary layer would otherwise be drawn by neither pass (the
+    // foreground pass renders only the primary) — and the rule of this very
+    // comment is "dim, not disappear". The snap-source gate below is the one
+    // that follows `document.background()`. An empty selection makes every
+    // visible layer background; the per-layer `isPrimary` skip below already
+    // lets them all through. But on a
+    // SINGLE-layer document the old gate short-circuited before the loop, and
+    // that one layer would then have been drawn by neither pass — the
+    // foreground pass skips it (it is not the primary; there is no primary) and
+    // this pass never ran. The user clicks empty space and their model
+    // vanishes. It must dim, not disappear.
+    bgDraw_.length = 0;
+    bgDraw_.assumeSafeAppend();
+    if (document.layers.length > 1 || !document.hasEditTarget()) {
+        import std.math : isNaN;
+        // The dim factor moved into the display model (it is now an output of
+        // plan resolution, `backdropPlan.dim`) — it is the ONE thing that
+        // distinguishes a background layer today, and the backdrop axis is
+        // what will eventually replace it with a genuinely different
+        // representation. Cache upkeep below stays UNCONDITIONAL on purpose:
+        // a display change must never invalidate or skip a background GPU
+        // upload, only the DRAWS are gated.
+        // Model M4: upkeep first, for every kept layer; the draws
+        // read the list it builds. Faces precede every line pass outside the
+        // item sequence (the deferred wire loop after the primary's faces);
+        // inside it each layer's wire stays right after its faces.
+        foreach (i, lyr; document.layers) {
+            if (!backdropKeepsUpload(document, i)) continue;
+            GpuMesh* bg = bgGpuCache.gpuFor(lyr);
+            if (backdropDrawsLayer(document, i, itemSequence, backdropPlan))
+                bgDraw_ ~= BgDraw(i, bg, lyr.xform.composedMatrix());
+        }
+        foreach (ref e; bgDraw_) {
+            if (backdropPlan.drawFaces)
+                drawBackdropFaces(e, document, backdropPlan, litShader, vp,
+                                  display.weightMapName);
+            if (itemSequence)
+                drawBackdropWire(e, backdropPlan, shader, vp);
+        }
+    }
+
+    // The background-snap-source and item-snap-frame installs that stood here
+    // are GONE, not disabled: they are `editor_app.installSnapState`, called
+    // once per frame from the frame loop (task 1780). Both read `document` and
+    // nothing else, so running them in a per-CELL pass repeated identical work
+    // per live cell — and, because this pass is gated on the cell's dirty key,
+    // skipped it entirely on a frame where nothing visible moved. That second
+    // half is what made a snap-config-dependent decision unrepresentable here;
+    // `installSnapState`'s own comment carries the full argument.
+
+    // ---- Which selection type this cell draws FEEDBACK for (task 0655) -----
+    //
+    // The SAME query the viewport pick asks — the ordering with the
+    // item-inclusive candidate set — and it is the same query on purpose:
+    // "which elements can this click select" and "which elements does this
+    // frame show as selected" are one question, and the two answers drifting
+    // apart is exactly the state that was measured as a divergence.
+    //
+    // NOT `editMode`, which the three gates below used to read. `editMode` is
+    // that query asked WITHOUT `Item`, so under the item type it still names a
+    // geometry type — and the passes kept painting orange vertex dots, the
+    // checker overlay and selected-edge colour for a geometry selection the
+    // click could no longer reach. Measured against the reference: under the
+    // item type a standing geometry selection is KEPT (it is still in
+    // `/api/selection`) and NOT DRAWN. Keeping it is the mesh's business and
+    // nothing here touches it; not drawing it is this line.
+    //
+    // The item-highlight pass further down asks `currentSelType` directly.
+    // That is the same answer by construction — with all four types always in
+    // the ordering, the item-inclusive resolve IS the front — and it is left
+    // spelled its own way because it is asking a different question ("is the
+    // item type current"), not gating an element pass.
+    immutable SelType selFeedbackType = display.feedbackType;
+
+    // ---- Faces (Blinn-Phong, or a flat fill) ----
+    // Gated on the plan's SHADING group. `drawFaces == false` means no face
+    // pass AT ALL — not a depth-only one: a lines-only style has to be
+    // see-through, so back-side edges stay visible.
+    //
+    // `facesLit == false` is the Solid style (0589, corrected in 0592): the
+    // SAME face pass, the same geometry, the same highlight branches — but
+    // neither the lighting term NOR the material. The fill's base becomes
+    // `activePlan.fillColor` (the viewport colour scheme's), which is why the
+    // two uniforms are set together below: "unlit" and "not from the material"
+    // are one decision, and a call site that set only the first would draw a
+    // black surface.
+    //
+    // Still deliberately not a separate pass or a separate program. The
+    // reference does register Solid as its own style, and its style record is
+    // genuinely a different shape — no light setup, one draw sub-pass instead
+    // of three. But everything that differs is expressible here: the light
+    // term is behind a uniform branch, the missing background sub-pass is a
+    // resolved `drawFaces`, and we have no transparency sub-pass to omit. What
+    // a second draw path would buy is a second place for hover tint, selection
+    // highlight and per-surface colour to quietly diverge, which is the actual
+    // risk this axis carries.
+    if (itemSequence)
+        drawItemSequence(seqBefore_, document, bgGpuCache, activePlan,
+                         backdropPlan, shader, litShader, v, vp,
+                         display.weightMapName);
+    beginItem(activePlan);
+    {
+        auto zMesh = g_perf.scope_(Cat.drawMesh);
+        if (activePlan.drawFaces) {
+            segTimer_.mark(GpuSeg.faces);
+            // Task 1090: fill the per-corner weight colours before the
+            // program is bound, and only when this cell asked for them.
+            //
+            // LAZY, IN THE RENDER PASS, and not in app.d's upload block: the
+            // weight style is PER CELL, and the upload block has no idea
+            // which cells want it. The stamp inside `uploadWeightColors`
+            // makes the other three cells of a Quad layout free, so "once per
+            // cell" costs the same as "once per frame" would.
+            if (activePlan.shading == SurfaceShading.Weight)
+                gpu.uploadWeightColors(mesh, display.weightMapName);
+            litShader.useProgram(meshModel, vp);
+            litShader.setSurfaces(mesh.surfaces);
+            litShader.applyPlan(activePlan, surfaceIdForLayer(document.activeIndex()));
+            bool toolFaceHover = activeTool !is null
+                              && activeTool.wantsHoverForType(EditMode.Polygons)
+                              && hoveredFace >= 0;
+            immutable FacePass facePass = facePassFor(activePlan, meshModel);
+            if (selFeedbackType == SelType.Polygon || toolFaceHover) {
+                gpu.drawFacesHighlighted(litShader, faceHovForDraw, facePass);
+            } else {
+                gpu.drawFaces(litShader, facePass);
+            }
+            // Restore: the program is shared with every preview/gizmo draw
+            // downstream.
+            litShader.restorePlanDefaults();
+        }
+    }
+
+    // ---- Composite (model M4) ----
+    // The surface passes end here; the compositor runs on the cell's plan
+    // (an empty plan is zero GL calls). Constructed on the first non-empty
+    // plan, then called every frame so an empty plan's early return is the
+    // one gate (no second copy of it here).
+    v.fbo.endSurfacePasses();
+    if (compositor_ is null && !activePlan.composite.empty)
+        compositor_ = new ViewportCompositor;
+    if (compositor_ !is null)
+        compositor_.run(activePlan.composite, v.fbo, v.fbo.w, v.fbo.h,
+                        curvatureTapPx(v.fbo.w, v.camera.width), vp.proj, *segTimer_);
+
+    // Backdrop wires after every face pass and the composite (model M4).
+    // The item sequence drew them inline above, in its captured per-layer
+    // order.
+    if (!itemSequence)
+        foreach (ref e; bgDraw_)
+            drawBackdropWire(e, backdropPlan, shader, vp);
+
+    // Under the item sequence the primary's bracket ends with its base lines
+    // and dots; the entries after it follow, then the primary's materials are
+    // bound again (the buffer is shared with every later lit draw — the
+    // create-tool previews read slot 0 of it), and only then the primary's
+    // selection and hover feedback below, with the base passes switched off.
+    if (itemSequence) {
+        {
+            auto zEdges = g_perf.scope_(Cat.drawEdges);
+            drawItemLinesAndDots(gpu, mesh, meshModel, activePlan, shader, v, vp);
+        }
+        drawItemSequence(seqAfter_, document, bgGpuCache, activePlan,
+                         backdropPlan, shader, litShader, v, vp,
+                         display.weightMapName);
+        if (document.hasEditTarget()) litShader.setSurfaces(mesh.surfaces);
+    }
+
+    // Checkerboard overlay for selected faces (Polygons mode).
+    //
+    // The COLOUR comes from the same scheme row the edge and vertex highlights
+    // read (task 1860). The reference's fill and line selection entries ship
+    // identical values, and leaving this one on the old orange while the
+    // element highlights moved would recreate exactly the self-inconsistency
+    // that change existed to remove.
+    //
+    // The 25 % SCREEN DOOR is a separate axis and is deliberately untouched:
+    // our fragment shader already discards to the same lattice the reference
+    // stipples with (verified by enumeration, task 1820).
+    //
+    // The OCCLUSION axis is no longer untouched (task 1862). The fill is now
+    // the same two passes the edge and vertex highlights took in 1860 — see
+    // `GpuMesh.drawSelectedFacesOverlay` and `OccludedPass` — and the
+    // `glDisable(GL_DEPTH_TEST)` that used to bracket this call is gone with
+    // it. The remaining one-pass, depth-off, full-strength selection surface
+    // is the ITEM highlight (`GpuMesh.drawItemHighlight`), whose depth
+    // convention is unmeasured and is its own card.
+    //
+    // The `OccludedPass` is built HERE and not shared with the `occluded`
+    // value the edge/vertex passes take a few lines below, because the alpha
+    // location it carries is a location IN A PROGRAM: this pass binds the
+    // CHECKER program and those bind the flat one, and a uniform location is
+    // meaningless across programs. The state helpers themselves fit unchanged
+    // — they touch only the depth comparison, the blend and that one uniform,
+    // never a program or a VAO.
+    if (selFeedbackType == SelType.Polygon) {
+        if (mesh.hasAnySelectedFaces()) {
+            segTimer_.mark(GpuSeg.faces);   // the checker fill stays in `faces`
+            auto zOv = g_perf.scope_(Cat.drawOverlays);
+            immutable Vec3 fillCol = schemeColor(SchemeColor.selection);
+            checkerShader.useProgram(meshModel, vp,
+                                     fillCol.x, fillCol.y, fillCol.z);
+            gpu.drawSelectedFacesOverlay(mesh.selectedFaceView(),
+                                         OccludedPass(checkerShader.locAlpha));
+        }
+    }
+
+    shader.useProgram(meshModel, vp);
+
+    // ---- Edges ----
+    // The plan's OVERLAY group reaches every branch of the chain below, not
+    // just the bare-wireframe one, and it reaches them through `BaseWire` —
+    // which addresses the base (unselected, unhovered) line pass INSIDE
+    // drawEdges and leaves the selection and hover passes alone. That is the
+    // whole point: switching the overlay off must not take selection feedback
+    // with it. Gating the chain itself, or early-returning from drawEdges,
+    // would do exactly that, and is the named wrong implementation.
+    BaseWire baseWire =
+        baseWireFor(activePlan, meshModel, vp.view, shader.locAlpha);
+    if (itemSequence) baseWire.draw = false;   // drawn in the primary's bracket
+    // The occluded half of every selection / pre-highlight draw (task 1860).
+    // One value for the whole frame, handed to both `drawEdges` and
+    // `drawVertices` so the two passes cannot drift; the alpha itself is the
+    // scheme's, resolved inside `OccludedPass`.
+    immutable OccludedPass occluded = OccludedPass(shader.locAlpha);
+    {
+        auto zEdges = g_perf.scope_(Cat.drawEdges);
+        if (selFeedbackType == SelType.Edge) {
+            segTimer_.mark(GpuSeg.edges);
+            // A tool can pre-highlight the WHOLE ring it will act on: Loop
+            // Slice shows the ring its cut will land on (via wantsEdgeLoop-
+            // Hover + rebuildLoopHoverMask); that ring is NOT the rollover and
+            // keeps its own gate — hidden during a drag or a live edit, where
+            // the preview's rebuilt edge array would alias a stale index
+            // (tasks 0231/0232). The single hovered edge is the rollover
+            // (`rolloverShown`, slice M6): Edge Slice keeps its target edge
+            // through a live chain outside a drag (C-H7), every other tool
+            // with no flag shows none. Outside a drag Edge Slice's hover is
+            // re-picked every frame against the current (cut) mesh; while the
+            // preview's index space is stale the picker holds its last answer,
+            // but the screen then also holds the previous preview buffer, so
+            // the index and the drawn edges come from one space.
+            int          hovForDraw = edgeHovForDraw;
+            const(bool)[] loopMask  = (bool[]).init;
+            if (activeTool !is null
+                && !(activeTool.isDragging() || activeTool.hasUncommittedEdit())
+                && activeTool.wantsEdgeLoopHover()
+                && showEdgeHover && hoveredEdge >= 0)
+                loopMask = rebuildLoopHoverMask(
+                    mesh, hoveredEdge,
+                    activeTool.edgeLoopHoverSliceRing());
+            gpu.drawEdges(shader.locColor, hovForDraw, mesh.selectedEdgeView(),
+                          loopMask, baseWire, occluded);
+        } else if (selFeedbackType == SelType.Polygon) {
+            segTimer_.mark(GpuSeg.edges);
+            // Rebuild trigger. WHAT THE CACHE IS A FUNCTION OF is the whole
+            // question here, and it is THREE things, not one: the face
+            // selection (`faceMarks`), the topology that turns a selected face
+            // into edge indices (`faces` + `edges`), and WHICH mesh both were
+            // read from.
+            //
+            //  * selection — an EXACT compare of the marks snapshot,
+            //    `marksBitDiffer`. It used to be
+            //    `faceSelEdgesPrevSel != mesh.selectedFaces`, which
+            //    materialized a fresh `bool[F]` for its own right-hand side
+            //    every single frame; the cache was paying more than it saved
+            //    (task 0585). `mesh.selectionSignature(EditMode.Polygons)` is
+            //    the canonical non-allocating detector and is deliberately
+            //    REJECTED: it is a hash, and its contract promises only that a
+            //    collision yields a STALE HIT rather than a wrong answer — but
+            //    for a cache that paints the screen a stale hit IS the wrong
+            //    answer. The exact compare costs the same O(F) scan.
+            //
+            //  * mesh identity + connectivity — `MeshStructKey` (address +
+            //    `structVersion`). This is NOT decoration and it is not
+            //    covered by the selection compare: the primary layer can be
+            //    switched to a different `Mesh` whose face marks agree
+            //    element-for-element (same face count, same faces selected)
+            //    while its edge list is entirely different. The selection
+            //    compare is then false, the length repair below never runs,
+            //    and layer A's edge mask paints layer B's edges. Selection is
+            //    a Marks-class change that deliberately bumps no version at
+            //    all, and two distinct meshes can share a version, so neither
+            //    term alone is enough — which is what `MeshCacheKey`'s own doc
+            //    comment says. `structVersion` and not `mutationVersion`: this
+            //    mask is a function of connectivity, and `mutationVersion`
+            //    moves on every vertex-position write, so keying on it would
+            //    rebuild the mask on every frame of a drag.
+            //
+            //  * the cache array's own size, kept in the trigger rather than
+            //    only inside the branch, so a mask of the wrong length can
+            //    never reach `drawEdges` (`MarkView` answers false past its
+            //    end, so a short mask degrades to "nothing highlighted"
+            //    silently — no crash to notice).
+            // recorded remainder (1906 §3.6): `structVersion` owns the first
+            // term and KEEPS it, but read the division of labour before
+            // trusting it alone. Measured at stage 2d: `structVersion` tracks
+            // writes to `edges`, NOT to `faces` — a face delete that leaves the
+            // edge list intact moves it not at all (see mesh.d's `MeshTopoKey`
+            // for the cell). What actually carries a face-set change here is
+            // the THIRD term, the marks diff: every face-set mutator resizes or
+            // rewrites `faceMarks`. That term is a CONTENT compare, not a
+            // version poll, and a bus class would be strictly coarser than the
+            // bit-level answer it already gets. Plan §3.4 row 16.
+            bool selChanged = !faceSelEdgesKey_.matches(mesh)
+                           || faceSelEdgesCache_.length != mesh.edges.length
+                           || marksBitDiffer(faceSelEdgesPrevSel_, mesh.faceMarks,
+                                             Mesh.Marks.Select);
+            if (selChanged) {
+                faceSelEdgesKey_.stamp(mesh);
+                faceSelEdgesPrevSel_.length = mesh.faceMarks.length; // no-op when equal
+                faceSelEdgesPrevSel_[]      = mesh.faceMarks[];      // memcpy, no `new`
+                if (faceSelEdgesCache_.length != mesh.edges.length)
+                    faceSelEdgesCache_ = new uint[](mesh.edges.length);
+                faceSelEdgesCache_[] = 0;
+
+                // Right-hand operand is the MARKS length, not `faces.length`:
+                // that is what the materialized view this replaced reported,
+                // and the two differ on a mesh whose marks lag its geometry.
+                //
+                // DEGENERATE CASE, preserved verbatim from the `bool[]` form
+                // and called out because the length term above invites the
+                // question: when `faceMarks` is EMPTY this reads `0 == 0` and
+                // declares everything selected, so the whole wireframe below
+                // is highlighted. `hasAnySelectedFaces()` in the else-branch
+                // is what guards "nothing is selected" everywhere else here,
+                // and it would answer false.
+                //
+                // Reaching it needs `edges.length > 0` while
+                // `faceMarks.length == 0` — a mesh with loose edges and no
+                // faces, which IS representable (`Mesh.addEdge`), while in
+                // Polygons feedback. Not measured as reachable through any
+                // driveable path: deleting every face (`mesh.delete` over the
+                // whole selection) drops the edges with them and leaves an
+                // empty mesh, and `/api/load-mesh` derives edges from faces,
+                // so both land on `edges.length == 0` and draw nothing either
+                // way. Left exactly as it was: correcting it would be a
+                // behaviour change on a state nobody has produced, and this
+                // task is an allocation change with a proven-identical output.
+                bool allSel = (mesh.countSelectedFaces() == cast(int)mesh.faceMarks.length);
+                if (allSel) {
+                    faceSelEdgesCache_[] = Mesh.Marks.Select;
+                } else {
+                    if (mesh.hasAnySelectedFaces()) {
+                        bool[ulong] edgeSet;
+                        foreach (fi, face; mesh.faces) {
+                            if (!mesh.isFaceSelected(fi)) continue;
+                            foreach (e; mesh.faceEdges(cast(uint)fi))
+                                edgeSet[edgeKey(e.a, e.b)] = true;
+                        }
+                        foreach (ei, edge; mesh.edges) {
+                            if (edgeKey(edge[0], edge[1]) in edgeSet)
+                                faceSelEdgesCache_[ei] |= Mesh.Marks.Select;
+                        }
+                    }
+                }
+            }
+            gpu.drawEdges(shader.locColor, -1,
+                          MarkView(faceSelEdgesCache_, Mesh.Marks.Select), [],
+                          baseWire, occluded);
+
+            // Task 0399: Loop Slice ring-preview in Polygons mode. The
+            // Edges-mode branch above previews the ring through
+            // `hoveredEdge` (`wantsEdgeLoopHover` + `rebuildLoopHoverMask`),
+            // but Polygons mode never sets a hovered EDGE — only
+            // hovered/selected FACES — so that seed doesn't exist here.
+            // Loop Slice's Polygons activation instead seeds from the
+            // shared/interior edge(s) of the selected faces (task 0245:
+            // `activationSeeds`/`interiorEdgesOfSelectedFaces`), so the
+            // preview is built from THAT via the tool's own
+            // `selectionRingPreviewMask()` helper (mirrors
+            // `rebuildLoopHoverMask`'s sliceRing branch, but unioned over
+            // every seed instead of a single hovered edge). Same
+            // arm/drag suppression as the Edges branch —
+            // `wantsEdgeLoopHover()` goes false while armed, and
+            // `isDragging()`/`hasUncommittedEdit()` belt-and-suspenders
+            // it — the live cut geometry already shows the result once
+            // armed; a stale ring overlay would just be noise. Gated on
+            // `hasAnySelectedFaces()` so an empty selection draws
+            // nothing extra (no wasted redraw pass). Other Polygons-mode
+            // tools are unaffected: `wantsEdgeLoopHover()` defaults false
+            // on the `Tool` base, so this block is a no-op for them.
+            if (activeTool !is null
+                && activeTool.wantsEdgeLoopHover()
+                && !(activeTool.isDragging() || activeTool.hasUncommittedEdit())
+                && mesh.hasAnySelectedFaces()) {
+                if (auto lst = cast(LoopSliceTool) activeTool) {
+                    const(bool)[] loopSelMask = lst.selectionRingPreviewMask();
+                    gpu.drawEdges(shader.locColor, -1, mesh.selectedEdgeView(),
+                                  loopSelMask, baseWire, occluded);
+                }
+            }
+        } else if (showEdgeHover && hoveredEdge >= 0
+                   && (edgeHovForDraw >= 0
+                       || (activeTool !is null && activeTool.wantsEdgeLoopHover()))) {
+            segTimer_.mark(GpuSeg.edges);
+            const bool[] loopMask =
+                (activeTool !is null && activeTool.wantsEdgeLoopHover())
+                    ? rebuildLoopHoverMask(
+                        mesh, hoveredEdge,
+                        activeTool.edgeLoopHoverSliceRing())
+                    : (bool[]).init;
+            gpu.drawEdges(shader.locColor, edgeHovForDraw, MarkView.init, loopMask,
+                          baseWire, occluded);
+        } else if (baseWire.draw) {
+            // The bare-overlay branch: no selection set, no hover index, so
+            // `baseWire` is the ONLY thing it would draw. Kept as an explicit
+            // early-out rather than a `BaseWire(false, ...)` call so that an
+            // overlay of "none" with nothing selected issues no GL at all —
+            // not a VAO bind and a loop over zero batches.
+            segTimer_.mark(GpuSeg.edges);
+            gpu.drawEdges(shader.locColor, -1, MarkView.init, [], baseWire,
+                          occluded);
+        }
+    }
+
+    // ---- Item highlight (task 0647) ----
+    //
+    // Under the Item selection type the unit of both selection and hover is the
+    // WHOLE item, so the feedback changes scale with it: the item under the
+    // cursor has its entire wireframe repainted, and so does every selected
+    // item. All of it MEASURED (doc fixture `tests/fixtures/
+    // item_hover_highlight.json`) — and the parts that were measured are the
+    // parts a plausible wrong implementation gets wrong:
+    //
+    //   * the UNIT is the item, not the polygon under the cursor. A second
+    //     probe on a different polygon of the same item painted the identical
+    //     pixel set.
+    //   * what is painted is EDGES. A probe 1x1 m deep inside a face changed
+    //     0 of 1600 pixels, so this is not a surface tint; interior edges DID
+    //     paint (307 px of 956), so it is not a silhouette either.
+    //   * the COLOUR is a three-state function of (selected, hovered), and the
+    //     hover colour is NOT the selection colour — that was the question the
+    //     capture existed to answer. `itemHighlightColor` owns the law.
+    //
+    // WHY HERE, after the edges pass and before the vertex dots: this pass
+    // paints OVER the base wireframe, which must already be down, and under
+    // the gizmo, which must stay on top. Every layer is drawn in this one
+    // place rather than each in its own pass — a background layer highlighted
+    // back in the backdrop loop would be painted over by the primary's own
+    // depth-writing face pass, which runs after it.
+    //
+    // The gate is `currentSelType`, not `editMode`: `editMode` still reads
+    // whatever geometry type was last used (that is what makes 1/2/3 restore
+    // it), so an implementation gated on it would light items in Vertices mode.
+    {
+        import vibe3d.editing.contracts.seltype          : SelType;
+        import vibe3d.documents.model.document         : kindInfo;
+        import vibe3d.viewport.display_policy.viewport_scheme  : itemHighlight, itemHighlightColor, ItemHighlight;
+        import vibe3d.viewport.host.image_plane      : resolvePlacementFor;
+        import vibe3d.editing.tools.interactive.handles.gl_util  : drawWorldSegment;
+        import vibe3d.viewport.camera.view             : ProjKind;
+
+        if (display.currentType == SelType.Item) {
+            segTimer_.mark(GpuSeg.overlays);
+            auto zItem = g_perf.scope_(Cat.drawOverlays);
+            foreach (li, lyr; document.layers) {
+                if (lyr is null || !lyr.visible) continue;
+
+                // One colour law for every kind of item — computed before the
+                // kind branch precisely so the two cannot drift into two rules.
+                immutable ItemHighlight state =
+                    itemHighlight(lyr.selected,
+                                  cast(int)li == display.hoveredItem);
+                if (state == ItemHighlight.none) continue;
+
+                // An IMAGE PLANE is highlighted by its BORDER, because it has
+                // no wireframe to repaint — measured (`doc/tasks/0647-evidence/`):
+                // the reference paints a plane's rectangular border, 2 px wide,
+                // in the same three colours as a mesh's edges, and never tints
+                // the image itself. Handled before the `drawsGeometry` gate
+                // below, which a plane fails by construction: task 0643 made
+                // planes pickable, so leaving them out here would produce an
+                // item that can be hovered and selected with no cue at all.
+                if (lyr.hasImagePlane) {
+                    auto pl = resolvePlacementFor(document, lyr,
+                                                  v.camera.viewPreset,
+                                                  v.camera.projKind == ProjKind.Ortho);
+                    if (!pl.drawn) continue;   // same gate the plane draw used
+                    immutable Vec3 pc = itemHighlightColor(state);
+                    // A FIXED-SIZE array, so the corner pairs live on the stack:
+                    // a `[[a,b], …]` slice literal here would allocate on the GC
+                    // every frame a backdrop is lit.
+                    immutable Vec3[2][4] segs = [
+                        [pl.center - pl.halfU - pl.halfV, pl.center + pl.halfU - pl.halfV],
+                        [pl.center + pl.halfU - pl.halfV, pl.center + pl.halfU + pl.halfV],
+                        [pl.center + pl.halfU + pl.halfV, pl.center - pl.halfU + pl.halfV],
+                        [pl.center - pl.halfU + pl.halfV, pl.center - pl.halfU - pl.halfV],
+                    ];
+                    // `smooth = false`: this colour is READ BACK as an exact
+                    // value by the item tests, and an anti-aliased edge carries
+                    // a blend of it rather than it.
+                    foreach (seg; segs)
+                        drawWorldSegment(seg[0], seg[1], vp, pc, 2.0f,
+                                         shader.program, 1.0f, /*smooth=*/false);
+                    continue;
+                }
+
+                // Same capability bit the item ray picks against
+                // (`item_pick.d`), so nothing can be hovered that cannot be
+                // painted, or painted that cannot be hovered.
+                if (!kindInfo(lyr.kind).drawsGeometry) continue;
+
+                immutable Vec3 c = itemHighlightColor(state);
+
+                // The primary draws through the SAME GpuMesh and the SAME
+                // model matrix the passes above used — `meshModel`, which
+                // folds a live tool matrix, so a highlighted item being
+                // dragged stays on its geometry instead of trailing it.
+                // Background layers use the buffers the backdrop loop
+                // uploaded; a visible non-primary geometry layer always has an
+                // entry there (its gate is the same three conditions as this
+                // loop's, minus selection), so a missing one means the two
+                // gates have drifted and skipping is the safe read.
+                if (document.isPrimary(lyr)) {
+                    shader.useProgram(meshModel, vp);
+                    gpu.drawItemHighlight(shader.locColor, c.x, c.y, c.z);
+                } else if (auto bg = bgGpuCache.find(lyr)) {
+                    // Named, not inlined: `useProgram` takes the matrix by
+                    // `ref const`, so the composed rvalue needs a home.
+                    float[16] itemModel = lyr.xform.composedMatrix();
+                    shader.useProgram(itemModel, vp);
+                    (*bg).drawItemHighlight(shader.locColor, c.x, c.y, c.z);
+                }
+            }
+            // Leave the program bound to the primary's matrix: everything
+            // downstream (vertex dots, tool overlays) was written expecting it.
+            shader.useProgram(meshModel, vp);
+        }
+    }
+
+    // ---- Vertex dots ----
+    // `drawVerts` is a FORCING term from the surface style (a lines-only
+    // style draws vertices as well as edges); the selection-type terms are
+    // OR-ed beside it. Captured law (fixture `editor_display_laws_w17.json`,
+    // `vertex_dots_in_edge_mode`; task 7128, item type per 1860): in EDGE mode
+    // every vertex is a PLAIN dot in every style — unselected colour and
+    // size — and the kept vertex selection is not shown, so edge mode hands
+    // the pass an empty mark view (colour AND size follow the mark, see
+    // `drawVertices`). POLYGON mode takes the same empty mark view where a
+    // style forces dots (toolcard `loop_slice_position_memory` Q4:
+    // the kept vertex selection is not drawn, Wireframe and vertices-always
+    // included); the item type is uncaptured and keeps its marks. The edge arm
+    // gates the hover on `showVertHover`, like the hover-only arm below: that
+    // flag carries "this cell has the pointer", so in a split layout only one
+    // cell lights it. Witnesses: tests/test_edge_mode_vertex_dots.d,
+    // tests/unit/vertex_dot_arm_census_test.d.
+    //
+    // The BASE dots (task 8600) take colour, opacity and size from the plan
+    // (`baseDotsFor`) and run iff the plan forces dots or, where the plan's
+    // `baseDotsBySelection` policy allows it, the selection type asks for
+    // them; with the base pass off the highlight passes still run. Under
+    // `cullHiddenVerts` the base pass draws only the dots `visibleDots` keeps
+    // — except over a live subpatch preview (`faceOriginGpu` set), whose
+    // vertex buffer is not in cage slots, where every dot is drawn.
+    if (activePlan.drawVerts || selFeedbackType == SelType.Vertex
+        || selFeedbackType == SelType.Edge) {
+        segTimer_.mark(GpuSeg.verts);
+        auto zOv = g_perf.scope_(Cat.drawOverlays);
+        immutable bool edgeArm = selFeedbackType == SelType.Edge;
+        immutable bool plainMarks = edgeArm || selFeedbackType == SelType.Polygon;
+        BaseDots baseDots = baseDotsFor(activePlan, meshModel, vp.view,
+                                        shader.locAlpha);
+        baseDots.draw = !itemSequence
+            && (activePlan.drawVerts || activePlan.baseDotsBySelection);
+        baseDots = culledBaseDots(baseDots, activePlan, gpu, mesh, meshModel, v, vp);
+        gpu.drawVertices(shader.locColor, shader.locPointSize,
+                         edgeArm && !showVertHover ? -1 : vertHovForDraw,
+                         plainMarks ? MarkView.init : mesh.selectedVertexView(),
+                         occluded, baseDots);
+    } else if (showVertHover && vertHovForDraw >= 0) {
+        segTimer_.mark(GpuSeg.verts);
+        auto zOv = g_perf.scope_(Cat.drawOverlays);
+        BaseDots hoverBase = baseDotsFor(activePlan, meshModel, vp.view,
+                                         shader.locAlpha);
+        // The main arm's `!itemSequence` term, carried by the plan here: the
+        // plan that runs the item sequence (`clearDepthFirst`) resolves
+        // `baseDotsBySelection` false (`applyRetopology`), and its base dots
+        // were drawn in the primary's bracket.
+        assert(!itemSequence || !activePlan.baseDotsBySelection,
+               "item sequence with selection-driven base dots");
+        hoverBase.draw = activePlan.baseDotsBySelection;
+        gpu.drawVertices(shader.locColor, shader.locPointSize, vertHovForDraw,
+                         MarkView.init, occluded, hoverBase);
+    }
+    dropUnvisitedDotCull(v);
+
+    // ---- Active tool / falloff gizmo draws ----
+    // Task 0206 (Quad/Split multi-cell overlays): `overlayMode` decides
+    // WHICH cells draw and HOW:
+    //   - None:        nothing — no tool and no falloff is active. (Until
+    //                   task 1650 this was also the answer for a tool
+    //                   outside a hand-written eligibility list; that list
+    //                   is gone, see the N-cell loop's header.)
+    //   - Interactive: the overlay-owner (origin cell during a drag,
+    //                   else the active cell) — today's exact path,
+    //                   visualOnly=false. Pins cachedVp + runs the
+    //                   arbiter cycle; this is the primary Step-B
+    //                   freeze mechanism for multi-viewport drag
+    //                   correctness.
+    //   - Visual:      every OTHER live cell, for ANY active tool or
+    //                   falloff (task 1650 — no tool-type term). Draws the
+    //                   SAME world-derived gizmo geometry reprojected
+    //                   under THIS cell's vp with visualOnly=true, which
+    //                   ASKS the tool to skip its cachedVp / ToolHandles
+    //                   writes (see Tool.draw's doc comment). Most tools do
+    //                   not honour that ask — measured: 11 of 38 overrides
+    //                   read the flag — so what actually keeps a replica
+    //                   from corrupting the owner's interaction state is
+    //                   `overlayDrawOrder` visiting the owner LAST.
+    // NOTE: activeTool.update() already ran ONCE in the main loop
+    // (against the origin snapshot) before this function is called for
+    // any cell this frame, so handle-hover state is current for all of
+    // them.
+    if (overlayMode != OverlayMode.None) segTimer_.mark(GpuSeg.overlays);
+    drawToolOverlays(overlays, overlayMode, vp, shader);
+
+    // ---- AI Modeling Copilot: ghost highlight of the active finding
+    // (task 0402 Phase 3, doc/ai_copilot_plan.md) ----
+    // Passive-only: this draws, nothing else — see copilot_overlay.d's
+    // doc comment. Gated on all three: the AI master switch, the
+    // "AI Findings" panel actually being shown (same visibility
+    // predicate as the panel's own draw call below — a hidden panel's
+    // stale active index shouldn't paint a ghost nobody can see the
+    // list for), and a valid `active()` index into the CURRENT findings
+    // list (out-of-range/-1, e.g. right after copilot.analyze before
+    // any row was clicked, draws nothing). AI-off (or modeling-noai,
+    // where the master switch never turns on) ⇒ byte-identical to
+    // before this phase — same discipline as every other AI-gated draw
+    // in this codebase (doc/ai_model_adapter_live_wiring_plan.md).
+    // version(WithAI)-only — the whole findings panel/overlay is
+    // compiled out of modeling-noai (see import block doc comment).
+    // static if kCopilotEnabled (task 0422): ghost overlay skipped while
+    // the copilot is paused; flip the flag to restore.
+    version (WithAI)
+    static if (kCopilotEnabled)
+    {
+        immutable bool panelShown = !display.testMode
+                                 || display.copilotPanelShown;
+        if (scene.aiState.enabled && panelShown) {
+            immutable int activeIdx = scene.copilotPanel.active();
+            const findings = scene.copilotPanel.findings();
+            if (activeIdx >= 0 && activeIdx < cast(int) findings.length) {
+                segTimer_.mark(GpuSeg.overlays);
+                drawCopilotFindingOverlay(mesh, findings[activeIdx], vp,
+                                          shader.program);
+            }
+        }
+    }
+
+    // Restore default framebuffer.
+    glBindFramebuffer(GL_FRAMEBUFFER, 0);
+    }
+}
+
+unittest { // private ViewportSceneRenderer.dotCullFor cache lifetime
+    import vibe3d.viewport.camera.view : View;
+    auto v=new Viewport3D(0,0,0,650,544);
+    v.camera.setOrientation(Orientation.fromBasis(Vec3(1,0,0),Vec3(0,1,0),Vec3(0,0,1)));
+    v.camera.distance=4;
+    Mesh m;m.vertices=[Vec3(-1,-1,0),Vec3(1,-1,0),Vec3(1,1,0),Vec3(-1,1,0),
+                       Vec3(2,-1,0),Vec3(2,1,0),Vec3(3,0,0)];
+    m.addFace([0u,1u,2u,3u]);m.addFace([4u,5u,6u]);
+    const model=identityMatrix;
+    const a=v.camera.viewport();v.camera.setFovY(.9026584025557545);const b=v.camera.viewport();
+    const da=visibleDots(m,m.vertices,model,cullEyeOf(a.view,a.proj,a.eye));
+    const db=visibleDots(m,m.vertices,model,cullEyeOf(b.view,b.proj,b.eye));
+    assert(da.slotCount==7 && da.slots==[0u,1u,2u,3u] && db.slots==da.slots,"DOT_CULL_LENS_EQUAL_SLOTS");
+    auto r=new ViewportSceneRenderer;ulong first,second,third,again;
+    v.camera.setFovY(View.defaultFovY);
+    auto vp=v.camera.viewport();
+    auto got=r.dotCullFor(v,m,model,vp,first);
+    auto slots=got.slots.dup;
+    assert(first!=0 && v.dotCullRecomputes==1 && slots==da.slots,"DOT_CULL_LENS_A_FLOOR");
+    version(LensStampLifetimeWitness) {} else {
+        vp=v.camera.viewport();r.dotCullFor(v,m,model,vp,again);
+        assert(again==first && v.dotCullRecomputes==1,"DOT_CULL_LENS_REUSE_A");
+    }
+    v.camera.setFovY(.9026584025557545);
+    vp=v.camera.viewport();got=r.dotCullFor(v,m,model,vp,second);
+    assert(got.slots==slots,"DOT_CULL_LENS_B_EQUAL");
+    assert(v.dotCullRecomputes==2 && second!=first,"DOT_CULL_LENS_RECOMPUTES");
+    vp=v.camera.viewport();r.dotCullFor(v,m,model,vp,again);
+    assert(v.dotCullRecomputes==2 && again==second,"DOT_CULL_SETTLES_AFTER_LENS_STAMP");
+    v.camera.setFovY(View.defaultFovY);
+    vp=v.camera.viewport();r.dotCullFor(v,m,model,vp,third);
+    assert(v.dotCullRecomputes==3 && third!=second,"DOT_CULL_LENS_CONSUMED_ABA");
+    auto fresh=new ViewportSceneRenderer;ulong freshA;
+    vp=v.camera.viewport();got=fresh.dotCullFor(v,m,model,vp,freshA);
+    assert(v.dotCullRecomputes==4 && freshA!=0 && got.slots==slots,"DOT_CULL_LENS_FRESH_A_FLOOR");
+    v.camera.setFovY(.9026584025557545);v.camera.setFovY(View.defaultFovY);
+    vp=v.camera.viewport();fresh.dotCullFor(v,m,model,vp,again);
+    assert(v.dotCullRecomputes==4 && again==freshA,"DOT_CULL_LENS_UNCONSUMED_ABA");
+    v.camera.setFovY(v.camera.fovY);
+    try v.camera.setFovY(1e-29);catch(Exception){}
+    vp=v.camera.viewport();fresh.dotCullFor(v,m,model,vp,again);
+    assert(v.dotCullRecomputes==4 && again==freshA,"DOT_CULL_LENS_REFUSAL_SAME_READ");
+}

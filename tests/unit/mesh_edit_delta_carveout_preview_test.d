@@ -33,11 +33,11 @@
 module tests.unit.mesh_edit_delta_carveout_preview_test;
 import vibe3d.mesh.edit_replay.mesh_edit_replay : apply, revert;
 
-import subpatch_preview : SubpatchPreview;
+import vibe3d.viewport.subpatch.subpatch_preview : SubpatchPreview;
 import std.format : format;
 
 import vibe3d.mesh.core.mesh;
-import math : Vec3;
+import vibe3d.util.math.math : Vec3;
 import vibe3d.mesh.edit_log.mesh_edit_delta;
 import vibe3d.mesh.change.mesh_dirty : noteMeshChange;
 

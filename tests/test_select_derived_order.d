@@ -30,13 +30,13 @@
 //      history is likewise derived from membership alone.
 
 import vibe3d.mesh.core.mesh;
-import math;
+import vibe3d.util.math.math;
 import vibe3d.viewport.camera.view;
 import vibe3d.editing.contracts.editmode;
-import commands.select.connect : SelectConnect;
-import commands.select.fill    : SelectFillHoles, SelectFillInsideLoop;
-import commands.select.less    : SelectLess;
-import commands.select.between : SelectBetween;
+import vibe3d.editing.commands.editor.commands.select.connect : SelectConnect;
+import vibe3d.editing.commands.editor.commands.select.fill    : SelectFillHoles, SelectFillInsideLoop;
+import vibe3d.editing.commands.editor.commands.select.less    : SelectLess;
+import vibe3d.editing.commands.editor.commands.select.between : SelectBetween;
 
 import std.algorithm : sort, canFind;
 import std.format    : format;

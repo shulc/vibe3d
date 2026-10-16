@@ -15,7 +15,7 @@ import std.file   : readText;
 import std.math   : abs;
 import std.format : format;
 
-import math       : Vec3;
+import vibe3d.util.math.math       : Vec3;
 import vibe3d.mesh.core.mesh       : MapKind;
 import vibe3d.mesh.core.mesh_morph : morphApply, morphRoutedStore;
 

@@ -20,17 +20,17 @@ import tests.unit.census_symbols : dirEntries = wave15DirEntries, readText = wav
 import std.regex : matchAll, regex;
 import tests.unit.census_symbols : blankNonCode, containsWord, countOccurrences;
 
-import handler : Handler, HandlePart, firstHitPart, BoxHandler;
-import math : Vec3, lookAt, orthographicMatrix;
+import vibe3d.editing.tools.interactive.handler : Handler, HandlePart, firstHitPart, BoxHandler;
+import vibe3d.util.math.math : Vec3, lookAt, orthographicMatrix;
 import vibe3d.util.spatial.spatial : Viewport;
-import drag : ctrlLockPending, kCtrlLockWaitPx, screenAxisFraction;
-import tools.transform.move : MoveTool;
-import tools.transform.scale : ScaleTool;
-import tools.transform.rotate : RotateTool;
-import tools.transform.xfrm_transform : XfrmTransformTool;
-import tools.transform.xfrm_handles : DragBank;
-import tools.edit.edge_extend : EdgeExtendTool;
-import tools.alignment.mirror : MirrorTool;
+import vibe3d.editing.tools.interactive.drag : ctrlLockPending, kCtrlLockWaitPx, screenAxisFraction;
+import vibe3d.editing.tools.interactive.tools.transform.move : MoveTool;
+import vibe3d.editing.tools.interactive.tools.transform.scale : ScaleTool;
+import vibe3d.editing.tools.interactive.tools.transform.rotate : RotateTool;
+import vibe3d.editing.tools.interactive.tools.transform.xfrm_transform : XfrmTransformTool;
+import vibe3d.editing.tools.interactive.tools.transform.xfrm_handles : DragBank;
+import vibe3d.editing.tools.interactive.tools.edit.edge_extend : EdgeExtendTool;
+import vibe3d.editing.tools.interactive.tools.alignment.mirror : MirrorTool;
 
 // 1. The fence, compiled: composition pins (allMembers sees private members).
 static assert(![__traits(allMembers, MoveTool)].canFind("hitTestAxes"));
@@ -180,12 +180,12 @@ private bool findPress(Handler a, Handler b, const ref Viewport vp, out int px, 
 unittest {
     import std.math : sqrt;
     import vibe3d.mesh.core.mesh : Mesh, makeCube;
-    import mesh_gpu : GpuMesh;
+    import vibe3d.viewport.gpu.mesh_gpu : GpuMesh;
     import vibe3d.editing.contracts.editmode : EditMode;
     import vibe3d.viewport.camera.view : View;
-    import math : cross, dot;
+    import vibe3d.util.math.math : cross, dot;
 import vibe3d.util.spatial.spatial : Orientation;
-    import handler : ToolHandles, HitRule;
+    import vibe3d.editing.tools.interactive.handler : ToolHandles, HitRule;
     Mesh mesh = makeCube(); GpuMesh gpu; EditMode mode = EditMode.Polygons;
     auto mv = new MoveTool(() => &mesh, &gpu, &mode);
     auto sc = new ScaleTool(() => &mesh, &gpu, &mode);

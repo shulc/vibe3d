@@ -1,0 +1,180 @@
+{
+  "name": "vibe3d-tool-state-tests",
+  "license": "MIT",
+  "targetType": "executable",
+  "sourcePaths": [],
+  "importPaths": [
+    "source",
+    "../source"
+  ],
+  "sourceFiles": [
+    "../source/vibe3d/editing/tools/state/tools/common/session_mesh_key.d",
+    "../source/vibe3d/editing/tools/state/tools/edit/preview_rebuild.d",
+    "source/vibe3d/editing/tools/state/tests/unit/session_mesh_key_stamp_as_test.d",
+    "source/vibe3d/editing/tools/state/tests/unit/tool_state_population_test.d",
+    "source/vibe3d/editing/tools/state/tests/unit/tools/common/session_mesh_key_test.d",
+    "source/vibe3d/editing/tools/state/tests/unit/tools/edit/preview_rebuild_test.d"
+  ],
+  "dependencies": {
+    "vibe3d:math": {
+      "path": "../../../../.."
+    },
+    "vibe3d:mesh": {
+      "path": "../../../../.."
+    },
+    "vibe3d:mesh-edit-log": {
+      "path": "../../../../.."
+    },
+    "vibe3d:mesh-snapshot": {
+      "path": "../../../../.."
+    }
+  },
+  "toolchainRequirements": {
+    "dmd": ">=2.111.0",
+    "ldc": ">=1.41.0"
+  },
+  "buildTypes": {
+    "profile-fp": {
+      "buildOptions": [
+        "debugMode",
+        "debugInfo",
+        "optimize"
+      ],
+      "dflags-dmd": [
+        "-gs"
+      ],
+      "dflags-ldc": [
+        "--frame-pointer=all"
+      ]
+    },
+    "perf": {
+      "buildOptions": [
+        "releaseMode",
+        "optimize",
+        "inline"
+      ],
+      "versions": [
+        "PerfProbe"
+      ]
+    },
+    "perf-count": {
+      "buildOptions": [
+        "debugMode",
+        "debugInfo"
+      ],
+      "versions": [
+        "PerfProbe"
+      ]
+    },
+    "perf-unit": {
+      "buildOptions": [
+        "debugMode",
+        "debugInfo",
+        "unittests"
+      ],
+      "versions": [
+        "PerfProbe"
+      ]
+    },
+    "check": {
+      "buildOptions": [
+        "debugMode",
+        "debugInfo"
+      ],
+      "dflags-ldc": [
+        "--boundscheck=on",
+        "--checkaction=C",
+        "--frame-pointer=all"
+      ],
+      "versions": [
+        "SanitizerSelfTest"
+      ]
+    },
+    "check-unit": {
+      "buildOptions": [
+        "debugMode",
+        "debugInfo",
+        "unittests"
+      ],
+      "dflags-ldc": [
+        "--boundscheck=on",
+        "--frame-pointer=all"
+      ],
+      "versions": [
+        "SanitizerSelfTest"
+      ]
+    },
+    "check-release": {
+      "buildOptions": [
+        "releaseMode",
+        "optimize",
+        "inline",
+        "debugInfo"
+      ],
+      "dflags-ldc": [
+        "--boundscheck=on",
+        "--frame-pointer=all"
+      ],
+      "versions": [
+        "SanitizerSelfTest"
+      ]
+    },
+    "sanitize": {
+      "buildOptions": [
+        "debugMode",
+        "debugInfo"
+      ],
+      "dflags-ldc": [
+        "--fsanitize=address",
+        "--fsanitize-address-use-after-return=never",
+        "--checkaction=C",
+        "--frame-pointer=all"
+      ],
+      "versions": [
+        "SanitizerSelfTest"
+      ]
+    },
+    "sanitize-unit": {
+      "buildOptions": [
+        "debugMode",
+        "debugInfo",
+        "unittests"
+      ],
+      "dflags-ldc": [
+        "--fsanitize=address",
+        "--fsanitize-address-use-after-return=never",
+        "--frame-pointer=all"
+      ],
+      "versions": [
+        "SanitizerSelfTest"
+      ]
+    },
+    "tsan": {
+      "buildOptions": [
+        "debugMode",
+        "debugInfo"
+      ],
+      "dflags-ldc": [
+        "--fsanitize=thread",
+        "--enable-asserts=false",
+        "--frame-pointer=all"
+      ],
+      "versions": [
+        "SanitizerSelfTest",
+        "SanitizerThreadPreinit"
+      ]
+    }
+  },
+  "configurations": [
+    {
+      "name": "algorithm",
+      "subConfigurations": {
+        "vibe3d:math": "isolated-tests",
+        "vibe3d:mesh": "isolated-tests",
+        "vibe3d:mesh-edit-log": "isolated-tests",
+        "vibe3d:mesh-snapshot": "isolated-tests"
+      }
+    }
+  ],
+  "dflags": []
+}

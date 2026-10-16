@@ -1,0 +1,83 @@
+module vibe3d.editing.tools.interactive.prepared_scale_update;
+
+import core.atomic : atomicOp;
+import vibe3d.documents.model.document : Layer;
+import vibe3d.editing.contracts.editmode : EditMode;
+import vibe3d.mesh.core.mesh : Mesh;
+import vibe3d.editing.tools.interactive.prepared_record_context : PreparedRecordContext;
+import vibe3d.editing.contracts.prepared_tool_effect : PreparedScaleUpdateKind;
+import vibe3d.util.math.math : Vec3;
+import vibe3d.editing.tools.interactive.tools.transform.scale : ScaleTool, PreparedScaleUpdateImage,
+    PreparedScaleUpdateBranch;
+
+struct PreparedScaleUpdateToken { @disable this(this); private ulong owner, generation; }
+struct ValidatedScaleUpdateToken { @disable this(this); private ulong owner, generation; }
+private shared ulong nextScaleUpdateOwner;
+
+final class PreparedScaleUpdateOwner {
+private:
+    ScaleTool target_; Layer layer_; Mesh* mesh_; EditMode mode_;
+    PreparedScaleUpdateImage image_; immutable ulong owner_; ulong generation_;
+    bool pending_, validated_, consumed_;
+    PreparedScaleUpdateToken prepared_; ValidatedScaleUpdateToken validatedToken_;
+public:
+    @disable this();
+    static PreparedScaleUpdateOwner prepare(ScaleTool target, Layer layer,
+            bool ownerEditOpen, Vec3 actionCenter) {
+        if (target is null || target.classinfo !is ScaleTool.classinfo ||
+            layer is null || target.preparedMeshForUpdate() !is &layer.meshRef())
+            return null;
+        auto owner = new PreparedScaleUpdateOwner(target, layer);
+        owner.image_ = target.buildPreparedUpdate(ownerEditOpen, actionCenter);
+        return owner.image_.valid ? owner : null;
+    }
+    bool begin() nothrow @nogc {
+        if (pending_ || consumed_ || target_ is null || !image_.valid) return false;
+        ++generation_; pending_ = true; prepared_.owner = owner_;
+        prepared_.generation = generation_; return true;
+    }
+    bool validate() nothrow @nogc {
+        if (!pending_ || validated_ || consumed_ || target_ is null ||
+            target_.classinfo !is ScaleTool.classinfo || layer_ is null ||
+            mesh_ !is &layer_.meshRef() ||
+            target_.preparedEditModeForUpdate() != mode_ ||
+            prepared_.owner != owner_ || prepared_.generation != generation_ ||
+            !target_.preparedUpdateMatches(image_, layer_.meshRef())) return false;
+        validated_ = true; validatedToken_.owner = owner_;
+        validatedToken_.generation = generation_;
+        prepared_.owner = prepared_.generation = 0; return true;
+    }
+    void install() nothrow @nogc {
+        if (!pending_ || !validated_ || consumed_ || target_ is null ||
+            validatedToken_.owner != owner_ ||
+            validatedToken_.generation != generation_) return;
+        target_.installPreparedUpdate(image_); consume();
+    }
+    void abort() nothrow @nogc { if (!consumed_) { image_.clear(); consume(); } }
+    PreparedScaleUpdateKind effectKind() const nothrow @nogc {
+        if (!image_.valid) return PreparedScaleUpdateKind.None;
+        final switch (image_.projection.branch) {
+        case PreparedScaleUpdateBranch.InactiveNoop: return PreparedScaleUpdateKind.InactiveNoop;
+        case PreparedScaleUpdateBranch.DraggingNoop: return PreparedScaleUpdateKind.DraggingNoop;
+        case PreparedScaleUpdateBranch.IdleRefresh: return PreparedScaleUpdateKind.IdleRefresh;
+        case PreparedScaleUpdateBranch.SelectionRefresh: return PreparedScaleUpdateKind.SelectionRefresh;
+        case PreparedScaleUpdateBranch.MutationRefresh: return PreparedScaleUpdateKind.MutationRefresh;
+        }
+    }
+    version(unittest) bool targetMatchesForTest() const nothrow @nogc {
+        return target_ !is null && layer_ !is null &&
+            target_.preparedUpdateMatches(image_, layer_.meshRef());
+    }
+private:
+    this(ScaleTool target, Layer layer) {
+        target_ = target; layer_ = layer; mesh_ = target.preparedMeshForUpdate();
+        mode_ = target.preparedEditModeForUpdate();
+        owner_ = atomicOp!"+="(nextScaleUpdateOwner, 1UL);
+    }
+    void consume() nothrow @nogc {
+        image_.clear(); target_ = null; layer_ = null; mesh_ = null;
+        pending_ = validated_ = false; consumed_ = true;
+        prepared_.owner = prepared_.generation = 0;
+        validatedToken_.owner = validatedToken_.generation = 0;
+    }
+}

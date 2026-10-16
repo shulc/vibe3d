@@ -14,8 +14,8 @@ module tests.unit.make_polygon_edge_chain_test;
 import std.format : format;
 
 import vibe3d.mesh.core.mesh;
-import math : Vec3;
-import commands.mesh.make_polygon : edgeChainWalk;
+import vibe3d.util.math.math : Vec3;
+import vibe3d.editing.commands.editor.commands.mesh.make_polygon : edgeChainWalk;
 
 private Mesh build(size_t nVerts, uint[][] faces)
 {

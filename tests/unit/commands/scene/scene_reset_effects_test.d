@@ -11,13 +11,13 @@ import tests.unit.census_symbols : exists = wave15Exists;
 
 import core.exception : AssertError;
 import vibe3d.mesh.core.mesh : MapKind, Mesh, SubpatchTrace, makeCube;
-import prefs : Prefs;
-import scene_reset_effects : SceneResetEffects;
+import vibe3d.apps.desktop.prefs : Prefs;
+import vibe3d.apps.desktop.scene_reset_effects : SceneResetEffects;
 import std.conv : to;
 import std.exception : assertThrown;
-import subpatch_preview : SubpatchPreview;
-import tool_activation_ownership : ToolTransition;
-import viewport : LayoutPreset, ViewportManager;
+import vibe3d.viewport.subpatch.subpatch_preview : SubpatchPreview;
+import vibe3d.editing.commands.runtime.tool_activation_ownership : ToolTransition;
+import vibe3d.viewport.host.viewport : LayoutPreset, ViewportManager;
 
 /// Fill the topology cache for real, so dropping it has something to retire.
 private long primeTopologyCache(ref SubpatchPreview preview) {

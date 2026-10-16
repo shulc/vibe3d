@@ -1,7 +1,7 @@
 module tests.unit.mesh_wire_compact_undo_test;
 import vibe3d.mesh.edit_replay.mesh_edit_replay : apply, revert;
 
-import math : Vec3;
+import vibe3d.util.math.math : Vec3;
 import vibe3d.mesh.core.mesh : Mesh;
 import vibe3d.mesh.edit_log.mesh_edit_delta : MeshEditScope, MeshEditTracker;
 

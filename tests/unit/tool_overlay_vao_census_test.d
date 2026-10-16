@@ -56,8 +56,8 @@ unittest {
 unittest {
     import core.exception : AssertError;
     import std.exception  : assertThrown, assertNotThrown;
-    import handles.gl_util : drawWorldSegments;
-    import math : Vec3;
+    import vibe3d.editing.tools.interactive.handles.gl_util : drawWorldSegments;
+    import vibe3d.util.math.math : Vec3;
 import vibe3d.util.spatial.spatial : Viewport;
     Viewport vp;
     Vec3[3] odd;

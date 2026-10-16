@@ -17,34 +17,34 @@ import std.range : walkLength;
 import std.regex : matchAll, regex;
 import std.string : indexOf;
 
-import application_command_binding : ApplicationCommandBinding;
-import command : Command;
-import command_executor : CommandExecutor;
-import command_history : CommandHistory, RecordMode;
-import commands.layer.commands : LayerAttr, LayerRename, LayerReorder, LayerSelect;
+import vibe3d.apps.desktop.application_command_binding : ApplicationCommandBinding;
+import vibe3d.editing.commands.runtime.command : Command;
+import vibe3d.editing.commands.runtime.command_executor : CommandExecutor;
+import vibe3d.editing.commands.runtime.command_history : CommandHistory, RecordMode;
+import vibe3d.runtime.document_actions.commands.layer.commands : LayerAttr, LayerRename, LayerReorder, LayerSelect;
 import vibe3d.documents.model.document : Document, ItemKind, Layer;
-import edit_session : EditSession;
+import vibe3d.editing.tools.interactive.edit_session : EditSession;
 import vibe3d.editing.contracts.editmode : EditMode;
-import forms_render : FormsPanel;
-import guarded_action_controller : GuardObservationPorts,
+import vibe3d.ui.editor.forms_render : FormsPanel;
+import vibe3d.apps.desktop.guarded_action_controller : GuardObservationPorts,
     GuardedActionController, GuardedActionPorts;
 import vibe3d.documents.model.image_data : ImagePlaneData;
-import layer_params : LayerPropsProvider, itemPropsTarget;
-import math : Vec3;
+import vibe3d.documents.channels.layer_params : LayerPropsProvider, itemPropsTarget;
+import vibe3d.util.math.math : Vec3;
 import vibe3d.mesh.core.mesh : MapKind, Mesh, makeCube;
-import mesh_gpu : GpuMesh;
-import morph_target : clearMorphTarget, setMorphTarget;
+import vibe3d.viewport.gpu.mesh_gpu : GpuMesh;
+import vibe3d.runtime.application_core.morph_target : clearMorphTarget, setMorphTarget;
 import vibe3d.editing.params.params : Param;
-import registry : Registry;
+import vibe3d.editing.tools.interactive.registry : Registry;
 import vibe3d.editing.contracts.seltype : SelType, currentSelType;
-import session_owner : Session;
+import vibe3d.runtime.application_core.session_owner : Session;
 import tests.unit.ui.headless_panel : HeadlessPanel, openPanel;
-import tool : Tool;
-import tool_activation_ownership : ToolTransition;
-import tools.transform.xfrm_transform : XfrmTransformTool;
-import ui.channel_rows : ChannelsKey, ChannelsModel, ChannelsProvider,
+import vibe3d.editing.tools.interactive.tool : Tool;
+import vibe3d.editing.commands.runtime.tool_activation_ownership : ToolTransition;
+import vibe3d.editing.tools.interactive.tools.transform.xfrm_transform : XfrmTransformTool;
+import vibe3d.ui.editor.ui.channel_rows : ChannelsKey, ChannelsModel, ChannelsProvider,
     channelsModel;
-import ui.channels_panel : ChannelsActions, ChannelsDrawSnapshot,
+import vibe3d.ui.editor.ui.channels_panel : ChannelsActions, ChannelsDrawSnapshot,
     ChannelsPanelRoles, ChannelsPanelState, ChannelsReadRole,
     bindChannelsPanel, channelsArmTransformGuard, channelsBoundItem,
     channelsDrawSnapshot,
@@ -52,8 +52,8 @@ import ui.channels_panel : ChannelsActions, ChannelsDrawSnapshot,
     channelsProviderMatchesModel, channelsRefreshState,
     channelsStateWithResolver, channelsTransformGuardArmed, drawChannelsPanel,
     resetChannelsDrawSnapshot;
-import ui.discard_guard : GuardRecord;
-import ui.retained_item : ConstItem;
+import vibe3d.ui.editor.ui.discard_guard : GuardRecord;
+import vibe3d.ui.editor.ui.retained_item : ConstItem;
 import vibe3d.viewport.camera.view : View;
 import d_imgui.imgui_h : ImVec2;
 

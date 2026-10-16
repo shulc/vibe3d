@@ -3,10 +3,10 @@ module tests.unit.handle_draw_funnel_census_test;
 
 import tests.unit.census_symbols : exists = wave15Exists;
 
-import handles.arbiter;
-import handles.arbiter_source_cells;
-import handles.shapes;
-import tools.transform.scale;
+import vibe3d.editing.tools.interactive.handles.arbiter;
+import vibe3d.editing.tools.interactive.handles.arbiter_source_cells;
+import vibe3d.editing.tools.interactive.handles.shapes;
+import vibe3d.editing.tools.interactive.tools.transform.scale;
 
 import std.algorithm : canFind;
 import std.array : appender;
@@ -23,8 +23,8 @@ import tests.unit.census_symbols : blankNonCode, blankUnittestBodies,
 
 private enum repoRoot = dirName(dirName(dirName(__FILE_FULL_PATH__)));
 private alias kGatedHandleModules = AliasSeq!(
-    handles.shapes, handles.arbiter, tools.transform.scale,
-    handles.arbiter_source_cells);
+    vibe3d.editing.tools.interactive.handles.shapes, vibe3d.editing.tools.interactive.handles.arbiter, vibe3d.editing.tools.interactive.tools.transform.scale,
+    vibe3d.editing.tools.interactive.handles.arbiter_source_cells);
 private immutable string[] kGatedHandlerNames = [
     "Arrow", "BoxHandler", "CenterDiskGizmo", "CircleHandler",
     "ClickPointHandler", "CubicArrow", "EngageProbeHandle",

@@ -1,0 +1,27 @@
+module vibe3d.editing.commands.runtime.commands.history.undo;
+
+import vibe3d.editing.commands.runtime.command;
+import vibe3d.editing.commands.runtime.command_history : CommandHistory;
+import vibe3d.mesh.core.mesh;
+import vibe3d.viewport.camera.view;
+import vibe3d.editing.contracts.editmode;
+
+/// Pop the top entry off the undo stack and revert it. Wired to Ctrl+Z
+/// via shortcuts.yaml. Itself never lands on the undo stack
+/// (isUndoable = false) — undo cannot undo itself.
+class HistoryUndo : Command {
+    private CommandHistory history;
+
+    this(Mesh* mesh, ref View view, EditMode editMode, CommandHistory history) {
+        super(mesh, view, editMode);
+        this.history = history;
+    }
+
+    override string name()  const { return "history.undo"; }
+    override string label() const { return "Undo"; }
+    override CmdFlags cmdFlags() const { return CmdFlags.SideEffect; }
+
+    protected override bool applyImpl() {
+        return history.undo();
+    }
+}

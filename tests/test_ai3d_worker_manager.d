@@ -22,9 +22,9 @@ import core.thread : Thread;
 import core.time   : msecs, seconds, MonoTime;
 
 import ai3d_worker_helpers : ai3dPython3Available;
-import ai3d.worker_manager : Ai3dWorkerManager, Ai3dWorkerState,
+import vibe3d.runtime.ai3d.ai3d.worker_manager : Ai3dWorkerManager, Ai3dWorkerState,
     Ai3dInstallConfig, saveAi3dConfig;
-import ai3d.stage_artifact : probeHealthCheck;
+import vibe3d.runtime.ai3d.ai3d.stage_artifact : probeHealthCheck;
 
 // run_test.d always runs from the repo root (ai3d_worker_helpers.
 // spawnAi3dFakeWorker makes the same "tools/ai3d_worker" assumption).

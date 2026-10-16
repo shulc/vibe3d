@@ -1,0 +1,1063 @@
+module vibe3d.editing.tools.interactive.tools.alignment.radial_sweep_tool;
+import vibe3d.viewport.display_policy.display_state : DrawPlan;
+import vibe3d.editing.tools.interactive.prepared_record_context : PreparedToolParamDoorClient,
+    PreparedRadialSweepParamDoorClient;
+
+import bindbc.opengl;
+import bindbc.sdl;
+import vibe3d.editing.pipeline.contracts.operator : VectorStack;
+import std.math : PI, abs, cos, sin;
+
+import vibe3d.editing.tools.interactive.tool;
+import vibe3d.mesh.core.mesh;
+import vibe3d.viewport.gpu.mesh_gpu : GpuMesh;
+import vibe3d.mesh.ops.mesh_ops.revolve;
+import vibe3d.util.math.math;
+import vibe3d.util.spatial.spatial : Viewport;
+import vibe3d.editing.contracts.editmode : EditMode;
+import vibe3d.editing.params.params : Param, IntEnumEntry;
+import vibe3d.editing.commands.runtime.command_history : CommandHistory;
+import vibe3d.editing.commands.editor.commands.mesh.session_edit : MeshSessionEdit;
+import vibe3d.editing.tools.state.tools.common.session_mesh_key : SessionMeshKey;
+import vibe3d.mesh.snapshot.snapshot : MeshSnapshot;
+import vibe3d.editing.tools.interactive.prepared_selection_profile_image : RadialSweepProfileImage;
+import vibe3d.viewport.gpu.shader : Shader, LitShader, drawLitPreview;
+import vibe3d.editing.tools.interactive.handler : ToolHandles, BoxHandler, gizmoSize, drawWorldSegments;
+import vibe3d.editing.tools.interactive.drag : HandleDrag, DragFrame, DragKind, screenAxisDelta, gesturePrevPixel;
+import vibe3d.platform.input.eventlog : queryMouse;
+import vibe3d.editing.tools.interactive.prepared_record_context : PreparedRecordContext, PreparedToolDoorClient;
+import vibe3d.editing.tools.interactive.prepared_radial_sweep_transition : PreparedRadialSweepTransitionOwner;
+import vibe3d.editing.contracts.prepared_tool_effect : PreparedRadialSweepEffect, PreparedRadialSweepKind;
+import vibe3d.viewport.gpu.mesh_gpu : GpuUploadOwner, GpuResourceOwner, GpuCreateUploadOwner;
+import vibe3d.editing.tools.interactive.prepared_selection_profile : PreparedSelectionProfileOwner;
+import vibe3d.documents.model.document : Layer;
+import vibe3d.mesh.change.change_bus : MeshEditScope;
+import vibe3d.mesh.core.mesh : beginPreparedShadow, drainPreparedShadowDelivery;
+import vibe3d.editing.commands.runtime.command_history : PreparedHistoryKind;
+
+version (unittest) import std.conv : to;
+
+// ---------------------------------------------------------------------------
+// Radial Sweep — interactive revolve/lathe tool (task 0326) wrapping
+// `revolveProfileEx` (source/mesh_ops/revolve.d — free functions over a
+// `MeshEditBatch` since task 1903 Stage E2), which itself wraps the original
+// `revolveProfile` kernel behind the `mesh.sweep` one-shot command.
+// Modelled directly on MirrorTool (tools/mirror.d): a self-contained
+// PREVIEW mesh that never touches the document mesh during interaction
+// (rebuilt every param change / handle drag from a base snapshot + the
+// captured profile), committed once at deactivate().
+//
+// Captured attrs (task-0326 capture notes) implemented
+// here: Count (`sides`, translated per the measured Count-semantics gap —
+// see `toKernelParams`), Axis (free 3D vector + X/Y/Z/Custom quick-set,
+// draggable axis-line handles), Center, Start/End Angle (draggable angle
+// handles), Offset (axial spiral pitch), Cap Start/End.
+//
+// Deferred (captured in the toolcard but NOT wired into the vibe3d kernel —
+// see `RadialSweepParams`' trailing comment block for the documented
+// reference defaults a future pass should honour):
+//   - Square mode — the reference's own companion "Start Segment" control
+//     could not be confirmed as a live attribute in the captured install;
+//     the base "Square" toggle's effect (aligning swept segments along a
+//     square instead of a circle) has no vibe3d kernel analogue at all.
+//   - Sweep UVs (none/u/v) — vibe3d's revolve kernel generates no UVs for
+//     the swept surface; would need PolyVertex per-corner UV authoring
+//     (see source/mesh_maps or the UV-maps stage), out of scope here.
+//   - Invert Polygons — `revolveProfileEx`'s winding is fixed; parity vs.
+//     the reference's default orientation was never captured live.
+//   - Curve Cage / Size / Tolerance / Pivot / OffsetX-Y / profile Angle /
+//     ReverseX-Y — reference "Profiles Attributes" group, collapsed by
+//     default even in the reference panel and explicitly out of scope per
+//     the toolcard's own parity case (selection-based sweep only, no
+//     profile-preset library in vibe3d).
+// ---------------------------------------------------------------------------
+
+
+/// RadialSweepParams — single source of truth for the tool (mirrors
+/// MirrorParams, tools/mirror.d). Every handle drag and panel edit writes
+/// into this struct; preview + handle positions + the kernel call all
+/// derive from it on demand.
+struct RadialSweepParams {
+    // Reference "Count" convention: the number of NEW bands on an open /
+    // partial-angle sweep (ring count = sides+1); coincides with vibe3d's
+    // own ring-count convention ONLY on a closed 360° sweep. Translated to
+    // RevolveParams.count in `toKernelParams` below — the measured gap
+    // from the task 0326 toolcard (a literal count->sides port would
+    // silently under-count bands by one on every open sweep).
+    int   sides         = 24;
+    // Quick-set preset for `axis`: 0=X 1=Y 2=Z 3=Custom. Selecting X/Y/Z
+    // snaps `axis` to that coordinate direction (preserving its current
+    // magnitude); it is NOT a mode gate — `axis` stays directly editable
+    // (panel or handle drag) at all times, same as the reference. Any
+    // manual edit of `axis` flips this back to Custom (3).
+    int   axisPreset    = 1;
+    // Free 3D rotation axis — the RAW half-vector (reference vecX/Y/Z),
+    // not a unit direction: the axis LINE spans `center - axis` to
+    // `center + axis` (reference help text: "If you set all the values to
+    // 1m, [it] sets one end at (-1,-1,-1) and the other end at (1,1,1)").
+    Vec3  axis          = Vec3(0, 1, 0);
+    // Pivot point the axis line passes through (reference cenX/Y/Z).
+    Vec3  center         = Vec3(0, 0, 0);
+    // Rotational placement of ring 0 / the last ring, in DEGREES (reference
+    // Start Angle / End Angle). Angle SPAN = endAngleDeg - startAngleDeg.
+    float startAngleDeg  = 0.0f;
+    float endAngleDeg    = 360.0f;
+    // Axial translation per ring step, world units (spiral pitch;
+    // reference "Offset" — springs/telephone-cord shapes at End Angle >
+    // 360°, which this tool allows since endAngleDeg has no upper clamp).
+    float offset          = 0.0f;
+    // Close the start/end ring with an n-gon (reference Cap Start/End,
+    // both default ON). Only takes effect for a CLOSED profile ring
+    // (polygon-mode sweep) on a non-closed sweep — see
+    // `revolveProfileEx`'s doc comment. Harmless at the default full
+    // 360° sweep (no exposed end to cap either way).
+    bool  cap0            = true;
+    bool  cap1            = true;
+
+    // --- Deferred (see module doc comment above) — NOT panel params, so
+    // the UI never offers a control with no effect. Documented reference
+    // defaults for whoever wires these into the kernel later:
+    //   square = false   (reference "Square")
+    //   uvs    = "u"     (reference "Sweep UVs": none/u/v)
+    //   flip   = false   (reference "Invert Polygons")
+}
+
+enum PreparedRadialSweepTransitionKind : ubyte { Activate, Param, Deactivate }
+
+struct RadialSweepTransitionImage {
+    PreparedRadialSweepTransitionKind kind;
+    RadialSweepProfileImage profile;
+    Mesh previewMesh;
+    RadialSweepParams params;
+    bool engaged, havePreviewCache, hasPreview, clearHaul, valid;
+    int dragPart = -1;
+    int cachedSides, cachedAxisPreset;
+    Vec3 cachedAxis, cachedCenter;
+    float cachedStartAngle, cachedEndAngle, cachedOffset;
+    bool cachedCap0, cachedCap1;
+    bool hasProfile() const nothrow @nogc { return profile.mesh.filled; }
+    void cacheFromParams() nothrow @nogc {
+        cachedSides = params.sides; cachedAxisPreset = params.axisPreset;
+        cachedAxis = params.axis; cachedCenter = params.center;
+        cachedStartAngle = params.startAngleDeg; cachedEndAngle = params.endAngleDeg;
+        cachedOffset = params.offset; cachedCap0 = params.cap0; cachedCap1 = params.cap1;
+        havePreviewCache = true;
+    }
+    void clear() nothrow @nogc { this = RadialSweepTransitionImage.init; }
+}
+
+/// Upper bound on `RadialSweepParams.sides` (reference "Count"). Enforced at
+/// THREE layers (task 0326 review finding B1 — Count was previously
+/// unbounded; task 0365 P1 added the kernel-level backstop as the durable
+/// third layer):
+///   1. The `sides` Param itself opts into `.max(MAX_SWEEP_SIDES)
+///      .enforceBounds()` (see `params()` below — the bare identifier, NOT
+///      `mesh.MAX_SWEEP_SIDES`: this class's `mesh` @property shadows the
+///      module name in method scope, so the qualified form would not compile;
+///      the whole-module `import mesh;` still resolves the bare name), so an
+///      out-of-range
+///      headless `tool.attr ... sides <n>` write is clamped BEFORE it ever
+///      reaches `onParamChanged`/`evaluate` — this is the PRIMARY defense,
+///      since `evaluate()` runs `rebuildRadialSweepPreview` SYNCHRONOUSLY
+///      on the UI/HTTP thread.
+///   2. `toKernelParams` (below) re-clamps defensively before translating
+///      into `RevolveParams`.
+///   3. `revolveProfileEx` itself clamps `count` to the same ceiling —
+///      the durable backstop for any caller that reaches the shared kernel
+///      through a path other than this tool.
+/// Without any of these, `tool.attr ... sides 100000000` allocated ~1.6GB
+/// synchronously and hung the editor.
+///
+/// The constant itself lives in `mesh.d` (`mesh.MAX_SWEEP_SIDES`), not
+/// here — `mesh.d` is a core module and must not import `tools/*`, so
+/// `revolveProfileEx`'s own cap needs a definition it can reference
+/// directly; this tool references the same one for consistency.
+
+/// Translate `RadialSweepParams` (reference "Count" convention + every
+/// other panel field) into `RevolveParams` (vibe3d's ring-count
+/// convention). The two nontrivial steps: the Count-semantics fix (task
+/// 0326 measured gap, see `sides`'s doc comment) and the `sides` DoS clamp
+/// (see `mesh.MAX_SWEEP_SIDES`) — everything else is a direct field copy /
+/// degrees-to-radians conversion.
+RevolveParams toKernelParams(in RadialSweepParams p) pure nothrow @nogc @safe {
+    enum float D2R = cast(float)(PI / 180.0);
+    RevolveParams kp;
+    immutable float angleSpanRad = (p.endAngleDeg - p.startAngleDeg) * D2R;
+    // revolveSweepClosedWithOffset (NOT the bare angle-only
+    // revolveSweepClosed): a nonzero spiral `offset` must be treated as an
+    // OPEN sweep even at a >=360° angle span, or the ring-count
+    // translation below disagrees with revolveProfileEx's own OPEN
+    // wrap-bridge decision (task 0326 review finding S1) — same single
+    // source of truth the kernel itself uses.
+    immutable bool  closed = revolveSweepClosedWithOffset(angleSpanRad, p.offset);
+
+    int sidesClamped = p.sides;
+    if (sidesClamped < 1) sidesClamped = 1;
+    else if (sidesClamped > MAX_SWEEP_SIDES) sidesClamped = MAX_SWEEP_SIDES;
+
+    kp.count      = closed ? sidesClamped : sidesClamped + 1;
+    kp.axis       = p.axis;
+    kp.center     = p.center;
+    kp.angle      = angleSpanRad;
+    kp.startAngle = p.startAngleDeg * D2R;
+    kp.offset     = p.offset;
+    kp.cap0       = p.cap0;
+    kp.cap1       = p.cap1;
+    return kp;
+}
+
+/// The non-cumulative preview recompute (mirrors `rebuildMirrorPreview`,
+/// tools/mirror.d) — a free function (not a method) so a module unittest
+/// can exercise it directly against a plain `Mesh`, without constructing a
+/// RadialSweepTool (whose constructor builds GL-backed handlers via
+/// BoxHandler — unsafe outside a live GL context).
+///
+/// `baseSnap.restore(previewMesh)` fully overwrites `previewMesh` with the
+/// pristine base EVERY call — the guarantee that N successive calls never
+/// accumulate N sweeps (revolveProfileEx APPENDS; see mesh.d).
+///
+/// `profileFaceIdx` (polygon-mode only, `uint.max` sentinel for edge mode)
+/// is the SOURCE face's index at capture time — still valid against the
+/// freshly-restored `previewMesh` since revolveProfileEx only appends
+/// (never reindexes existing faces) and `baseSnap` reproduces the exact
+/// mesh state the index was captured against.
+void rebuildRadialSweepPreview(const ref MeshSnapshot baseSnap, ref Mesh previewMesh,
+                               in uint[] profile, bool profileClosed, uint profileFaceIdx,
+                               in RadialSweepParams params_)
+{
+    baseSnap.restore(previewMesh);
+    if (profile.length == 0) return;   // no valid selection captured — bare base
+
+    auto kp = toKernelParams(params_);
+
+    // TASK 1903 Stage E2 — THE PREVIEW PATH, and UNRECORDED here is a HARD
+    // requirement rather than a track-1 economy (plan §9). `evaluate()` calls
+    // this once per parameter change and once per handle-drag frame: a
+    // RECORDING batch would build and throw away a full op-log at 60 Hz and
+    // `changeBus.opLogEntriesRecorded` would tick for an edit the user has not
+    // committed. An UNRECORDED frame keeps every tracker hook on its existing
+    // `if (editRecorder_ is null) return;` first line — one predictable branch,
+    // exactly today's batchless cost — while still collapsing the kernel's
+    // internal commits into ONE stamp and ONE hidden derive per frame.
+    // `close()` returns `MeshEditDelta.init` and there is nothing to read.
+    //
+    // NOT delivery, and the twin sentence in `StrokeExtrudeTool.applyPath` says
+    // "ONE delivery" only because that path edits the DOCUMENT mesh. This one
+    // edits `previewMesh`, a field of the tool: the change bus filters its
+    // subjects through `g_isDocumentMesh` (`Mesh.deliverySubjectAccepted`),
+    // which no `Layer` owns here, so this path delivered nothing before the
+    // batch and delivers nothing after it. The stamp and derive collapse is
+    // the whole of what the batch buys the preview (Stage E2 review, m6).
+    //
+    // The batch opens AFTER `baseSnap.restore(previewMesh)` above,
+    // deliberately: a whole-mesh restore inside an open batch would defer the
+    // stamps `commitRestored` exists to publish. It is also scoped to the
+    // kernel call ALONE and does not span the profile-face deletion below,
+    // which this stage does not touch.
+    size_t inserted;
+    {
+        auto ed = MeshEditBatch.unrecorded(previewMesh, kRevolveEditScope);
+        inserted = ed.revolveProfileEx(profile, profileClosed, kp);
+        ed.close();
+    }
+    if (inserted > 0 && profileFaceIdx != uint.max
+        && profileFaceIdx < previewMesh.faces.length) {
+        auto delMask = new bool[](previewMesh.faces.length);
+        delMask[profileFaceIdx] = true;
+        previewMesh.deleteFacesByMask(delMask);   // rebuilds loops internally
+    }
+}
+
+// ---------------------------------------------------------------------------
+// RadialSweepTool
+// ---------------------------------------------------------------------------
+class RadialSweepTool : Tool, PreparedToolDoorClient, PreparedToolParamDoorClient {
+    override ToolSessionPolicy sessionPolicy() const nothrow @nogc {
+        static immutable ToolSessionPolicy policy = {
+            sessionSteps: true, historyRecordedSteps: true };
+        return policy;
+    }
+    mixin PreparedRadialSweepParamDoorClient;
+private:
+    Mesh* delegate() meshSrc_;
+    @property Mesh* mesh() const { return meshSrc_(); }
+    GpuMesh*  gpu;
+    LitShader litShader;
+    EditMode* editMode;
+
+    RadialSweepParams params_;
+
+    // Base state captured at activate()/resyncSession() — the pristine
+    // mesh + the profile the preview/commit sweep from. `validProfile_` is
+    // false when the current edit-mode selection doesn't yield a usable
+    // profile (empty edge chain / not exactly one selected face) — the
+    // tool then shows only the axis gizmo and commits nothing.
+    MeshSnapshot baseSnap;
+    uint[]       profile_;
+    /// The identity of the mesh `profile_` indexes — see `SessionMeshKey`.
+    /// Without it `deactivate()`'s `engaged && validProfile_` was GESTURE
+    /// state only, and a document change under a live gesture reached
+    /// `revolveProfileEx` with stale vertex ids: measured 2026-08-28, arm the
+    /// tool on a cube face, `POST /api/reset?empty=true`, and the process dies
+    /// with `ArrayIndexError@source/mesh_ops/revolve.d(374)`. `revolveProfileEx`
+    /// checks its own length / count / angle preconditions and never that a
+    /// profile id addresses the mesh it was handed.
+    SessionMeshKey sessionKey_;
+    bool         profileClosed_;
+    uint         profileFaceIdx_ = uint.max;
+    bool         validProfile_;
+
+    // Own preview mesh (never touches the document mesh until deactivate()).
+    Mesh    previewMesh;
+    GpuMesh previewGpu;
+
+    // Dirty guard — evaluate() is called every frame the panel is open AND
+    // on every handle-drag motion event; skip the restore+sweep+GPU-upload
+    // round trip when nothing actually changed.
+    bool  havePreviewCache;
+    int   cachedSides;
+    int   cachedAxisPreset;
+    Vec3  cachedAxis;
+    Vec3  cachedCenter;
+    float cachedStartAngle;
+    float cachedEndAngle;
+    float cachedOffset;
+    bool  cachedCap0;
+    bool  cachedCap1;
+
+    // Commit guard: true once the user has actually interacted (handle
+    // drag / param edit / headless attr write).
+    bool engaged;
+
+    // ----- Handles: 0 = axis start point (center - axis), 1 = axis end point
+    // (center + axis), 2 = start-angle handle, 3 = end-angle handle. An end
+    // writes only the axis, axis = +/-(P - center); the center stays and the
+    // other end mirrors (K-FH C-RS).
+    BoxHandler  axisStartH, axisEndH, startAngleH, endAngleH;
+    ToolHandles toolHandles;
+    int         dragPart = -1;
+    int         lastMX, lastMY;
+    HandleDrag  grab;      // an axis end: the end at the press + travel
+
+    version(unittest) MeshSnapshot lastPreparedCommitImage_;
+    version(unittest) ulong lastPreparedMutationVersion_, lastPreparedTopologyVersion_;
+
+public:
+    this(Mesh* delegate() meshSrc, GpuMesh* gpu, EditMode* editMode, LitShader litShader) {
+        this.meshSrc_  = meshSrc;
+        this.gpu       = gpu;
+        this.editMode  = editMode;
+        this.litShader = litShader;
+        axisStartH  = new BoxHandler(Vec3(0, 0, 0), Vec3(0.95f, 0.55f, 0.05f));
+        axisEndH    = new BoxHandler(Vec3(0, 0, 0), Vec3(0.95f, 0.55f, 0.05f));
+        startAngleH = new BoxHandler(Vec3(0, 0, 0), Vec3(0.25f, 0.75f, 0.95f));
+        endAngleH   = new BoxHandler(Vec3(0, 0, 0), Vec3(0.35f, 0.95f, 0.35f));
+        toolHandles = new ToolHandles();
+    }
+
+    void destroy() {
+        axisStartH.destroy();
+        axisEndH.destroy();
+        startAngleH.destroy();
+        endAngleH.destroy();
+    }
+
+    override string name() const { return "Radial Sweep"; }
+
+    override ulong previewUploadVersion() const nothrow @nogc {
+        return previewGpu.uploadVersion;
+    }
+    override int previewHotPart() const nothrow @nogc {
+        return toolHandles.hot;
+    }
+
+    final bool ownsPreviewUpload(GpuUploadOwner owner) nothrow @nogc {
+        return owner !is null && owner.owns(&previewGpu);
+    }
+    final bool ownsPreviewDestroy(GpuResourceOwner owner) nothrow @nogc {
+        return owner !is null && owner.owns(&previewGpu);
+    }
+    final bool ownsMainUpload(GpuUploadOwner owner) nothrow @nogc {
+        return owner !is null && owner.owns(gpu);
+    }
+    final bool ownsPreviewCreateUpload(GpuCreateUploadOwner owner) nothrow @nogc {
+        return owner !is null && owner.owns(&previewGpu);
+    }
+
+    final PreparedRadialSweepEffect prepareActivate(PreparedRecordContext context,
+            PreparedSelectionProfileOwner profile,
+            GpuCreateUploadOwner createUpload) {
+        if (context is null) return PreparedRadialSweepEffect(
+            preparedToolStateOwner, PreparedRadialSweepKind.Activate, false);
+        scope(failure) context.discard();
+        bool ok = profile !is null && ownsPreviewCreateUpload(createUpload);
+        auto transition = ok
+            ? PreparedRadialSweepTransitionOwner.activation(this, profile) : null;
+        ok = transition !is null &&
+            context.prepareRadialSweepTransition(transition) &&
+            context.prepareCreateUpload(createUpload,
+                transition.previewForGpuUpload) &&
+            context.markNoHistoryInstall();
+        if (!ok) context.discard();
+        return PreparedRadialSweepEffect(preparedToolStateOwner,
+            PreparedRadialSweepKind.Activate, ok);
+    }
+    override bool prepareDoorActivate(PreparedRecordContext context, Layer,
+            ulong threadIdentity, ulong contextIdentity) {
+        auto source = mesh;
+        if (source is null || editMode is null) return false;
+        auto profile = PreparedSelectionProfileOwner.radialSweep(this, *source,
+            *editMode);
+        auto upload = new GpuCreateUploadOwner(&previewGpu, threadIdentity,
+            contextIdentity, true);
+        return prepareActivate(context, profile, upload).accepted;
+    }
+
+    final PreparedRadialSweepEffect prepareParamChanged(PreparedRecordContext context,
+            PreparedRadialSweepTransitionOwner transition, GpuUploadOwner uploadOwner) {
+        if (context is null) return PreparedRadialSweepEffect(
+            preparedToolStateOwner, PreparedRadialSweepKind.Param, false);
+        scope(failure) context.discard();
+        bool ok = context !is null && transition !is null && transition.owns(this) &&
+            transition.kind == PreparedRadialSweepTransitionKind.Param &&
+            ownsPreviewUpload(uploadOwner) &&
+            context.prepareRadialSweepTransition(transition) &&
+            context.prepareUpload(uploadOwner, transition.previewForGpuUpload) &&
+            context.markNoHistoryInstall();
+        if (!ok && context !is null) context.discard();
+        return PreparedRadialSweepEffect(preparedToolStateOwner,
+            PreparedRadialSweepKind.Param, ok);
+    }
+
+    private size_t buildPreparedCommitCandidate(out Mesh candidate,
+            out MeshSnapshot pre, out uint deliveryFlags,
+            out uint deliveryDomains) {
+        if (!(engaged && validProfile_ && sessionKey_.matches(*mesh))) return 0;
+        pre = MeshSnapshot.capture(*mesh); pre.restore(candidate);
+        auto shadow = beginPreparedShadow(candidate);
+        size_t inserted;
+        {
+            auto ed = MeshEditBatch.unrecorded(candidate, kRevolveEditScope);
+            inserted = ed.revolveProfileEx(profile_, profileClosed_, toKernelParams(params_));
+            ed.close();
+        }
+        if (inserted > 0) {
+            if (profileFaceIdx_ != uint.max && profileFaceIdx_ < candidate.faces.length) {
+                auto delMask = new bool[](candidate.faces.length);
+                delMask[profileFaceIdx_] = true; candidate.deleteFacesByMask(delMask);
+            }
+            candidate.buildLoops();
+        }
+        drainPreparedShadowDelivery(candidate, deliveryFlags, deliveryDomains);
+        shadow.close(); return inserted;
+    }
+
+    final PreparedRadialSweepEffect prepareDeactivate(PreparedRecordContext context,
+            PreparedRadialSweepTransitionOwner transition, Layer layer,
+            GpuUploadOwner mainUpload, GpuResourceOwner previewDestroy) {
+        if (context is null) return PreparedRadialSweepEffect(
+            preparedToolStateOwner, PreparedRadialSweepKind.Deactivate, false);
+        scope(failure) context.discard();
+        bool ok = transition !is null &&
+            transition.owns(this) &&
+            transition.kind == PreparedRadialSweepTransitionKind.Deactivate &&
+            layer !is null && &layer.meshRef() is mesh &&
+            ownsPreviewDestroy(previewDestroy);
+        Mesh candidate; MeshSnapshot pre;
+        size_t inserted; uint deliveryFlags, deliveryDomains;
+        if (ok) inserted = buildPreparedCommitCandidate(candidate, pre,
+            deliveryFlags, deliveryDomains);
+        version(unittest) if (ok && inserted > 0) {
+            lastPreparedCommitImage_ = MeshSnapshot.capture(candidate);
+            lastPreparedMutationVersion_ = __traits(getMember, candidate,
+                "mutation" ~ "Version");
+            lastPreparedTopologyVersion_ = __traits(getMember, candidate,
+                "topology" ~ "Version");
+        }
+        if (ok && inserted > 0)
+            ok = ownsMainUpload(mainUpload) &&
+                context.prepareStampedMeshImage(layer, candidate,
+                    deliveryFlags, deliveryDomains) &&
+                context.prepareUpload(mainUpload, candidate);
+        if (ok) ok = context.prepareDestroy(previewDestroy);
+        bool historyPrepared;
+        if (ok && inserted > 0 && history !is null && gestureFactory !is null) {
+            auto cmd = cast(MeshSessionEdit) gestureFactory();
+            if (cmd !is null) {
+                cmd.setSnapshots(pre, MeshSnapshot.capture(candidate), "Radial Sweep");
+                historyPrepared = context.prepare(cmd, PreparedHistoryKind.Plain).accepted;
+                if (historyPrepared) sessionTagPreparedCompleted(cmd);
+                ok = historyPrepared;
+            } else {
+                ok = context.prepareGestureCarrierMismatch();
+            }
+        }
+        if (ok) ok = historyPrepared ? context.markHistoryInstall()
+                                     : context.markNoHistoryInstall();
+        if (ok) ok = context.prepareRadialSweepTransition(transition);
+        if (!ok && context !is null) context.discard();
+        return PreparedRadialSweepEffect(preparedToolStateOwner,
+            PreparedRadialSweepKind.Deactivate, ok, inserted);
+    }
+    override bool prepareDoorDeactivate(PreparedRecordContext context, Layer layer,
+            ulong threadIdentity, ulong contextIdentity) {
+        auto transition = PreparedRadialSweepTransitionOwner.deactivate(this);
+        auto upload = new GpuUploadOwner(gpu, threadIdentity, contextIdentity);
+        auto destroy = new GpuResourceOwner(&previewGpu, threadIdentity,
+            contextIdentity);
+        return prepareDeactivate(context, transition, layer, upload, destroy).accepted;
+    }
+
+    final RadialSweepTransitionImage buildPreparedActivationImage(
+            ref RadialSweepProfileImage profile) {
+        RadialSweepTransitionImage result;
+        result.profile = profile; profile = RadialSweepProfileImage.init;
+        result.kind = PreparedRadialSweepTransitionKind.Activate;
+        result.params = params_;
+        rebuildRadialSweepPreview(result.profile.mesh, result.previewMesh,
+            result.profile.profile, result.profile.closed, result.profile.face,
+            result.params);
+        result.cacheFromParams(); result.engaged = false; result.dragPart = -1;
+        result.hasPreview = true; result.clearHaul = true; result.valid = true; return result;
+    }
+
+    final RadialSweepTransitionImage buildPreparedParamImage(string name) {
+        RadialSweepTransitionImage result;
+        result.kind = PreparedRadialSweepTransitionKind.Param;
+        Mesh detachedBase;
+        baseSnap.restore(detachedBase);
+        result.profile.mesh = MeshSnapshot.capture(detachedBase);
+        result.profile.profile = profile_.dup;
+        result.profile.sessionKey = sessionKey_;
+        result.profile.closed = profileClosed_; result.profile.face = profileFaceIdx_;
+        result.profile.valid = validProfile_;
+        result.params = params_;
+        if (name == "axisPreset") {
+            float len = result.params.axis.length;
+            if (len < 1e-6f) len = 1.0f;
+            switch (result.params.axisPreset) {
+            case 0: result.params.axis = Vec3(len, 0, 0); break;
+            case 1: result.params.axis = Vec3(0, len, 0); break;
+            case 2: result.params.axis = Vec3(0, 0, len); break;
+            default: break;
+            }
+        } else if (name == "axis") result.params.axisPreset = 3;
+        rebuildRadialSweepPreview(result.profile.mesh, result.previewMesh,
+            result.profile.profile, result.profile.closed, result.profile.face,
+            result.params);
+        result.cacheFromParams(); result.engaged = true; result.dragPart = dragPart;
+        result.hasPreview = true; result.valid = true; return result;
+    }
+
+    final RadialSweepTransitionImage buildPreparedDeactivateImage() {
+        RadialSweepTransitionImage result;
+        result.kind = PreparedRadialSweepTransitionKind.Deactivate;
+        result.engaged = false; result.havePreviewCache = false;
+        result.valid = true; return result;
+    }
+
+    final void installPreparedTransition(ref RadialSweepTransitionImage image)
+            nothrow @nogc {
+        if (!image.valid) return;
+        if (image.kind == PreparedRadialSweepTransitionKind.Deactivate) {
+            engaged = false; havePreviewCache = false; image.clear(); return;
+        }
+        if (image.hasProfile) {
+            image.profile.mesh.moveInto(baseSnap);
+            profile_ = image.profile.profile; image.profile.profile = null;
+            sessionKey_ = image.profile.sessionKey;
+            profileClosed_ = image.profile.closed; profileFaceIdx_ = image.profile.face;
+            validProfile_ = image.profile.valid;
+        }
+        if (image.hasPreview) {
+            previewMesh = image.previewMesh; image.previewMesh = Mesh.init;
+        }
+        params_ = image.params; engaged = image.engaged; dragPart = image.dragPart;
+        havePreviewCache = image.havePreviewCache;
+        cachedSides = image.cachedSides; cachedAxisPreset = image.cachedAxisPreset;
+        cachedAxis = image.cachedAxis; cachedCenter = image.cachedCenter;
+        cachedStartAngle = image.cachedStartAngle; cachedEndAngle = image.cachedEndAngle;
+        cachedOffset = image.cachedOffset; cachedCap0 = image.cachedCap0;
+        cachedCap1 = image.cachedCap1;
+        if (image.clearHaul) toolHandles.clearHaul();
+        image.clear();
+    }
+
+    final void installPreparedSelectionProfile(ref RadialSweepProfileImage image)
+            nothrow @nogc {
+        image.mesh.moveInto(baseSnap);
+        profile_ = image.profile; image.profile = null;
+        sessionKey_ = image.sessionKey;
+        profileClosed_ = image.closed; profileFaceIdx_ = image.face;
+        validProfile_ = image.valid;
+        engaged = false; dragPart = -1; havePreviewCache = false;
+    }
+    version(unittest) bool preparedProfileForTest() const nothrow @nogc {
+        return baseSnap.filled && validProfile_ && profile_.length != 0 &&
+               profileClosed_ && profileFaceIdx_ == 0 && !engaged &&
+               dragPart == -1 && !havePreviewCache;
+    }
+    version(unittest) bool preparedProfileValidityForTest() const nothrow @nogc {
+        return validProfile_;
+    }
+    version(unittest) bool preparedActivationForTest(bool expectedValid)
+            const nothrow @nogc {
+        return baseSnap.filled && validProfile_ == expectedValid && !engaged &&
+            dragPart == -1 && havePreviewCache &&
+            toolHandles.haulForPreparedTest() == -1 && previewGpu.faceVao != 0;
+    }
+    version(unittest) bool preparedTransitionForTest(bool expectedEngaged)
+            const nothrow @nogc {
+        return baseSnap.filled && profile_.length >= 3 && previewMesh.vertices.length > 0 &&
+               havePreviewCache && engaged == expectedEngaged && dragPart == -1 &&
+               cachedSides == params_.sides && cachedAxisPreset == params_.axisPreset &&
+               cachedAxis == params_.axis && cachedCenter == params_.center;
+    }
+    version(unittest) void seedPreparedAxisForTest(int preset, Vec3 axisValue)
+            nothrow @nogc { params_.axisPreset = preset; params_.axis = axisValue; }
+    version(unittest) void seedPreparedHaulForTest(int part) { toolHandles.setHaul(part); }
+    version(unittest) int preparedHaulForTest() const nothrow @nogc {
+        return toolHandles.haulForPreparedTest();
+    }
+    version(unittest) GpuUploadOwner fakePreviewUploadOwnerForTest() {
+        return GpuUploadOwner.fakeForTest(&previewGpu);
+    }
+    version(unittest) GpuCreateUploadOwner fakePreviewCreateUploadOwnerForTest() {
+        return GpuCreateUploadOwner.fakeForTest(&previewGpu);
+    }
+    version(unittest) bool previewGpuEmptyForTest() const nothrow @nogc {
+        return previewGpu.faceVao == 0 && previewGpu.faceVbo == 0 &&
+            previewGpu.vertCount == 0;
+    }
+    version(unittest) GpuResourceOwner fakePreviewDestroyOwnerForTest() {
+        return GpuResourceOwner.fakeForTest(&previewGpu);
+    }
+    version(unittest) GpuUploadOwner fakeMainUploadOwnerForTest() {
+        return GpuUploadOwner.fakeForTest(gpu);
+    }
+    version(unittest) void seedPreparedDeactivateParityForTest() {
+        params_.sides = 37; params_.offset = 4.25f; engaged = true;
+        havePreviewCache = true; dragPart = 2; cachedSides = 91;
+        cachedAxisPreset = 3; cachedAxis = Vec3(7,8,9); cachedCenter = Vec3(3,4,5);
+        cachedStartAngle = 11; cachedEndAngle = 222; cachedOffset = 6.5f;
+        cachedCap0 = false; cachedCap1 = true; toolHandles.setHaul(3);
+    }
+    version(unittest) bool preparedDeactivateParityForTest(size_t previewVerts,
+            size_t profileCount) const nothrow @nogc {
+        return !engaged && !havePreviewCache && dragPart == 2 &&
+            params_.sides == 37 && params_.offset == 4.25f &&
+            cachedSides == 91 && cachedAxisPreset == 3 && cachedAxis == Vec3(7,8,9) &&
+            cachedCenter == Vec3(3,4,5) && cachedStartAngle == 11 &&
+            cachedEndAngle == 222 && cachedOffset == 6.5f && !cachedCap0 && cachedCap1 &&
+            previewMesh.vertices.length == previewVerts && profile_.length == profileCount &&
+            baseSnap.filled && toolHandles.haulForPreparedTest() == 3;
+    }
+    version(unittest) bool installedCommitMatchesPreparedForTest() const {
+        auto now = MeshSnapshot.capture(*mesh);
+        auto expected = lastPreparedCommitImage_;
+        auto expectedEdgeSetMask = lastPreparedCommitImage_.edgeSetMask.dup;
+        auto installedVersions = [__traits(getMember, *mesh, "mutation" ~ "Version"),
+            __traits(getMember, *mesh, "topology" ~ "Version")];
+        auto expectedVersions = [lastPreparedMutationVersion_, lastPreparedTopologyVersion_];
+        import core.stdc.string : memcmp;
+        return memcmp(installedVersions.ptr, expectedVersions.ptr,
+                      installedVersions.length * ulong.sizeof) == 0 &&
+            now.vertices == expected.vertices && now.edges == expected.edges &&
+            now.faces == expected.faces && now.vertexMarks == expected.vertexMarks &&
+            now.edgeMarks == expected.edgeMarks && now.faceMarks == expected.faceMarks &&
+            now.vertexSelectionOrder == expected.vertexSelectionOrder &&
+            now.edgeSelectionOrder == expected.edgeSelectionOrder &&
+            now.faceSelectionOrder == expected.faceSelectionOrder &&
+            now.faceMaterial == expected.faceMaterial && now.facePart == expected.facePart &&
+            now.vertexSetNames == expected.vertexSetNames &&
+            now.vertexSetMask == expected.vertexSetMask &&
+            now.edgeSetNames == expected.edgeSetNames &&
+            now.edgeSetMask == expectedEdgeSetMask &&
+            now.polygonSetNames == expected.polygonSetNames &&
+            now.faceSetMask == expected.faceSetMask;
+    }
+
+    override EditMode[] supportedModes() const { return [EditMode.Edges, EditMode.Polygons]; }
+
+    override void activate() {
+        baseSnap      = MeshSnapshot.capture(*mesh);
+        validProfile_ = captureProfile(mesh, profile_, profileClosed_, profileFaceIdx_);
+        sessionKey_.stamp(*mesh);
+        engaged       = false;
+        dragPart      = -1;
+        toolHandles.clearHaul();
+        previewGpu.init();
+        havePreviewCache = false;
+        evaluate();
+    }
+
+    override void deactivate() {
+        // The third term is evidence about the MESH; the first two describe
+        // only the gesture. See `sessionKey_`. The refusal is SILENT, matching
+        // `LoopSliceTool.commitEdit`'s own swap guard — a throw here would
+        // fail the `/api/reset` that legitimately caused it.
+        bool willCommit = engaged && validProfile_ && sessionKey_.matches(*mesh);
+        MeshSnapshot pre;
+        if (willCommit) pre = MeshSnapshot.capture(*mesh);
+
+        size_t inserted = 0;
+        if (willCommit) {
+            auto kp = toKernelParams(params_);
+            // TASK 1903 Stage E2 — the COMMIT path's batch. Still UNRECORDED:
+            // this tool undoes through the generic `MeshSessionEdit` snapshot
+            // pair (`commitSweepEdit(pre)` below, with `pre` captured just
+            // above), so an op-log would have no reader and `close()` would
+            // drop it. The recording decision belongs to that pair-holder and
+            // flips at plan Stage M — not here, and not at L10, which owns the
+            // `mesh.sweep` COMMAND's undo record.
+            {
+                auto ed = MeshEditBatch.unrecorded(*mesh, kRevolveEditScope);
+                inserted = ed.revolveProfileEx(profile_, profileClosed_, kp);
+                ed.close();
+            }
+            if (inserted > 0) {
+                if (profileFaceIdx_ != uint.max && profileFaceIdx_ < mesh.faces.length) {
+                    auto delMask = new bool[](mesh.faces.length);
+                    delMask[profileFaceIdx_] = true;
+                    mesh.deleteFacesByMask(delMask);
+                }
+                mesh.buildLoops();
+                gpu.upload(*mesh);
+            }
+        }
+
+        previewGpu.destroy();
+        if (willCommit && inserted > 0) commitSweepEdit(pre);
+        engaged          = false;
+        havePreviewCache = false;
+    }
+
+    // ----- History-coordination hooks (mirror MirrorTool's, tools/mirror.d) -
+
+    public override bool hasUncommittedEdit() const { return engaged && validProfile_; }
+
+    public override void cancelUncommittedEdit() {
+        // The document mesh was never touched during interaction (own
+        // preview mesh) — nothing to revert, just drop the guard.
+        engaged = false;
+    }
+
+    public override void resyncSession() {
+        baseSnap         = MeshSnapshot.capture(*mesh);
+        validProfile_    = captureProfile(mesh, profile_, profileClosed_, profileFaceIdx_);
+        // Re-frozen WITH the profile it protects: undo/redo re-derived these
+        // ids against the now-current mesh, and a guard left holding the old
+        // stamp would refuse a commit that is entirely legal.
+        sessionKey_.stamp(*mesh);
+        havePreviewCache = false;
+        evaluate();
+    }
+
+    // Records through the base seam (task 1905 phase C, group G2). Trigger
+    // unchanged — reached from `deactivate()`. Its preview goes into the
+    // tool's OWN `previewMesh` under an UNRECORDED batch, so, like Mirror,
+    // neither change-bus channel can see the drag half of the gesture.
+    private void commitSweepEdit(MeshSnapshot pre) {
+        if (history is null || gestureFactory is null) return;
+        auto cmd = cast(MeshSessionEdit) gestureFactory();
+        if (cmd is null) { noteGestureCarrierMismatch(); return; }
+        auto post = MeshSnapshot.capture(*mesh);
+        cmd.setSnapshots(pre, post, "Radial Sweep");
+        recordGestureEdit(cmd, GestureRecordMode.Plain);
+    }
+
+    // ----- Profile capture — shared by activate()/resyncSession() (which
+    // populate the tool's own fields against the live mesh) AND
+    // applyHeadless() (which builds its OWN profile fresh from the live
+    // mesh, since ToolHeadlessCommand never calls activate() on its
+    // throwaway instance — mirrors MirrorTool's `buildMaskFromSelection`
+    // fold #4). Matches MeshSweep.evaluate()'s extraction rule exactly
+    // (commands/mesh/sweep.d) so headless `mesh.radialSweepTool` and the
+    // pre-existing `mesh.sweep` command agree on what counts as a profile.
+    private bool captureProfile(Mesh* m, out uint[] profile, out bool profileClosed,
+                                out uint profileFaceIdx) {
+        profileFaceIdx = uint.max;
+        if (*editMode == EditMode.Polygons) {
+            uint[] selFaces;
+            foreach (fi; 0 .. m.faces.length)
+                if (m.isFaceSelected(fi)) selFaces ~= cast(uint)fi;
+            if (selFaces.length != 1) return false;
+            profileFaceIdx = selFaces[0];
+            profile        = m.faceVertexRing(profileFaceIdx).dup;
+            profileClosed  = true;
+            return true;
+        } else if (*editMode == EditMode.Edges) {
+            profile = m.extractSelectedEdgeChain(profileClosed);
+            return profile.length > 0;
+        }
+        return false;
+    }
+
+    // ----- Params / panel -----------------------------------------------
+
+    override Param[] params() {
+        return [
+            Param.int_("sides", "Count", &params_.sides, 24)
+                .min(1).max(MAX_SWEEP_SIDES).enforceBounds(),
+            Param.intEnum_("axisPreset", "Axis", &params_.axisPreset,
+                [IntEnumEntry(0, "x",      "X"),
+                 IntEnumEntry(1, "y",      "Y"),
+                 IntEnumEntry(2, "z",      "Z"),
+                 IntEnumEntry(3, "custom", "Custom")],
+                1),
+            Param.vec3_("axis",   "Axis Vector", &params_.axis,   Vec3(0, 1, 0)),
+            Param.vec3_("center", "Center",      &params_.center, Vec3(0, 0, 0)),
+            Param.float_("startAngle", "Start Angle", &params_.startAngleDeg, 0.0f).angle(),
+            Param.float_("endAngle",   "End Angle",   &params_.endAngleDeg, 360.0f).angle(),
+            Param.float_("offset", "Offset", &params_.offset, 0.0f),
+            Param.bool_("cap0", "Cap Start", &params_.cap0, true),
+            Param.bool_("cap1", "Cap End",   &params_.cap1, true),
+        ];
+    }
+
+    override void onParamChanged(string name) {
+        if (name == "axisPreset") {
+            // Quick-set: snap `axis` to the chosen coordinate direction,
+            // preserving its current magnitude (falls back to 1.0 world
+            // unit — the reference default — if the axis had collapsed to
+            // ~zero). Not a mode gate: `axis` stays directly editable.
+            float len = params_.axis.length;
+            if (len < 1e-6f) len = 1.0f;
+            switch (params_.axisPreset) {
+                case 0: params_.axis = Vec3(len, 0, 0); break;
+                case 1: params_.axis = Vec3(0, len, 0); break;
+                case 2: params_.axis = Vec3(0, 0, len); break;
+                default: break;   // 3 = Custom — leave axis as-is
+            }
+        } else if (name == "axis") {
+            params_.axisPreset = 3;   // manual edit -> Custom
+        }
+        engaged = true;
+        evaluate();
+    }
+
+    override bool applyHeadless() {
+        uint[] profile;
+        bool   profileClosed;
+        uint   profileFaceIdx;
+        if (!captureProfile(mesh, profile, profileClosed, profileFaceIdx)) return false;
+
+        auto kp = toKernelParams(params_);
+        // TASK 1903 Stage E2 — same shape as the two sites above; see
+        // `rebuildRadialSweepPreview` for why every one of them is UNRECORDED.
+        size_t inserted;
+        {
+            auto ed = MeshEditBatch.unrecorded(*mesh, kRevolveEditScope);
+            inserted = ed.revolveProfileEx(profile, profileClosed, kp);
+            ed.close();
+        }
+        if (inserted == 0) return false;
+
+        if (profileFaceIdx != uint.max && profileFaceIdx < mesh.faces.length) {
+            auto delMask = new bool[](mesh.faces.length);
+            delMask[profileFaceIdx] = true;
+            mesh.deleteFacesByMask(delMask);
+        }
+        mesh.buildLoops();
+        gpu.upload(*mesh);
+        return true;
+    }
+
+    // ----- Live preview ---------------------------------------------------
+
+    override void evaluate() {
+        if (havePreviewCache
+            && cachedSides      == params_.sides
+            && cachedAxisPreset == params_.axisPreset
+            && cachedAxis       == params_.axis
+            && cachedCenter     == params_.center
+            && cachedStartAngle == params_.startAngleDeg
+            && cachedEndAngle   == params_.endAngleDeg
+            && cachedOffset     == params_.offset
+            && cachedCap0       == params_.cap0
+            && cachedCap1       == params_.cap1)
+            return;
+
+        rebuildRadialSweepPreview(baseSnap, previewMesh, profile_, profileClosed_,
+                                  profileFaceIdx_, params_);
+        previewGpu.upload(previewMesh);
+
+        cachedSides      = params_.sides;
+        cachedAxisPreset = params_.axisPreset;
+        cachedAxis       = params_.axis;
+        cachedCenter     = params_.center;
+        cachedStartAngle = params_.startAngleDeg;
+        cachedEndAngle   = params_.endAngleDeg;
+        cachedOffset     = params_.offset;
+        cachedCap0       = params_.cap0;
+        cachedCap1       = params_.cap1;
+        havePreviewCache = true;
+    }
+
+    // ----- Draw -------------------------------------------------------------
+
+    override void draw(const ref Shader shader, const ref Viewport vp, ref VectorStack vts,
+                       const ref DrawPlan plan, bool visualOnly = false) {
+        if (!visualOnly) cachedVp = vp;
+
+        if (validProfile_) {
+            drawLitPreview(litShader, shader, vp, previewGpu, plan);
+        }
+
+        // --- Handle positions, derived fresh every frame from params_ ---
+        immutable float D2R = cast(float)(PI / 180.0);
+        float axisMag = params_.axis.length;
+        Vec3  axisDirUnit = axisMag > 1e-6f ? params_.axis / axisMag : Vec3(0, 1, 0);
+        Vec3  S = params_.center - params_.axis;   // axis start point
+        Vec3  E = params_.center + params_.axis;   // axis end point
+
+        // Fixed reference direction perpendicular to the axis (recomputed
+        // live each frame — safe here since, unlike a rotate-drag, moving
+        // the ANGLE handles never changes axisDirUnit itself, so there is
+        // no per-frame basis-flip oscillation risk during that drag).
+        Vec3 tmp        = (abs(axisDirUnit.x) < 0.9f) ? Vec3(1, 0, 0) : Vec3(0, 1, 0);
+        Vec3 refDir     = normalize(cross(axisDirUnit, tmp));
+        Vec3 tangentDir = cross(axisDirUnit, refDir);
+
+        float gs       = gizmoSize(params_.center, vp);
+        float armAngle = gs * 0.7f;
+        float startRad = params_.startAngleDeg * D2R;
+        float endRad   = params_.endAngleDeg   * D2R;
+        Vec3 startPos = params_.center + refDir * (cos(startRad) * armAngle)
+                                        + tangentDir * (sin(startRad) * armAngle);
+        Vec3 endPos   = params_.center + refDir * (cos(endRad) * armAngle)
+                                        + tangentDir * (sin(endRad) * armAngle);
+
+        axisStartH.pos  = S;        axisStartH.size  = gs * 0.05f;
+        axisEndH.pos    = E;        axisEndH.size    = gs * 0.05f;
+        startAngleH.pos = startPos; startAngleH.size = gs * 0.045f;
+        endAngleH.pos   = endPos;   endAngleH.size   = gs * 0.045f;
+
+        drawAxisLine(vp, S, E, shader.program);
+
+        if (!visualOnly) {
+            toolHandles.begin();
+            toolHandles.add(axisStartH,  0);
+            toolHandles.add(axisEndH,    1);
+            toolHandles.add(startAngleH, 2);
+            toolHandles.add(endAngleH,   3);
+            toolHandles.setHaul(dragPart);
+            int hmx, hmy;
+            queryMouse(hmx, hmy);
+            toolHandles.update(hmx, hmy, vp);
+        }
+
+        axisStartH.draw(shader, vp);
+        axisEndH.draw(shader, vp);
+        startAngleH.draw(shader, vp);
+        endAngleH.draw(shader, vp);
+    }
+
+    /// Solid line from `s` to `e` — the visible axis line (task 0326).
+    private void drawAxisLine(const ref Viewport vp, Vec3 s, Vec3 e, GLuint restoreProgram) {
+        immutable Vec3 axisColor = Vec3(0.85f, 0.65f, 0.15f);   // amber
+        Vec3[2] pair = [s, e];
+        glDisable(GL_DEPTH_TEST);
+        // 1.0f is WINDOW PIXELS — halved from 2.0f with task 0600's
+        // extrusion-unit fix (see shader.thickLineVertexSrc); unchanged ink.
+        drawWorldSegments(pair, vp, axisColor, 1.0f, restoreProgram);
+        glEnable(GL_DEPTH_TEST);
+    }
+
+    // ----- Input ------------------------------------------------------------
+
+    override bool onMouseButtonDown(ref const SDL_MouseButtonEvent e, ref VectorStack vts) {
+        if (e.button != SDL_BUTTON_LEFT) return false;
+        SDL_Keymod mods = SDL_GetModState();
+        if (mods & (KMOD_ALT | KMOD_SHIFT)) return false;   // reserved for camera
+
+        int hit = hitTestHandles(e.x, e.y);
+        if (hit < 0) return false;
+        dragPart = hit;
+        lastMX   = e.x;
+        lastMY   = e.y;
+        grab.press(params_.center + (hit == 0 ? -params_.axis : params_.axis), e.x, e.y);
+        return true;
+    }
+
+    override bool onMouseButtonUp(ref const SDL_MouseButtonEvent e, ref VectorStack vts) {
+        if (e.button != SDL_BUTTON_LEFT) return false;
+        if (dragPart < 0) return false;
+        dragPart = -1;
+        toolHandles.clearHaul();
+        return true;
+    }
+
+    override bool onMouseMotion(ref const SDL_MouseMotionEvent e, ref VectorStack vts) {
+        if (dragPart < 0) return false;
+
+        if (dragPart == 0 || dragPart == 1) {
+            // Axis end drag: the grabbed end is a free handle (free DQ form,
+            // K-FH C-RS); only the axis moves (field-block comment above).
+            bool skip;
+            immutable Vec3 c = grab.client(e.x, e.y, DragFrame(DragKind.viewPlane), cachedVp, skip);
+            if (!skip) {
+                params_.axis = dragPart == 0 ? params_.center - c : c - params_.center;
+                params_.axisPreset = 3;   // handle drag -> Custom
+                engaged = true;
+                evaluate();
+            }
+            return true;
+        }
+
+        // The angle handles are per-event increments along the live
+        // rotational tangent, so they take their previous pixel from the
+        // cooked gesture rather than from this tool's own pair. `lastMX/MY`
+        // stay written as the fallback when no gesture is published and as
+        // the other half of the debug agreement check.
+        import vibe3d.editing.pipeline.contracts.toolpipe.packets : GesturePacket;
+        int prevMX, prevMY;
+        gesturePrevPixel(vts.get!GesturePacket(), e.x, e.y,
+                         lastMX, lastMY, prevMX, prevMY);
+
+        // Angle-handle drag (2 = Start Angle, 3 = End Angle): single-DOF
+        // drag along the handle's own live rotational tangent (mirrors
+        // MirrorTool's rotate-box drag, tools/mirror.d), converted to a
+        // degrees delta via arc length / radius.
+        immutable float D2R = cast(float)(PI / 180.0);
+        float axisMag = params_.axis.length;
+        Vec3  axisDirUnit = axisMag > 1e-6f ? params_.axis / axisMag : Vec3(0, 1, 0);
+        Vec3  tmp    = (abs(axisDirUnit.x) < 0.9f) ? Vec3(1, 0, 0) : Vec3(0, 1, 0);
+        Vec3  refDir = normalize(cross(axisDirUnit, tmp));
+        Vec3  tangentDir = cross(axisDirUnit, refDir);
+
+        float gs       = gizmoSize(params_.center, cachedVp);
+        float armAngle = gs * 0.7f;
+        float* angleDeg = dragPart == 2 ? &params_.startAngleDeg : &params_.endAngleDeg;
+        float  angRad   = *angleDeg * D2R;
+        Vec3   handlePos = params_.center + refDir * (cos(angRad) * armAngle)
+                                           + tangentDir * (sin(angRad) * armAngle);
+        // Rotational velocity of a point orbiting `axisDirUnit`: exactly
+        // axisDirUnit × (pos − center) — the live tangent at this angle.
+        Vec3 liveTangent = normalize(cross(axisDirUnit, handlePos - params_.center));
+
+        bool skip;
+        Vec3 delta = screenAxisDelta(e.x, e.y, prevMX, prevMY, handlePos, liveTangent, cachedVp, skip);
+        if (!skip && armAngle > 1e-6f) {
+            float d = dot(delta, liveTangent);
+            *angleDeg += (d / armAngle) * (180.0f / PI);
+            engaged = true;
+            evaluate();
+        }
+        lastMX = e.x;
+        lastMY = e.y;
+        return true;
+    }
+
+    /// Priority order: angle handles first (smaller on-screen targets at
+    /// the default 0.7·gizmoSize radius vs. the axis handles' arbitrary
+    /// world-space arm, which can be much larger or smaller), then the two
+    /// axis-endpoint handles.
+    private int hitTestHandles(int mx, int my) {
+        if (startAngleH.hitTest(mx, my, cachedVp)) return 2;
+        if (endAngleH.hitTest(mx, my, cachedVp))   return 3;
+        if (axisStartH.hitTest(mx, my, cachedVp))  return 0;
+        if (axisEndH.hitTest(mx, my, cachedVp))    return 1;
+        return -1;
+    }
+}

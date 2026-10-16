@@ -3,15 +3,15 @@
 // private symbol stayed behind -- see the task for the count.
 module tests.unit.toolpipe.stages.constrain_test;
 
-import toolpipe.stage   : Stage, TaskCode, ordCons;
+import vibe3d.editing.pipeline.runtime.toolpipe.stage   : Stage, TaskCode, ordCons;
 import vibe3d.editing.pipeline.contracts.toolpipe.packets : ConstrainPacket, ConstrainGeom, ConstrainHitPacket,
                           SubjectPacket;
 import vibe3d.editing.pipeline.contracts.operator         : Operator, Task, VectorStack, PacketKind;
-import popup_state      : setStatePath;
+import vibe3d.ui.editor.popup_state      : setStatePath;
 import vibe3d.editing.params.params           : Param, IntEnumEntry, wireTagForValue;
-import bvh_pick         : BvhPick, SurfaceHit;
-import constraint        : BackgroundSource;
-import toolpipe.stages.constrain;
+import vibe3d.editing.selection.scene_query.bvh_pick         : BvhPick, SurfaceHit;
+import vibe3d.editing.selection.query.constraint        : BackgroundSource;
+import vibe3d.editing.pipeline.evaluation.toolpipe.stages.constrain;
 
 // ---------------------------------------------------------------------------
 // params() snapshot — module-level so `dub test --config=tests` runs it.

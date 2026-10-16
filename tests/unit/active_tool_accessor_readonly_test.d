@@ -1,8 +1,8 @@
 // The EditorApp active-tool accessors expose live reads, not a write channel.
 module tests.unit.active_tool_accessor_readonly_test;
 
-import editor_app : EditorApp;
-import tool : Tool;
+import vibe3d.apps.desktop.editor_app : EditorApp;
+import vibe3d.editing.tools.interactive.tool : Tool;
 
 import std.algorithm : sort;
 import std.file : SpanMode;

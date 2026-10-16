@@ -5,7 +5,7 @@ module tests.unit.step_trace_test;
 
 import core.sync.mutex : Mutex;
 import std.array : join;
-import step_trace;
+import vibe3d.editing.commands.editor.step_trace;
 
 unittest {
     auto t = new StepTrace();

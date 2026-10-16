@@ -18,38 +18,38 @@ import std.traits : Parameters, ReturnType, Unqual, fullyQualifiedName,
 
 import ImGui = d_imgui;
 import d_imgui.imgui_h : ImGuiKey, ImVec2;
-import application_command_binding : ApplicationCommandBinding;
-import command : Command, g_testMode;
-import command_executor : CommandExecutor;
-import command_history : CommandHistory, RecordMode;
-import commands.tool.attr : ToolAttrCommand;
-import commands.tool.host : ToolHost;
-import commands.tool.pipe : ToolPipeAttrCommand;
-import commands.mesh.vertex_edit : MeshVertexEdit;
-import edit_session : EditSession;
+import vibe3d.apps.desktop.application_command_binding : ApplicationCommandBinding;
+import vibe3d.editing.commands.runtime.command : Command, g_testMode;
+import vibe3d.editing.commands.runtime.command_executor : CommandExecutor;
+import vibe3d.editing.commands.runtime.command_history : CommandHistory, RecordMode;
+import vibe3d.editing.tools.interactive.commands.tool.attr : ToolAttrCommand;
+import vibe3d.editing.tools.interactive.commands.tool.host : ToolHost;
+import vibe3d.editing.tools.interactive.commands.tool.pipe : ToolPipeAttrCommand;
+import vibe3d.editing.commands.editor.commands.mesh.vertex_edit : MeshVertexEdit;
+import vibe3d.editing.tools.interactive.edit_session : EditSession;
 import vibe3d.editing.contracts.editmode : EditMode;
-import forms : BindingException, Form, Row, g_forms, g_formsPanelEnabled,
+import vibe3d.ui.forms.forms : BindingException, Form, Row, g_forms, g_formsPanelEnabled,
     loadForms, planForm;
-import forms_render : DispatchFn, FormsPanel, InteractiveDispatchFn;
-import guarded_action_controller : GuardObservationPorts,
+import vibe3d.ui.editor.forms_render : DispatchFn, FormsPanel, InteractiveDispatchFn;
+import vibe3d.apps.desktop.guarded_action_controller : GuardObservationPorts,
     GuardedActionController, GuardedActionPorts;
 import vibe3d.platform.input.input_zones : clearZones;
-import math : Vec3;
+import vibe3d.util.math.math : Vec3;
 import vibe3d.mesh.core.mesh : Mesh, makeCube;
-import mesh_gpu : GpuMesh;
+import vibe3d.viewport.gpu.mesh_gpu : GpuMesh;
 import vibe3d.editing.params.params : Param, ParamProvider;
-import property_panel : PanelIdKind, PropertyPanel, toolPropsIdsJson;
-import registry : Registry;
+import vibe3d.editing.tools.interactive.property_panel : PanelIdKind, PropertyPanel, toolPropsIdsJson;
+import vibe3d.editing.tools.interactive.registry : Registry;
 import vibe3d.editing.contracts.seltype : SelType;
 import tests.unit.ui.headless_panel : HeadlessPanel, openPanel;
-import tool : Tool;
-import tool_activation_ownership : ToolTransition;
-import toolpipe.pipeline : ToolPipeContext, g_pipeCtx;
-import toolpipe.stage : NopStage, Stage, TaskCode;
-import toolpipe.stages.falloff : FalloffStage;
-import tools.transform.xfrm_transform : XfrmTransformTool;
-static import ui.tool_properties_panel;
-import ui.tool_properties_panel : ToolPropertiesActions,
+import vibe3d.editing.tools.interactive.tool : Tool;
+import vibe3d.editing.commands.runtime.tool_activation_ownership : ToolTransition;
+import vibe3d.editing.pipeline.runtime.toolpipe.pipeline : ToolPipeContext, g_pipeCtx;
+import vibe3d.editing.pipeline.runtime.toolpipe.stage : NopStage, Stage, TaskCode;
+import vibe3d.editing.pipeline.evaluation.toolpipe.stages.falloff : FalloffStage;
+import vibe3d.editing.tools.interactive.tools.transform.xfrm_transform : XfrmTransformTool;
+static import vibe3d.ui.editor.ui.tool_properties_panel;
+import vibe3d.ui.editor.ui.tool_properties_panel : ToolPropertiesActions,
     ToolPropertiesPanelRoles, ToolPropertiesReadRole,
     ToolPropertiesStageInfo, bindToolPropertiesPanel,
     drawToolPropertiesPanel;
@@ -91,7 +91,7 @@ static assert([__traits(allMembers, ToolPropertiesStageInfo)] == [
         "id", "displayName", "taskCode"],
     "6504 G1 ToolPropertiesStageInfo member set changed: "
         ~ memberList!ToolPropertiesStageInfo ~ memberPinSuffix);
-static assert([__traits(allMembers, ui.tool_properties_panel)] == [
+static assert([__traits(allMembers, vibe3d.ui.editor.ui.tool_properties_panel)] == [
         "object", "ImGui", "d_imgui", "ToolPropertiesStageInfo",
         "ToolPropertiesReadRole", "ToolPropertiesActions",
         "ToolPropertiesPanelRoles", "resolveStage",
@@ -99,7 +99,7 @@ static assert([__traits(allMembers, ui.tool_properties_panel)] == [
         "kToolPropsTabSnapping", "g_toolPropsTab", "kSnappingHasOwnTab",
         "warnStageFormOnce", "drawToolPropertiesPanel"],
     "6504 G1 ui.tool_properties_panel member set changed: "
-        ~ memberList!ui.tool_properties_panel ~ memberPinSuffix);
+        ~ memberList!vibe3d.ui.editor.ui.tool_properties_panel ~ memberPinSuffix);
 
 private enum string[] kCapabilityExempt = [
     "property_panel.PropertyPanel"
@@ -974,7 +974,7 @@ unittest {
     }
 
     { // C9: tool.pipe.attr remains writable with no active tool.
-        import toolpipe.pipeline : noteUserStageChoice;
+        import vibe3d.editing.pipeline.runtime.toolpipe.pipeline : noteUserStageChoice;
 
         loadInstanceWriteForm();
         auto app = new ToolPropsHarness;

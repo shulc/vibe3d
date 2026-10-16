@@ -64,16 +64,16 @@ module tests.unit.undo_parity_l7d_test;
 import std.format : format;
 
 import vibe3d.mesh.change.change_bus : changeBus;
-import command;
+import vibe3d.editing.commands.runtime.command;
 import vibe3d.mesh.core.mesh;
 import vibe3d.viewport.camera.view;
 import vibe3d.editing.contracts.editmode;
-import http_json : meshPlanesJson, PlaneDumpMeta;
+import vibe3d.runtime.application_core.http_json : meshPlanesJson, PlaneDumpMeta;
 
 import tests.unit.fixtures            : makeTaggedGridFull;
 import tests.unit.undo_parity_l0_test : ParityCell, compareOrCapture, setF;
 
-import commands.mesh.vertex_bevel : MeshVertexBevel;
+import vibe3d.editing.commands.editor.commands.mesh.vertex_bevel : MeshVertexBevel;
 
 enum string kL7dFamily = "vertex_bevel";
 enum string kL7dStand  = "makeTaggedGridFull(3)";

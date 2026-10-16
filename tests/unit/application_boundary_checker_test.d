@@ -52,17 +52,17 @@ unittest {
         assert(result.status == 0, "production independent boundary witness: " ~ result.output);
         if (onlyProduction) {
             command = ["python3", buildPath(repoRoot, "tools", "check_standalone_boundary.py"),
-                "--root", buildPath(repoRoot, "tools", "cli"), "--compiler", "dmd"];
+                "--root", buildPath(repoRoot, "apps", "cli"), "--compiler", "dmd"];
             auto cli = execute(command);
             assert(cli.status == 0, "CLI production independent boundary witness: " ~ cli.output);
         }
     }
     static import mathApi = vibe3d.util.math;
-    static import oldMath = math;
-    static import oldVector = math_vector;
-    static import oldMatrix = math_matrix;
-    static import oldQuaternion = math_quaternion;
-    static import oldGeometry = math_geometry;
+    static import oldMath = vibe3d.util.math.math;
+    static import oldVector = vibe3d.util.math.math_vector;
+    static import oldMatrix = vibe3d.util.math.math_matrix;
+    static import oldQuaternion = vibe3d.util.math.math_quaternion;
+    static import oldGeometry = vibe3d.util.math.math_geometry;
     static assert(is(oldMath.Vec3 == mathApi.Vec3) && is(oldVector.Vec3 == mathApi.Vec3),
         "Wave19 math old umbrella/vector imports retain original types");
     static assert(__traits(isSame, oldMatrix.identityMatrix, mathApi.identityMatrix)

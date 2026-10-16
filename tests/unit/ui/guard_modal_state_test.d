@@ -1,15 +1,15 @@
 module tests.unit.ui.guard_modal_state_test;
 
-import editor_app : makeGuardModalRole;
-import command : Command, g_testMode;
-import command_history : RecordMode;
+import vibe3d.apps.desktop.editor_app : makeGuardModalRole;
+import vibe3d.editing.commands.runtime.command : Command, g_testMode;
+import vibe3d.editing.commands.runtime.command_history : RecordMode;
 import vibe3d.editing.contracts.editmode : EditMode;
-import guarded_action_controller : GuardedActionController,
+import vibe3d.apps.desktop.guarded_action_controller : GuardedActionController,
     GuardedActionPorts, GuardObservationPorts;
 import vibe3d.mesh.core.mesh : Mesh;
-import ui.discard_guard : GuardAnswer, UiRunOutcome;
-import ui.guard_modal_state : GuardModalState;
-import ui.panels : drawQuitGuardModal, guardModalDrawSnapshot,
+import vibe3d.ui.editor.ui.discard_guard : GuardAnswer, UiRunOutcome;
+import vibe3d.ui.editor.ui.guard_modal_state : GuardModalState;
+import vibe3d.ui.editor.ui.panels : drawQuitGuardModal, guardModalDrawSnapshot,
     resetGuardModalDrawSnapshot;
 import tests.unit.ui.headless_panel : openPanel;
 import vibe3d.viewport.camera.view : View;
@@ -96,7 +96,7 @@ private size_t occurrences(const string haystack, const string needle) {
 }
 
 unittest { // each callback remains pure before any deliberately partial binding
-    import ui.panel_host_roles : GuardModalRole;
+    import vibe3d.ui.editor.ui.panel_host_roles : GuardModalRole;
     size_t[5] calls;
     bool awaiting() { ++calls[0]; return false; }
     string prompt() { ++calls[1]; return ""; }
@@ -114,7 +114,7 @@ unittest { // each callback remains pure before any deliberately partial binding
 }
 
 unittest { // each independent missing door makes the role unbound
-    import ui.panel_host_roles : GuardModalRole;
+    import vibe3d.ui.editor.ui.panel_host_roles : GuardModalRole;
     bool awaiting() { return false; }
     string prompt() { return ""; }
     bool save() { return false; }
@@ -195,7 +195,7 @@ unittest { // actual factory answerCancel door reads or acts on the same live co
 
 unittest { // a partial unused answer door safely isolates the original policy refusal
     import core.exception : AssertError;
-    import ui.panel_host_roles : GuardModalRole;
+    import vibe3d.ui.editor.ui.panel_host_roles : GuardModalRole;
     size_t calls;
     bool awaiting() { ++calls; return false; }
     string prompt() { ++calls; return ""; }
@@ -275,7 +275,7 @@ unittest { // physical query and production factory carry each independent door
 }
 
 unittest { // exact derived role capability and five private slot types
-    import ui.panel_host_roles : GuardModalRole;
+    import vibe3d.ui.editor.ui.panel_host_roles : GuardModalRole;
     static assert([__traits(allMembers, GuardModalRole)] == ["awaitingAnswer_", "promptText_", "answerSave_", "answerDiscard_", "answerCancel_", "__ctor", "isBound", "awaitingAnswer", "promptText", "answerSave", "answerDiscard", "answerCancel"]);
     static assert(is(typeof(GuardModalRole.init.tupleof[0]) == bool delegate()));
     static assert(is(typeof(GuardModalRole.init.tupleof[1]) == string delegate()));

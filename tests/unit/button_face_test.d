@@ -2,7 +2,7 @@ module tests.unit.button_face_test;
 
 import tests.unit.census_symbols : readText = wave15ReadText;
 import std.string : count, indexOf;
-import ui.button_face : ButtonFace, buttonFaceColours;
+import vibe3d.ui.editor.ui.button_face : ButtonFace, buttonFaceColours;
 
 private string functionBody(string text, string signature) {
     auto start = text.indexOf(signature);

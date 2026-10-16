@@ -434,7 +434,7 @@ unittest {
 
 // The two new sites retain the consumer-side licence, beyond the caller count.
 unittest {
-    import tools.edit.topology_pen.tool : TopologyPenTool;
+    import vibe3d.editing.tools.interactive.tools.edit.topology_pen.tool : TopologyPenTool;
     auto compiledTool = new TopologyPenTool();
     assert(compiledTool !is null, "confined exclusion probe compiles the real tool");
     import tests.unit.census_symbols : balancedSpan;

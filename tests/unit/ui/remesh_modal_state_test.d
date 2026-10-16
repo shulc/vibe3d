@@ -5,14 +5,14 @@ import tests.unit.census_symbols : exists = wave15Exists;
 
 import core.time : MonoTime, msecs, seconds;
 import d_imgui.imgui_h : ImVec2;
-import editor_app : MeshDg;
-import imgui_flag_boundary : anyPopupOpen;
-import math : Vec3;
+import vibe3d.apps.desktop.editor_app : MeshDg;
+import vibe3d.ui.editor.imgui_flag_boundary : anyPopupOpen;
+import vibe3d.util.math.math : Vec3;
 import vibe3d.mesh.core.mesh : Mesh, makeGridPlane;
-import remesh.remesh_job : MAX_REMESH_TARGET_QUADS,
+import vibe3d.runtime.remesh.remesh.remesh_job : MAX_REMESH_TARGET_QUADS,
     MIN_REMESH_TARGET_QUADS, RemeshJob;
-import ui.remesh_modal_state : RemeshModalState;
-import ui.panels : drawRemeshModal, remeshModalDrawSnapshot,
+import vibe3d.ui.editor.ui.remesh_modal_state : RemeshModalState;
+import vibe3d.ui.editor.ui.panels : drawRemeshModal, remeshModalDrawSnapshot,
     resetRemeshModalDrawSnapshot;
 import tests.unit.ui.headless_panel : openPanel;
 

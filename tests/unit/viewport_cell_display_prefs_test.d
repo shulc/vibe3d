@@ -16,13 +16,13 @@ import std.process : thisProcessID;
 import std.string : indexOf;
 import std.traits : EnumMembers;
 
-import display_state : BackdropStyle, CavityMode, CavityState, DisplayStyle, ViewportDisplay,
+import vibe3d.viewport.display_policy.display_state : BackdropStyle, CavityMode, CavityState, DisplayStyle, ViewportDisplay,
     WireOverlay;
-import prefs : Prefs, ViewportCellDisplay, loadPrefs, mirrorNonTemplateDisplay,
+import vibe3d.apps.desktop.prefs : Prefs, ViewportCellDisplay, loadPrefs, mirrorNonTemplateDisplay,
     restoreNonTemplateDisplay, savePrefs;
-import scene_reset_effects : clearViewDisplayForAutomation;
+import vibe3d.apps.desktop.scene_reset_effects : clearViewDisplayForAutomation;
 import tests.unit.census_symbols : blankNonCode;
-import viewport : LayoutPreset, ViewportManager;
+import vibe3d.viewport.host.viewport : LayoutPreset, ViewportManager;
 
 private enum repoRoot = buildNormalizedPath(dirName(__FILE_FULL_PATH__), "..", "..");
 
@@ -289,7 +289,7 @@ unittest { // P8 (task 9190): the cavity survives save -> load -> restore; a han
 
 unittest { // P9 (task 9250): the reflection source survives save -> load -> restore, by id;
            // an unknown id keeps the default; the automation clear resets it
-    import display_state : ReflectionKind, ReflectionSource;
+    import vibe3d.viewport.display_policy.display_state : ReflectionKind, ReflectionSource;
     const dir = scratch("reflection");
     scope(exit) rmdirRecurse(dir);
     ViewportDisplay live;

@@ -1,0 +1,252 @@
+module vibe3d.editing.tools.interactive.prepared_radial_array_transition_source_cells;
+
+import vibe3d.editing.tools.interactive.prepared_radial_array_transition;
+import vibe3d.mesh.core.mesh : Mesh;
+import vibe3d.editing.tools.interactive.tools.alignment.radial_array_tool : RadialArrayTool,
+    RadialArrayTransitionImage, PreparedRadialArrayTransitionKind;
+import core.atomic : atomicOp;
+import vibe3d.documents.model.document : Layer;
+import vibe3d.editing.contracts.prepared_tool_effect : PreparedRadialArrayKind;
+
+unittest {
+    import vibe3d.mesh.core.mesh : makeCube;
+    import vibe3d.viewport.gpu.mesh_gpu : GpuMesh;
+    import vibe3d.editing.contracts.editmode : EditMode;
+    import vibe3d.viewport.gpu.shader : LitShader;
+    Mesh source = makeCube(); GpuMesh gpu; EditMode mode = EditMode.Polygons;
+    auto tool = new RadialArrayTool(() => &source, &gpu, &mode, LitShader.init);
+    tool.seedPreparedTransitionForTest();
+    const originalVertices = source.vertices.length;
+    const originalEdges = source.edges.length;
+    const originalFaces = source.faces.length;
+    const originalFirst = source.vertices[0];
+    const originalMutationVersion = source.mutationVersion;
+    const originalTopologyVersion = source.topologyVersion;
+    auto activate = PreparedRadialArrayTransitionOwner.activation(tool, source);
+    Mesh foreign = makeCube();
+    assert(PreparedRadialArrayTransitionOwner.activation(tool, foreign) is null);
+    source.vertices[0].x += 19;
+    assert(source.mutationVersion == originalMutationVersion &&
+        source.topologyVersion == originalTopologyVersion);
+    assert(activate.owns(tool) && activate.begin() && activate.validate());
+    activate.install();
+    assert(tool.preparedTransitionForTest(true) && activate.payloadEmpty());
+    assert(tool.preparedSnapshotForTest(originalVertices, originalEdges,
+        originalFaces, originalFirst, &source));
+    activate.install(); assert(!activate.begin());
+    source = makeCube();
+    auto abortedActivation = PreparedRadialArrayTransitionOwner.activation(tool, source);
+    assert(abortedActivation.begin()); abortedActivation.abort();
+    assert(abortedActivation.payloadEmpty());
+    tool.seedPreparedTransitionForTest();
+    auto deactivate = PreparedRadialArrayTransitionOwner.deactivation(tool);
+    assert(deactivate.begin()); deactivate.abort();
+    assert(deactivate.payloadEmpty() && !deactivate.begin() &&
+        !tool.preparedTransitionForTest(false));
+    auto fresh = PreparedRadialArrayTransitionOwner.deactivation(tool);
+    assert(fresh.begin() && fresh.validate()); fresh.install();
+    assert(tool.preparedTransitionForTest(false));
+
+    import vibe3d.editing.tools.interactive.prepared_record_context : PreparedRecordContext;
+    import vibe3d.editing.commands.runtime.command_history : CommandHistory;
+    import vibe3d.editing.commands.runtime.record_observer_hub : RecordObserverHub;
+    auto contextTool = new RadialArrayTool(() => &source, &gpu, &mode, LitShader.init);
+    contextTool.seedPreparedTransitionForTest();
+    auto contextOwner = PreparedRadialArrayTransitionOwner.activation(contextTool, source);
+    auto context = new PreparedRecordContext(new CommandHistory(), new RecordObserverHub());
+    assert(context.prepareRadialArrayTransition(contextOwner));
+    assert(context.markNoHistoryInstall() && !contextTool.preparedTransitionForTest(true));
+    assert(context.validate()); context.install();
+    assert(contextTool.preparedTransitionForTest(true) &&
+        context.installTraceForTest() == [13,8]);
+
+    auto faultTool = new RadialArrayTool(() => &source, &gpu, &mode, LitShader.init);
+    auto faultOwner = PreparedRadialArrayTransitionOwner.activation(faultTool, source);
+    auto fault = new PreparedRecordContext(new CommandHistory(), new RecordObserverHub());
+    PreparedRecordContext.failAfterResourceBeginForTest(true); bool threw;
+    try fault.prepareRadialArrayTransition(faultOwner); catch (Exception) threw = true;
+    PreparedRecordContext.failAfterResourceBeginForTest(false);
+    assert(threw && faultOwner.payloadEmpty());
+    fault.discard(); assert(!fault.validate());
+    auto retryOwner = PreparedRadialArrayTransitionOwner.activation(faultTool, source);
+    auto retry = new PreparedRecordContext(new CommandHistory(), new RecordObserverHub());
+    assert(retry.prepareRadialArrayTransition(retryOwner)); retry.discard();
+    assert(retryOwner.payloadEmpty() && !faultTool.preparedTransitionForTest(true));
+
+    auto activateTool = new RadialArrayTool(() => &source, &gpu, &mode,
+        LitShader.init);
+    activateTool.seedPreparedTransitionForTest();
+    auto activateContext = new PreparedRecordContext(new CommandHistory(),
+        new RecordObserverHub());
+    auto activateEffect = activateTool.prepareActivate(activateContext);
+    assert(activateEffect.accepted && activateContext.validate());
+    activateContext.install();
+    assert(activateTool.preparedTransitionForTest(true) &&
+        activateContext.installTraceForTest() == [13, 8]);
+
+    activateTool.seedPreparedTransitionForTest();
+    auto deactivateContext = new PreparedRecordContext(new CommandHistory(),
+        new RecordObserverHub());
+    auto deactivateEffect = activateTool.prepareSessionDeactivate(deactivateContext);
+    assert(deactivateEffect.accepted && deactivateContext.validate());
+    deactivateContext.install();
+    assert(activateTool.preparedTransitionForTest(false) &&
+        deactivateContext.installTraceForTest() == [8, 13]);
+
+    import vibe3d.editing.commands.editor.commands.mesh.session_edit : MeshSessionEdit;
+    import vibe3d.viewport.camera.view : View;
+    auto historyTool = new RadialArrayTool(() => &source, &gpu, &mode,
+        LitShader.init);
+    historyTool.seedPreparedBuiltTransitionForTest(source);
+    auto producerHistory = new CommandHistory();
+    auto producerView = new View(0, 0, 1, 1);
+    historyTool.setGestureBindings(producerHistory, () => new MeshSessionEdit(
+        &source, producerView, mode, "test.radialArray", "Radial Array"));
+    auto historyContext = new PreparedRecordContext(producerHistory,
+        new RecordObserverHub());
+    assert(historyTool.prepareSessionDeactivate(historyContext).accepted &&
+        historyContext.validate());
+    historyContext.install();
+    assert(historyTool.preparedTransitionForTest(false) &&
+        historyContext.installTraceForTest() == [8, 13]);
+
+    Mesh foreignHistoryMesh = makeCube();
+    historyTool.seedPreparedBuiltTransitionForTest(source);
+    historyTool.setGestureBindings(producerHistory, () => new MeshSessionEdit(
+        &foreignHistoryMesh, producerView, mode, "test.foreign", "Foreign"));
+    auto mismatchContext = new PreparedRecordContext(producerHistory,
+        new RecordObserverHub());
+    assert(historyTool.prepareSessionDeactivate(mismatchContext).accepted &&
+        mismatchContext.validate());
+    mismatchContext.install();
+    assert(mismatchContext.installTraceForTest() == [8, 13] &&
+        historyTool.preparedTransitionForTest(false));
+
+    historyTool.seedPreparedBuiltTransitionForTest(source);
+    historyTool.bindPreparedHistoryOnlyForTest(producerHistory);
+    auto nullFactoryContext = new PreparedRecordContext(producerHistory,
+        new RecordObserverHub());
+    assert(historyTool.prepareSessionDeactivate(nullFactoryContext).accepted &&
+        nullFactoryContext.validate()); nullFactoryContext.install();
+    assert(nullFactoryContext.installTraceForTest() == [8, 13]);
+    historyTool.seedPreparedBuiltTransitionForTest(source);
+    historyTool.bindPreparedFactoryOnlyForTest(() => new MeshSessionEdit(
+        &source, producerView, mode, "test.radialArray", "Radial Array"));
+    auto nullHistoryContext = new PreparedRecordContext(producerHistory,
+        new RecordObserverHub());
+    assert(historyTool.prepareSessionDeactivate(nullHistoryContext).accepted &&
+        nullHistoryContext.validate()); nullHistoryContext.install();
+    assert(nullHistoryContext.installTraceForTest() == [8, 13]);
+
+    historyTool.seedPreparedBuiltTransitionForTest(source);
+    auto faultHistory = new CommandHistory();
+    historyTool.setGestureBindings(faultHistory, () => new MeshSessionEdit(
+        &source, producerView, mode, "test.radialArray", "Radial Array"));
+    auto historyFault = new PreparedRecordContext(faultHistory,
+        new RecordObserverHub());
+    PreparedRecordContext.failAfterResourceBeginForTest(true); threw = false;
+    try historyTool.prepareSessionDeactivate(historyFault);
+    catch (Exception) threw = true;
+    PreparedRecordContext.failAfterResourceBeginForTest(false);
+    size_t modelDepth, uiDepth; historyFault.installedDepths(modelDepth, uiDepth);
+    assert(threw && !historyFault.validate() && modelDepth == 0 && uiDepth == 0 &&
+        historyTool.preparedBuiltSeedUnchangedForTest());
+    auto historyRetry = new PreparedRecordContext(faultHistory,
+        new RecordObserverHub());
+    assert(historyTool.prepareSessionDeactivate(historyRetry).accepted &&
+        historyRetry.validate()); historyRetry.discard();
+    assert(historyTool.preparedBuiltSeedUnchangedForTest());
+
+    size_t meshReads;
+    Mesh* changingMeshSource() { ++meshReads; return &source; }
+    auto singleReadTool = new RadialArrayTool(&changingMeshSource, &gpu, &mode,
+        LitShader.init);
+    singleReadTool.seedPreparedBuiltTransitionForTest(source);
+    auto singleReadHistory = new CommandHistory();
+    singleReadTool.setGestureBindings(singleReadHistory,
+        () => new MeshSessionEdit(&source, producerView, mode,
+            "test.radialArray", "Radial Array"));
+    auto singleReadContext = new PreparedRecordContext(singleReadHistory,
+        new RecordObserverHub());
+    assert(singleReadTool.prepareSessionDeactivate(singleReadContext).accepted &&
+        meshReads == 1); singleReadContext.discard();
+
+    Mesh* missingDeactivateMesh;
+    auto missingDeactivateTool = new RadialArrayTool(
+        () => missingDeactivateMesh, &gpu, &mode, LitShader.init);
+    missingDeactivateTool.seedPreparedBuiltTransitionForTest(source);
+    auto missingDeactivateHistory = new CommandHistory();
+    missingDeactivateTool.setGestureBindings(missingDeactivateHistory,
+        () => new MeshSessionEdit(&source, producerView, mode,
+            "test.radialArray", "Radial Array"));
+    auto missingDeactivateHub = new RecordObserverHub();
+    auto missingDeactivateContext = new PreparedRecordContext(
+        missingDeactivateHistory, missingDeactivateHub);
+    assert(!missingDeactivateTool.prepareSessionDeactivate(
+        missingDeactivateContext).accepted &&
+        !missingDeactivateContext.validate() &&
+        missingDeactivateContext.installTraceForTest().length == 0 &&
+        missingDeactivateTool.preparedBuiltSeedUnchangedForTest());
+    missingDeactivateContext.installedDepths(modelDepth, uiDepth);
+    assert(modelDepth == 0 && uiDepth == 0);
+
+    Mesh* missing;
+    auto missingTool = new RadialArrayTool(() => missing, &gpu, &mode,
+        LitShader.init);
+    auto missingContext = new PreparedRecordContext(new CommandHistory(),
+        new RecordObserverHub());
+    assert(!missingTool.prepareActivate(missingContext).accepted &&
+        !missingContext.validate());
+
+    import vibe3d.documents.model.document : Layer;
+    import vibe3d.viewport.gpu.mesh_gpu : GpuUploadOwner;
+    auto paramLayer = new Layer; paramLayer.meshRef() = makeCube();
+    paramLayer.meshRef().syncSelection(); paramLayer.meshRef().selectFace(0);
+    GpuMesh paramGpu;
+    auto paramTool = new RadialArrayTool(() => &paramLayer.meshRef(), &paramGpu,
+        &mode, LitShader.init);
+    paramTool.seedPreparedParamForTest(paramLayer.meshRef(), true);
+    const paramOldFaces = paramLayer.meshRef().faces.length;
+    auto paramContext = new PreparedRecordContext(null, new RecordObserverHub());
+    paramContext.setResourceIdentity(7, 11);
+    auto paramEffect = paramTool.prepareParamChanged(paramContext, paramLayer,
+        GpuUploadOwner.fakeForTest(&paramGpu));
+    assert(paramEffect.accepted && paramEffect.kind == PreparedRadialArrayKind.Param &&
+        paramTool.preparedParamStateForTest(false) && paramContext.validate());
+    paramContext.install(); paramContext.install();
+    assert(paramLayer.meshRef().faces.length == paramOldFaces &&
+        paramTool.preparedParamStateForTest(false) &&
+        paramContext.installTraceForTest() == [13,8]);
+
+    auto noopLayer = new Layer; noopLayer.meshRef() = makeCube();
+    GpuMesh noopGpu;
+    auto noopTool = new RadialArrayTool(() => &noopLayer.meshRef(), &noopGpu,
+        &mode, LitShader.init);
+    noopTool.seedPreparedParamForTest(noopLayer.meshRef(), false);
+    auto noopContext = new PreparedRecordContext(null, new RecordObserverHub());
+    auto noopEffect = noopTool.prepareParamChanged(noopContext, noopLayer, null);
+    assert(noopEffect.accepted && noopEffect.kind == PreparedRadialArrayKind.Param &&
+        noopContext.validate()); noopContext.install();
+    assert(noopLayer.meshRef().faces.length == 6 &&
+        noopContext.installTraceForTest() == [13,8]);
+
+    auto staleLayer = new Layer; staleLayer.meshRef() = makeCube();
+    GpuMesh staleGpu;
+    auto staleTool = new RadialArrayTool(() => &staleLayer.meshRef(), &staleGpu,
+        &mode, LitShader.init);
+    staleTool.seedPreparedParamForTest(staleLayer.meshRef(), true);
+    auto staleContext = new PreparedRecordContext(null, new RecordObserverHub());
+    staleContext.setResourceIdentity(7, 11);
+    assert(staleTool.prepareParamChanged(staleContext, staleLayer,
+        GpuUploadOwner.fakeForTest(&staleGpu)).accepted);
+    staleTool.mutatePreparedParamForTest(180);
+    assert(!staleContext.validate() && staleLayer.meshRef().faces.length == 6 &&
+        staleTool.preparedParamStateForTest(false));
+
+    auto producerFault = new PreparedRecordContext(new CommandHistory(),
+        new RecordObserverHub());
+    PreparedRecordContext.failAfterResourceBeginForTest(true); threw = false;
+    try activateTool.prepareActivate(producerFault); catch (Exception) threw = true;
+    PreparedRecordContext.failAfterResourceBeginForTest(false);
+    assert(threw && !producerFault.validate());
+}

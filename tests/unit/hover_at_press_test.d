@@ -5,11 +5,11 @@ module tests.unit.hover_at_press_test;
 
 import bindbc.sdl;
 import vibe3d.editing.contracts.editmode : EditMode;
-import hover_state;
-import math;
+import vibe3d.editing.selection.query.hover_state;
+import vibe3d.util.math.math;
 import vibe3d.util.spatial.spatial : Viewport;
 import vibe3d.mesh.core.mesh;
-import mesh_gpu : GpuMesh;
+import vibe3d.viewport.gpu.mesh_gpu : GpuMesh;
 import vibe3d.editing.pipeline.contracts.operator : VectorStack;
 
 private SDL_MouseButtonEvent leftPress(int x = 0, int y = 0) {
@@ -29,8 +29,8 @@ private void clearHover() {
 unittest { // publishHover: HOLDS the ids while stale (task 1730); V > E > F under a tool
     import vibe3d.editing.interaction.data.ai.debug_trace : latestElementDebugTrace;
     import core.time : MonoTime;
-    import input_frame_state : InputFrameState;
-    import subpatch_preview : SubpatchPreview;
+    import vibe3d.apps.desktop.input_frame_state : InputFrameState;
+    import vibe3d.viewport.subpatch.subpatch_preview : SubpatchPreview;
     scope(exit) clearHover();
     SubpatchPreview sp;
     bool uploaded = true;
@@ -56,7 +56,7 @@ unittest { // publishHover: HOLDS the ids while stale (task 1730); V > E > F und
 }
 
 unittest { // magnet: a stale held vertex starts no drag
-    import tools.deform.magnet : MagnetTool;
+    import vibe3d.editing.tools.interactive.tools.deform.magnet : MagnetTool;
     scope(exit) clearHover();
     auto e = leftPress();
     VectorStack vts;
@@ -75,9 +75,9 @@ unittest { // magnet: a stale held vertex starts no drag
 
 unittest { // element pick: a stale held vertex pins nothing
     import vibe3d.editing.pipeline.contracts.toolpipe.packets : SubjectPacket;
-    import toolpipe.pipeline : g_pipeCtx, ToolPipeContext;
-    import toolpipe.stages.actcenter : ActionCenterStage;
-    import tools.transform.xfrm_transform : XfrmTransformTool;
+    import vibe3d.editing.pipeline.runtime.toolpipe.pipeline : g_pipeCtx, ToolPipeContext;
+    import vibe3d.editing.pipeline.evaluation.toolpipe.stages.actcenter : ActionCenterStage;
+    import vibe3d.editing.tools.interactive.tools.transform.xfrm_transform : XfrmTransformTool;
     auto savedPipe = g_pipeCtx;
     scope(exit) { g_pipeCtx = savedPipe; clearHover(); }
     auto e = leftPress(5, 5);
@@ -111,9 +111,9 @@ unittest { // element pick: a stale held vertex pins nothing
 }
 
 unittest { // tack: a stale held target face aims at nothing (the safe no-op)
-    import display_state : DrawPlan;
-    import shader : Shader, LitShader;
-    import tools.edit.tack : TackTool;
+    import vibe3d.viewport.display_policy.display_state : DrawPlan;
+    import vibe3d.viewport.gpu.shader : Shader, LitShader;
+    import vibe3d.editing.tools.interactive.tools.edit.tack : TackTool;
     scope(exit) clearHover();
     // The camera looks down -Z and the press is the centre pixel, so the ray is
     // parallel to a side face: a press that takes the hover is consumed (true)
@@ -145,7 +145,7 @@ unittest { // tack: a stale held target face aims at nothing (the safe no-op)
 }
 
 unittest { // loop slice: a stale held edge seeds no ring
-    import tools.slice.loop_slice_tool : LoopSliceTool;
+    import vibe3d.editing.tools.interactive.tools.slice.loop_slice_tool : LoopSliceTool;
     scope(exit) clearHover();
     auto e = leftPress();
     VectorStack vts;

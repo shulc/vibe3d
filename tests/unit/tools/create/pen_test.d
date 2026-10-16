@@ -6,29 +6,29 @@ module tests.unit.tools.create.pen_test;
 import bindbc.opengl;
 import vibe3d.editing.pipeline.contracts.operator : VectorStack;
 import bindbc.sdl;
-import tool;
+import vibe3d.editing.tools.interactive.tool;
 import vibe3d.mesh.core.mesh;
-import math;
+import vibe3d.util.math.math;
 import vibe3d.editing.params.params : Param;
-import handler : BoxHandler, gizmoSize, ToolHandles;
-import viewport_scheme : schemeColor, SchemeColor;
+import vibe3d.editing.tools.interactive.handler : BoxHandler, gizmoSize, ToolHandles;
+import vibe3d.viewport.display_policy.viewport_scheme : schemeColor, SchemeColor;
 import vibe3d.platform.input.eventlog : queryMouse;
-import shader : Shader, LitShader;
-import command_history : CommandHistory;
-import commands.mesh.session_edit : MeshSessionEdit;
+import vibe3d.viewport.gpu.shader : Shader, LitShader;
+import vibe3d.editing.commands.runtime.command_history : CommandHistory;
+import vibe3d.editing.commands.editor.commands.mesh.session_edit : MeshSessionEdit;
 import vibe3d.mesh.snapshot.snapshot : MeshSnapshot;
-import display_sync : refreshDisplay;
+import vibe3d.viewport.gpu.display_sync : refreshDisplay;
 import vibe3d.editing.pipeline.contracts.toolpipe.packets : SnapType;
 import vibe3d.editing.contracts.editmode : EditMode;
-import snap : SnapResult;
+import vibe3d.editing.selection.query.snap : SnapResult;
 import std.math : abs;
-import tools.create.pen;
+import vibe3d.editing.tools.interactive.tools.create.pen;
 
 // Pure guide-geometry unit tests — no HTTP harness, no app loop.
 // Covers the core math used by the pen's LineGuide so dub test catches regressions
 // independently of the interactive test suite.
 unittest {
-    import tools.create.create_common : transformDir, frameFromBasis;
+    import vibe3d.editing.tools.interactive.tools.create.create_common : transformDir, frameFromBasis;
 
     // Helper: verify two floats agree to < 1e-5.
     static bool near(float a, float b) { return abs(a - b) < 1e-5f; }
@@ -38,7 +38,7 @@ unittest {
     // vertical ray at x=0.7, y=1, z=0 pointing straight down.
     // Expected: (0.7, 0, 0).
     {
-        import math : closestPointOnLineToRay;
+        import vibe3d.util.math.math : closestPointOnLineToRay;
         Vec3 anchor = Vec3(0.2f, 0, 0);
         Vec3 dir    = Vec3(1, 0, 0);
         Vec3 p = closestPointOnLineToRay(anchor, dir,
@@ -141,7 +141,7 @@ unittest {
 // A fresh pen's every attribute holds its declared default (the value the
 // shift-haul reset and the user-set marker read), merge on included.
 unittest {
-    import mesh_gpu : GpuMesh;
+    import vibe3d.viewport.gpu.mesh_gpu : GpuMesh;
     import vibe3d.editing.params.params : isUserSet;
     import std.format : format;
     Mesh m; GpuMesh g;
@@ -188,9 +188,9 @@ version (PerfProbe) unittest {
     import std.format : format;
     import std.json : parseJSON;
     import std.process : environment;
-    import toolpipe.pipeline : g_pipeCtx, ToolPipeContext;
-    import toolpipe.stages.snap : SnapStage;
-    import mesh_gpu : GpuMesh;
+    import vibe3d.editing.pipeline.runtime.toolpipe.pipeline : g_pipeCtx, ToolPipeContext;
+    import vibe3d.editing.pipeline.evaluation.toolpipe.stages.snap : SnapStage;
+    import vibe3d.viewport.gpu.mesh_gpu : GpuMesh;
     import vibe3d.viewport.camera.view : View;
 
     const hadDriver = "SDL_VIDEODRIVER" in environment;

@@ -41,16 +41,16 @@ import tests.unit.census_symbols : wave15InputsIntact, wave15InputStart;
 
 import tests.unit.census_symbols : exists = wave15Exists;
 
-import create_tool_registration;
-import edit_tool_registration;
-import transform_tool_registration;
+import vibe3d.apps.desktop.create_tool_registration;
+import vibe3d.apps.desktop.edit_tool_registration;
+import vibe3d.apps.desktop.transform_tool_registration;
 
-import prepared_tool_transition : toolArmEmitsLifecycle;
-import tool         : CommandClose, HandleAnchor, OpensAt, Rollover, Tool, ToolSessionPolicy;
-import tool_presets : loadToolPresets;
+import vibe3d.editing.tools.interactive.prepared_tool_transition : toolArmEmitsLifecycle;
+import vibe3d.editing.tools.interactive.tool         : CommandClose, HandleAnchor, OpensAt, Rollover, Tool, ToolSessionPolicy;
+import vibe3d.editing.tools.interactive.tool_presets : loadToolPresets;
 import tests.unit.census_symbols : blankNonCode;
-import tools.common.command_wrapper : CommandWrapperTool;
-import commands.mesh.vertex_position_result : VertexPositionResultBuilder;
+import vibe3d.editing.tools.interactive.tools.common.command_wrapper : CommandWrapperTool;
+import vibe3d.editing.commands.editor.commands.mesh.vertex_position_result : VertexPositionResultBuilder;
 
 import core.memory  : GC;
 import std.algorithm : canFind, count, endsWith, filter, sort;
@@ -226,7 +226,7 @@ static assert(is(typeof(() nothrow @nogc {
     const Tool t = null; return t.sessionPolicy(); })));
 static assert(ToolSessionPolicy.init.activationRow == false);
 // The marker it replaced is gone.
-static assert(!__traits(compiles, { import edit_session : LifecycleUndoEmitter; }));
+static assert(!__traits(compiles, { import vibe3d.editing.tools.interactive.edit_session : LifecycleUndoEmitter; }));
 
 unittest { // (1) id -> policy, over every registered id
     auto manifest = parseJSON(readText("tools/prepared_writer_manifest.json"));
@@ -1671,7 +1671,7 @@ unittest { // (4j)
     import tests.unit.census_symbols : blankUnittestBodies;
     import tests.unit.production_tool_policies : productionPolicies;
     import vibe3d.editing.params.params : Param;
-    import tool : capturedTopologyModel;
+    import vibe3d.editing.tools.interactive.tool : capturedTopologyModel;
     auto es = blankUnittestBodies(blankNonCode(readText("source/edit_session.d")));
     const ts = bodyAt(es, "private struct ToolSession");
     // FLOOR (form item 4): the bodies the needles read.
@@ -1845,7 +1845,7 @@ unittest { // (4k)
 import tests.unit.census_symbols : dirEntries = wave15DirEntries;
     import tests.unit.census_symbols : blankUnittestBodies;
     import tests.unit.production_tool_policies : productionPolicies;
-    import tool : capturedTopologyModel;
+    import vibe3d.editing.tools.interactive.tool : capturedTopologyModel;
     auto es = blankUnittestBodies(blankNonCode(readText("source/edit_session.d")));
     const ts = bodyAt(es, "private struct ToolSession");
     const wave15SessionInputs = wave15InputsIntact(wave15Inputs);
@@ -2248,11 +2248,11 @@ private immutable string[] kKeepAliveClasses = [
 static assert(ToolSessionPolicy.init.keepAliveOnCancel == false
               && ToolSessionPolicy.init.recordCarriesActivation == false);
 // The capability interfaces they replaced are gone.
-static assert(!__traits(compiles, { import edit_session : KeepAliveOnCancel; }));
-static assert(!__traits(compiles, { import edit_session : SessionStepUndo; }));
-static assert(!__traits(compiles, { import edit_session : SessionLiveRedo; }));
-static assert(!__traits(compiles, { import edit_session : SwitchRestorablePredecessor; }));
-static assert(!__traits(compiles, { import command : ToolRunRecord; }));
+static assert(!__traits(compiles, { import vibe3d.editing.tools.interactive.edit_session : KeepAliveOnCancel; }));
+static assert(!__traits(compiles, { import vibe3d.editing.tools.interactive.edit_session : SessionStepUndo; }));
+static assert(!__traits(compiles, { import vibe3d.editing.tools.interactive.edit_session : SessionLiveRedo; }));
+static assert(!__traits(compiles, { import vibe3d.editing.tools.interactive.edit_session : SwitchRestorablePredecessor; }));
+static assert(!__traits(compiles, { import vibe3d.editing.commands.runtime.command : ToolRunRecord; }));
 
 unittest { // (5)
     string[] keep, carries;
@@ -2292,8 +2292,8 @@ unittest { // (5)
 static assert(ToolSessionPolicy.init.rollovers == Rollover.none
               && ToolSessionPolicy.init.handleAnchor == HandleAnchor.acenPlusT);
 // The capability interface the rollover replaced is gone.
-static assert(!__traits(compiles, { import hover_state : TargetHighlightKeeper; }));
-static assert(!__traits(compiles, { import hover_state : Rollover; }));
+static assert(!__traits(compiles, { import vibe3d.editing.selection.query.hover_state : TargetHighlightKeeper; }));
+static assert(!__traits(compiles, { import vibe3d.editing.selection.query.hover_state : Rollover; }));
 static assert(__traits(isVirtualMethod, Tool.handleAnchorPoint));
 
 /// The ids with no mapped counterpart (or an unsure one) keep their pre-M6
@@ -2313,7 +2313,7 @@ unittest { // (6) id -> rollovers, over every registered id
         // registry is not built here (its deps need a live app). The armed
         // wiring's witness is test_session_laws_display's magnet cell (no
         // registry entry → no element node → 0 px, red).
-        import tools.deform.magnet : MagnetTool;
+        import vibe3d.editing.tools.interactive.tools.deform.magnet : MagnetTool;
         pipeOf["xfrm.pointAttract"] = MagnetTool.presetPipe();
     }
     auto flags = parseJSON(readText("tests/fixtures/tool_rollover_flags.json"))["rows"].array;
@@ -2375,8 +2375,8 @@ unittest { // (6) id -> rollovers, over every registered id
 }
 
 unittest { // (6b) the two element nodes carry the vertex flag (M0e: either alone)
-    import toolpipe.stages.falloff : FalloffStage;
-    import toolpipe.stages.actcenter : ActionCenterStage;
+    import vibe3d.editing.pipeline.evaluation.toolpipe.stages.falloff : FalloffStage;
+    import vibe3d.editing.pipeline.evaluation.toolpipe.stages.actcenter : ActionCenterStage;
     import vibe3d.editing.pipeline.contracts.toolpipe.packets : FalloffType;
     import std.traits : EnumMembers;
     auto fs = new FalloffStage();
@@ -2529,7 +2529,7 @@ static assert(ToolSessionPolicy.init.toolSetDropRow == false);
 static assert(ToolSessionPolicy.init.armUndoLeavesToolLatent == false);
 
 unittest { // (10b)
-    import tool : DropUndoPolicy, DropUndoExtent, DropRedoPopulation, DropUndoResidualPopulation;
+    import vibe3d.editing.tools.interactive.tool : DropUndoPolicy, DropUndoExtent, DropRedoPopulation, DropUndoResidualPopulation;
     string[] dropRow, latent, extents;
     size_t scanned;
     foreach (m; ModuleInfo) {

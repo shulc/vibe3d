@@ -9,14 +9,14 @@ import d_imgui.imgui_h : ImVec2;
 import std.conv : to;
 import std.json : parseJSON;
 
-import command_history : CommandHistory;
-import edit_session    : EditSession;
-import forms           : Form, Row;
-import forms_render    : FormsPanel;
+import vibe3d.editing.commands.runtime.command_history : CommandHistory;
+import vibe3d.editing.tools.interactive.edit_session    : EditSession;
+import vibe3d.ui.forms.forms           : Form, Row;
+import vibe3d.ui.editor.forms_render    : FormsPanel;
 import vibe3d.editing.params.params          : Param;
-import property_panel  : PropertyPanel;
-import tool            : Tool;
-import toolpipe.stages.constrain;
+import vibe3d.editing.tools.interactive.property_panel  : PropertyPanel;
+import vibe3d.editing.tools.interactive.tool            : Tool;
+import vibe3d.editing.pipeline.evaluation.toolpipe.stages.constrain;
 import std.json;
 import tests.unit.ui.headless_panel : openPanel;
 
@@ -81,12 +81,12 @@ unittest { // the forms drag stops at the row's max; with no row it does not
 }
 
 
-private final class FreeOffset : toolpipe.stages.constrain.ConstrainStage {
+private final class FreeOffset : vibe3d.editing.pipeline.evaluation.toolpipe.stages.constrain.ConstrainStage {
     override string id() const { return "unbounded"; }
 }
 
 private float typedOffset(bool bounded = true) {
-    import toolpipe.stages.constrain : ConstrainStage;
+    import vibe3d.editing.pipeline.evaluation.toolpipe.stages.constrain : ConstrainStage;
     ConstrainStage stage = bounded ? new ConstrainStage : new FreeOffset;
     stage.enabled = true;
     stage.offset = 0.5f;
@@ -108,7 +108,7 @@ unittest {
 
 // A deliberately narrower hint distinguishes the shared row's unbounded
 // upper side from a declared widget range. The live stage has no upper hint.
-private final class OffsetHints : toolpipe.stages.constrain.ConstrainStage {
+private final class OffsetHints : vibe3d.editing.pipeline.evaluation.toolpipe.stages.constrain.ConstrainStage {
     override Param[] params() {
         auto p = fullParams()[2];
         return [p.min(-2.0f).max(1.0f)];

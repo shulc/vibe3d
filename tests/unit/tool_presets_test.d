@@ -5,12 +5,12 @@ module tests.unit.tool_presets_test;
 
 import std.format : format;
 import std.json : JSONValue;
-import registry         : Registry;
-import tool             : Tool, ToolFlag;
-import toolpipe.pipeline : g_pipeCtx;
+import vibe3d.editing.tools.interactive.registry         : Registry;
+import vibe3d.editing.tools.interactive.tool             : Tool, ToolFlag;
+import vibe3d.editing.pipeline.runtime.toolpipe.pipeline : g_pipeCtx;
 import vibe3d.editing.params.params : Param, ParamProvider, injectParamsInto, parseInto;
-import prefs  : g_prefs, Prefs;
-import tool_presets;
+import vibe3d.apps.desktop.prefs  : g_prefs, Prefs;
+import vibe3d.editing.tools.interactive.tool_presets;
 
 // Guards the alias mechanism's byte-stability claim: `ElementMove` is an
 // `alias:` entry pointing at `xfrm.elementMove`; the two must resolve to
@@ -72,10 +72,10 @@ unittest {
 }
 
 unittest {
-    import tool : DropUndoPolicy, DropUndoExtent, DropRedoPopulation, DropUndoResidualPopulation;
-    import tools.edit.topology_pen : TopologyPenTool;
-    import registry : typedToolFactory;
-    import mesh_gpu : GpuMesh;
+    import vibe3d.editing.tools.interactive.tool : DropUndoPolicy, DropUndoExtent, DropRedoPopulation, DropUndoResidualPopulation;
+    import vibe3d.editing.tools.interactive.tools.edit.topology_pen : TopologyPenTool;
+    import vibe3d.editing.tools.interactive.registry : typedToolFactory;
+    import vibe3d.viewport.gpu.mesh_gpu : GpuMesh;
     import vibe3d.mesh.core.mesh : Mesh;
     import std.file : write, remove;
     import std.conv : to;
@@ -140,9 +140,9 @@ static assert(!__traits(isVirtualMethod, Tool.setDropUndoOverride));
 static assert(!__traits(isVirtualMethod, Tool.resolvedDropUndoPolicy));
 
 unittest {
-    import tool : DropUndoPolicy, DropUndoExtent, DropRedoPopulation, DropUndoResidualPopulation;
-    import edit_session : EditSession;
-    import command_history : CommandHistory;
+    import vibe3d.editing.tools.interactive.tool : DropUndoPolicy, DropUndoExtent, DropRedoPopulation, DropUndoResidualPopulation;
+    import vibe3d.editing.tools.interactive.edit_session : EditSession;
+    import vibe3d.editing.commands.runtime.command_history : CommandHistory;
     auto t = new Tool();
     const policy = DropUndoPolicy(DropUndoExtent.newestPressBlock, DropRedoPopulation.discard, DropUndoResidualPopulation.pressMarker);
     t.setDropUndoOverride(policy);

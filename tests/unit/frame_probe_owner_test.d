@@ -8,7 +8,7 @@ import tests.unit.http_test_client : receiveUntilClosed;
 import core.atomic : atomicLoad, atomicStore;
 import core.thread : Thread;
 import core.time : Duration, MonoTime, msecs, seconds;
-import http_server : ClaimProbePoint, HttpServer;
+import vibe3d.runtime.http.http_server : ClaimProbePoint, HttpServer;
 import vibe3d.util.profiling.perf_probe : g_frames, FrameProbe, FrameRec, Phase, toJson;
 import std.algorithm : canFind, count;
 

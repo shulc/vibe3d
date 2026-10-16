@@ -1,21 +1,21 @@
 module tests.unit.ui.item_rename_state_test;
 
-import application_command_binding : ApplicationCommandBinding;
-import command : Command;
-import command_executor : CommandExecutor;
-import command_history : CommandHistory, RecordMode;
-import commands.layer.commands : LayerRename;
+import vibe3d.apps.desktop.application_command_binding : ApplicationCommandBinding;
+import vibe3d.editing.commands.runtime.command : Command;
+import vibe3d.editing.commands.runtime.command_executor : CommandExecutor;
+import vibe3d.editing.commands.runtime.command_history : CommandHistory, RecordMode;
+import vibe3d.runtime.document_actions.commands.layer.commands : LayerRename;
 import vibe3d.documents.model.document : ImageData, ItemKind, Layer;
-import edit_session : EditSession;
-import guarded_action_controller : GuardObservationPorts,
+import vibe3d.editing.tools.interactive.edit_session : EditSession;
+import vibe3d.apps.desktop.guarded_action_controller : GuardObservationPorts,
     GuardedActionController, GuardedActionPorts;
 import vibe3d.mesh.core.mesh : makeCube;
-import registry : Registry;
-import session_owner : Session;
-import tool : Tool;
-import tool_activation_ownership : ToolTransition;
-import ui.discard_guard : GuardRecord;
-import ui.item_rename : ItemRenameCapacity, ItemRenameController,
+import vibe3d.editing.tools.interactive.registry : Registry;
+import vibe3d.runtime.application_core.session_owner : Session;
+import vibe3d.editing.tools.interactive.tool : Tool;
+import vibe3d.editing.commands.runtime.tool_activation_ownership : ToolTransition;
+import vibe3d.ui.editor.ui.discard_guard : GuardRecord;
+import vibe3d.ui.editor.ui.item_rename : ItemRenameCapacity, ItemRenameController,
     ItemRenameExit, ItemRenameState, bindItemRenameController;
 import vibe3d.viewport.camera.view : View;
 

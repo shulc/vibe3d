@@ -1,0 +1,290 @@
+{
+  "name": "http-runtime",
+  "targetType": "staticLibrary",
+  "sourcePaths": [
+    "source"
+  ],
+  "importPaths": [
+    "source"
+  ],
+  "toolchainRequirements": {
+    "dmd": ">=2.111.0",
+    "ldc": ">=1.41.0"
+  },
+  "buildTypes": {
+    "profile-fp": {
+      "buildOptions": [
+        "debugMode",
+        "debugInfo",
+        "optimize"
+      ],
+      "dflags-dmd": [
+        "-gs"
+      ],
+      "dflags-ldc": [
+        "--frame-pointer=all"
+      ]
+    },
+    "perf": {
+      "buildOptions": [
+        "releaseMode",
+        "optimize",
+        "inline"
+      ],
+      "versions": [
+        "PerfProbe"
+      ]
+    },
+    "perf-count": {
+      "buildOptions": [
+        "debugMode",
+        "debugInfo"
+      ],
+      "versions": [
+        "PerfProbe"
+      ]
+    },
+    "perf-unit": {
+      "buildOptions": [
+        "unittests",
+        "debugMode",
+        "debugInfo"
+      ],
+      "versions": [
+        "PerfProbe"
+      ]
+    },
+    "check": {
+      "buildOptions": [
+        "debugMode",
+        "debugInfo"
+      ],
+      "dflags-ldc": [
+        "--boundscheck=on",
+        "--checkaction=C",
+        "--frame-pointer=all"
+      ],
+      "versions": [
+        "SanitizerSelfTest"
+      ]
+    },
+    "check-unit": {
+      "buildOptions": [
+        "unittests",
+        "debugMode",
+        "debugInfo"
+      ],
+      "dflags-ldc": [
+        "--boundscheck=on",
+        "--frame-pointer=all"
+      ],
+      "versions": [
+        "SanitizerSelfTest"
+      ]
+    },
+    "check-release": {
+      "buildOptions": [
+        "releaseMode",
+        "optimize",
+        "inline",
+        "debugInfo"
+      ],
+      "dflags-ldc": [
+        "--boundscheck=on",
+        "--frame-pointer=all"
+      ],
+      "versions": [
+        "SanitizerSelfTest"
+      ]
+    },
+    "sanitize": {
+      "buildOptions": [
+        "debugMode",
+        "debugInfo"
+      ],
+      "dflags-ldc": [
+        "--fsanitize=address",
+        "--fsanitize-address-use-after-return=never",
+        "--checkaction=C",
+        "--frame-pointer=all"
+      ],
+      "versions": [
+        "SanitizerSelfTest"
+      ]
+    },
+    "sanitize-unit": {
+      "buildOptions": [
+        "unittests",
+        "debugMode",
+        "debugInfo"
+      ],
+      "dflags-ldc": [
+        "--fsanitize=address",
+        "--fsanitize-address-use-after-return=never",
+        "--frame-pointer=all"
+      ],
+      "versions": [
+        "SanitizerSelfTest"
+      ]
+    },
+    "tsan": {
+      "buildOptions": [
+        "debugMode",
+        "debugInfo"
+      ],
+      "dflags-ldc": [
+        "--fsanitize=thread",
+        "--enable-asserts=false",
+        "--frame-pointer=all"
+      ],
+      "versions": [
+        "SanitizerSelfTest",
+        "SanitizerThreadPreinit"
+      ]
+    }
+  },
+  "dependencies": {
+    "vibe3d:application-core": {
+      "path": "../../.."
+    },
+    "vibe3d:edit-contracts": {
+      "path": "../../.."
+    },
+    "vibe3d:input-events": {
+      "path": "../../.."
+    },
+    "vibe3d:interaction-query": {
+      "path": "../../.."
+    },
+    "vibe3d:log": {
+      "path": "../../.."
+    },
+    "vibe3d:mesh": {
+      "path": "../../.."
+    },
+    "vibe3d:mesh-change": {
+      "path": "../../.."
+    },
+    "vibe3d:param-schema": {
+      "path": "../../.."
+    },
+    "vibe3d:pipe-evaluation": {
+      "path": "../../.."
+    },
+    "vibe3d:profiling": {
+      "path": "../../.."
+    }
+  },
+  "configurations": [
+    {
+      "name": "modeling",
+      "versions": [
+        "WithAI"
+      ],
+      "subConfigurations": {
+        "vibe3d:application-core": "modeling",
+        "vibe3d:edit-contracts": "modeling",
+        "vibe3d:input-events": "modeling",
+        "vibe3d:interaction-query": "modeling",
+        "vibe3d:log": "modeling",
+        "vibe3d:mesh": "modeling",
+        "vibe3d:mesh-change": "modeling",
+        "vibe3d:param-schema": "modeling",
+        "vibe3d:pipe-evaluation": "modeling",
+        "vibe3d:profiling": "modeling"
+      }
+    },
+    {
+      "name": "modeling-noai",
+      "versions": [],
+      "subConfigurations": {
+        "vibe3d:application-core": "modeling-noai",
+        "vibe3d:edit-contracts": "modeling-noai",
+        "vibe3d:input-events": "modeling-noai",
+        "vibe3d:interaction-query": "modeling-noai",
+        "vibe3d:log": "modeling-noai",
+        "vibe3d:mesh": "modeling-noai",
+        "vibe3d:mesh-change": "modeling-noai",
+        "vibe3d:param-schema": "modeling-noai",
+        "vibe3d:pipe-evaluation": "modeling-noai",
+        "vibe3d:profiling": "modeling-noai"
+      }
+    },
+    {
+      "name": "with-render",
+      "versions": [
+        "WithRender",
+        "WithAI"
+      ],
+      "subConfigurations": {
+        "vibe3d:application-core": "with-render",
+        "vibe3d:edit-contracts": "with-render",
+        "vibe3d:input-events": "with-render",
+        "vibe3d:interaction-query": "with-render",
+        "vibe3d:log": "with-render",
+        "vibe3d:mesh": "with-render",
+        "vibe3d:mesh-change": "with-render",
+        "vibe3d:param-schema": "with-render",
+        "vibe3d:pipe-evaluation": "with-render",
+        "vibe3d:profiling": "with-render"
+      }
+    },
+    {
+      "name": "web",
+      "versions": [
+        "web"
+      ],
+      "subConfigurations": {
+        "vibe3d:application-core": "web",
+        "vibe3d:edit-contracts": "web",
+        "vibe3d:input-events": "web",
+        "vibe3d:interaction-query": "web",
+        "vibe3d:log": "web",
+        "vibe3d:mesh": "web",
+        "vibe3d:mesh-change": "web",
+        "vibe3d:param-schema": "web",
+        "vibe3d:pipe-evaluation": "web",
+        "vibe3d:profiling": "web"
+      }
+    },
+    {
+      "name": "root-tests",
+      "versions": [
+        "WithAI",
+        "MeshSnapshotFixtures"
+      ],
+      "subConfigurations": {
+        "vibe3d:application-core": "root-tests",
+        "vibe3d:edit-contracts": "root-tests",
+        "vibe3d:input-events": "root-tests",
+        "vibe3d:interaction-query": "root-tests",
+        "vibe3d:log": "root-tests",
+        "vibe3d:mesh": "root-tests",
+        "vibe3d:mesh-change": "root-tests",
+        "vibe3d:param-schema": "root-tests",
+        "vibe3d:pipe-evaluation": "root-tests",
+        "vibe3d:profiling": "root-tests"
+      },
+      "targetType": "sourceLibrary"
+    },
+    {
+      "name": "isolated-tests",
+      "versions": [],
+      "subConfigurations": {
+        "vibe3d:application-core": "isolated-tests",
+        "vibe3d:edit-contracts": "isolated-tests",
+        "vibe3d:input-events": "isolated-tests",
+        "vibe3d:interaction-query": "isolated-tests",
+        "vibe3d:log": "isolated-tests",
+        "vibe3d:mesh": "isolated-tests",
+        "vibe3d:mesh-change": "isolated-tests",
+        "vibe3d:param-schema": "isolated-tests",
+        "vibe3d:pipe-evaluation": "isolated-tests",
+        "vibe3d:profiling": "isolated-tests"
+      },
+      "targetType": "sourceLibrary"
+    }
+  ],
+  "targetName": "vibe3d-http-runtime",
+  "targetPath": "."
+}

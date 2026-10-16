@@ -33,7 +33,7 @@ import std.traits : FieldNameTuple, isDynamicArray, isAssociativeArray,
                     ForeachType, KeyType, ValueType;
 
 import vibe3d.mesh.core.mesh;
-import math            : Vec3;
+import vibe3d.util.math.math            : Vec3;
 import vibe3d.mesh.edit_log.mesh_edit_delta : MeshEditDelta, MeshOpEntry, MeshEditScope;
 import vibe3d.mesh.snapshot.snapshot        : MeshSnapshot;
 import vibe3d.util.plane_bytes.plane_bytes     : planeBytes;

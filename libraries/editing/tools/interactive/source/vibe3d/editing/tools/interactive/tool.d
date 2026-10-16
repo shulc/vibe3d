@@ -1,0 +1,1808 @@
+module vibe3d.editing.tools.interactive.tool;
+
+import bindbc.sdl;
+
+import vibe3d.util.math.math;
+import vibe3d.util.spatial.spatial : Viewport;
+import vibe3d.viewport.gpu.shader;
+import vibe3d.editing.params.params : Param, ParamProvider;
+import vibe3d.editing.contracts.editmode : EditMode;
+public import vibe3d.editing.contracts.tool_policy_values : Rollover, rolloverDraws, AttrImage, StepOrigin,
+    DropUndoExtent, DropRedoPopulation, DropUndoResidualPopulation, DropUndoPolicy;
+import vibe3d.editing.pipeline.contracts.operator : VectorStack;
+import vibe3d.editing.commands.runtime.command : Command;
+import vibe3d.mesh.core.mesh : Mesh;
+import vibe3d.editing.tools.interactive.model_preview : ModelPreviewView;
+import vibe3d.mesh.snapshot.snapshot : MeshSnapshot;
+import vibe3d.editing.commands.runtime.command_history : CommandHistory;
+import vibe3d.editing.commands.editor.commands.mesh.gesture_payload : GesturePayload;
+import vibe3d.mesh.change.change_bus : changeBus;
+import std.json : JSONValue;
+import vibe3d.platform.input.tool_input : ToolAction, PassThrough, InputPhase, InputButton, InputMod,
+                    ResetScope, InputBinding, resolveToolAction, resolveResetScope;
+import vibe3d.editing.contracts.prepared_tool_effect : OwnedId, PreparedParamDelta, PreparedParamKind;
+import vibe3d.viewport.display_policy.display_state : DrawPlan;
+import core.atomic : atomicOp;
+
+private shared ulong nextPreparedToolOwnerId_;
+private struct ToolPreparedParamHandle {
+    bool consumable;
+    @disable this(this);
+}
+
+// ---------------------------------------------------------------------------
+// Tool flags — tool-level behaviour bits. The enum carries two kinds of bit:
+//
+//  1. Preset-applied bits. Presets opt in by listing the names under a
+//     `flags:` block in `config/tool_presets.yaml`; the preset loader ORs
+//     them into the freshly-constructed Tool's `presetFlags`. Tools query
+//     `hasFlag(ToolFlag.X)` to fork on behaviour without duplicating preset
+//     state in their own classes.
+//       - `Immediate`  : deactivate on mouse-up (one-shot tool, no further
+//                        edits in the same session). Not yet consumed here.
+//       - `BrushReset` : reset the edit baseline between strokes. Used by
+//                        `xfrm.softDrag` so each LMB drag commits to history
+//                        and the next click starts a fresh weighted pull
+//                        from the new grab point (instead of accumulating
+//                        onto the original baseline and rubber-banding back).
+//
+//  2. Static capability bits. A tool class declares the constant capabilities
+//     it always has by overriding `flags()` to return them. The base
+//     predicate `wantsHoverForType` derives from these bits, so a tool whose
+//     capability is fixed need only list a flag rather than override a
+//     method. Tools whose capability is computed at runtime keep overriding
+//     the predicate method instead.
+//       - `HoverVertices`  : wants vertex hover-highlight while active.
+//       - `HoverEdges`     : wants edge hover-highlight while active.
+//       - `HoverPolygons`  : wants polygon hover-highlight while active.
+// ---------------------------------------------------------------------------
+enum ToolFlag : uint {
+    None          = 0,
+    // Preset-applied bits.
+    Immediate     = 1u << 0,
+    BrushReset    = 1u << 1,
+    // Static capability bits. (Bit 2 was NeedsFalloff — retired with the
+    // dead consumesFalloff chain, task 0428; falloff weighting flows through
+    // the WGHT packet into the transform kernels instead.)
+    HoverVertices = 1u << 3,
+    HoverEdges    = 1u << 4,
+    HoverPolygons = 1u << 5,
+    // Preset-applied (tool session model, slice M3; C-rearm-key, gap 370): the
+    // preset's field `rearmAfterCommand: false`. After a recording command has
+    // closed the tool's live operation, the tool keeps its tag but does not
+    // re-open a window — Element Move's transform node; TransformMove re-arms
+    // whatever centre is set by hand, so the answer is the PRESET's, never the
+    // action-centre mode. Read by the session (`ToolSession.finishClose`).
+    NoRearmAfterCommand = 1u << 6,
+    // Preset-applied (task 9525): the preset composes no background
+    // constraint, so the topology pen's activation leaves the CONS stage
+    // alone (Drag Weld; K-DW).
+    NoBackgroundConstraint = 1u << 7,
+}
+
+// ---------------------------------------------------------------------------
+// GestureRecordMode — WHICH history primitive a gesture's record goes through.
+//
+// THREE MEMBERS BECAUSE THERE ARE THREE PRIMITIVES, not because a third call
+// site turned up. Read out of `command_history.d`, each doing something the
+// other two do not to an OPEN in-session run:
+//
+//   Plain           `record(cmd)`                        — COLLAPSES an open
+//                   run first (`consolidateOpenRunIfForeign`, the foreign-
+//                   append guard), then appends.
+//   InSession       `recordInSession(cmd, currentRunId)` — appends INSIDE the
+//                   run and RAISES `_runOpen`.
+//   ReplaceRunTail  `replaceInSessionTailWith(runId, cmd)` — CLOSES the run
+//                   (`scope(exit) _runOpen = false`) and splices its whole
+//                   tail down to one entry.
+//
+// `Tool.recordGestureEdit` takes this WITHOUT A DEFAULT, and that is the
+// point of the type rather than a strictness preference. The precedent is
+// verbatim: `pushEntry`'s `fireHook` is "a REQUIRED argument, deliberately
+// without a default … that answer should be forced out of the next caller too
+// rather than inherited from whichever default someone picked"
+// (`command_history.d`). Two arguments for it here, and the second is the
+// stronger:
+//
+//   1. RISK — deriving the mode from history state would INVERT behaviour on
+//      every site that records `Plain` while a run happens to be open:
+//      `record` collapses that run, `recordInSession` extends it.
+//   2. IMPOSSIBILITY — `InSession` is needed on the record that OPENS the run,
+//      and at that instant `_runOpen` is still false. No derivation from state
+//      can ever produce `InSession`, under any implementation.
+//
+// A `Plain` default reproduced the original defect in a new costume: the
+// live-box site would compile as `recordGestureEdit(cmd)`, land WITHOUT the
+// `InSession` flag, and the following splice would scan for a tail that was
+// never in the run — landing in `replaceInSessionTailWith`'s APPEND arm and
+// leaving N+1 entries where one was intended. Compiles; silent; no depth cell
+// on that tool to notice.
+// ---------------------------------------------------------------------------
+enum GestureRecordMode { Plain, InSession, ReplaceRunTail }
+
+// ---------------------------------------------------------------------------
+// THE CARRIER-CLASS DOOR OF `Tool.setGestureBindings` (task 3340, item B).
+//
+// Three tiny templates, kept at module scope so the `static assert` in the
+// method body reads as one line and the REFUSAL TEXT lives where it can be
+// read without opening the class. See that method for the measured background;
+// what is here is only the mechanism.
+// ---------------------------------------------------------------------------
+
+/// The carrier class that gesture factory `F` STATICALLY produces.
+///
+/// Falls back to `Command` for an `F` that is not callable at all (e.g. a bare
+/// `null` literal, whose `typeof` is `typeof(null)`): there is no carrier class
+/// to judge in that case, and answering "unknown" as the permissive value keeps
+/// the door from refusing something the OLD signature accepted. A null factory
+/// is already the runtime belt's business — `recordGestureEdit` returns false
+/// on a null `cmd` and counts it.
+private template GestureCarrierOf(F) {
+    import std.traits : ReturnType;
+    static if (__traits(compiles, ReturnType!F))
+        alias GestureCarrierOf = ReturnType!F;
+    else
+        alias GestureCarrierOf = Command;
+}
+
+/// May `F` be bound as a gesture factory? Either its carrier implements
+/// `GesturePayload`, or the caller erased the static type down to `Command`
+/// itself and thereby took the runtime refusal on purpose.
+private enum bool gestureCarrierDeclaresPayload(F) =
+    is(GestureCarrierOf!F == Command) || is(GestureCarrierOf!F : GesturePayload);
+
+/// The refusal text. NAMES THE CLASS — a `static assert` that only says
+/// "constraint not satisfied" sends the reader to the wrong file, and this
+/// mistake's whole shape is that it looks correct at the call site.
+private enum string gestureCarrierRefusal(F) =
+    "setGestureBindings: the carrier class `" ~ GestureCarrierOf!F.stringof
+  ~ "` does not implement `GesturePayload` "
+  ~ "(source/commands/mesh/gesture_payload.d), so this binding CANNOT be "
+  ~ "recorded. It would compile and then drop every routed gesture SILENTLY: "
+  ~ "`Tool.recordGestureEdit`'s `cast(GesturePayload)` comes back null, the "
+  ~ "belt refuses and ticks `changeBus.gestureCarrierMismatch`, and the "
+  ~ "gesture keeps working with NO undo entry behind it — the mesh is already "
+  ~ "mutated by the time the recorder runs. FIX: implement "
+  ~ "`bool hasGesturePayload() const` on that carrier (one method; see the "
+  ~ "four that already do). If you really mean an unchecked carrier — only "
+  ~ "the belt's own probe does — erase the type yourself with "
+  ~ "`() => cast(Command) f()` and own the counted runtime refusal.";
+
+// ---------------------------------------------------------------------------
+// Tool — base class for all editing tools.
+//
+// The base owns four surfaces (task 0428 boundary):
+//   * INPUT + RENDER — activate/deactivate/update, the onMouse*/onKey*
+//     dispatch hooks, draw()/drawProperties().
+//   * PARAMS — the ParamProvider schema (params/onParamChanged/paramEnabled/
+//     evaluate/renderParamsAsPanel) driving the Tool Properties panel and the
+//     headless tool.attr path.
+//   * PIPE CAPABILITIES + INTROSPECTION — flags()/hover opt-ins/isDragging/
+//     toolHandlesJson/toolStateJson/applyHeadless/supportedModes.
+//   * The WIDE SESSION CONTRACT — hasUncommittedEdit / cancelUncommittedEdit
+//     / resyncSession (see their block below).
+//
+// The session PROTOCOL (who calls those hooks, in what order — history
+// navigation, refire, live re-eval, lifecycle-undo emit) lives in
+// edit_session.d: EditSession is the sole driver, and the narrow per-tool
+// opt-ins are its optional capability interfaces (LiveEvalClient,
+// RefireClient, FrameParameterEvalClient, SlotActivationClient), discovered by cast on the
+// active tool — or DATA the tool declares in its ToolSessionPolicy below.
+// ---------------------------------------------------------------------------
+
+/// A tool's policy for a recording command met while it is armed (the
+/// `commandClose` field below; slice M2): `none` — the funnel's fallback, a
+/// Model command drops the tool and a UiState one leaves it (the 6250 command
+/// drops a tool it cannot close too), `uiDoor` closes the live
+/// operation first when the command came through the UI, `allDoors` does so on
+/// either door. Every value falls back to `none`'s rule when the tool does not
+/// stay armed. The session reads it (`closeForCommand`, slice M4); the command
+/// funnel only executes the outcome.
+enum CommandClose : ubyte { none, uiDoor, allDoors }
+
+/// What a tool's session does, as DATA rather than as a marker interface (tool
+/// session model, slice M1; doc/tool_session_model_plan_2026-09-24.md R3.1).
+/// Read through `Tool.sessionPolicy()`, never by cast, so it adds no census
+/// capability. Each field arrives with the slice that READS it; its `.init` is
+/// the answer for every tool that does not override. The id-to-policy table,
+/// with provenance per id, is tests/unit/tool_session_policy_test.d.
+/// H1: WHEN a tool's operation window opens (slice M3). `firstPress`: the
+/// first gesture IS the window's first group (Edge Slice, Slice). `arm`: the
+/// tool's own arm is the first group (`Tool.sessionOperationArmed`), and what
+/// the arming press does after it is an ordinary step (Loop Slice — whose arm is
+/// the arming press, not the tool activation: gap 205 (b)).
+enum OpensAt : ubyte { firstPress, arm }
+
+/// H5: the kind of press that opens a gesture step (slice M3).
+enum PressKind : ubyte { plain, shift, middle }
+
+/// What a press of the tool's own door is to its session instance (topology-redo S6r, plan
+/// 9270 §23.9 item 5; Capture-12 C12-1): `activates` — the instance is inactive and the press
+/// runs its activation (the reset) first; `active` — the instance is live; `unbound` — no
+/// session link, or the tool is not the session's reporting tool: its own press behaviour stands.
+enum PressActivation : ubyte { unbound, activates, active }
+
+/// H8 (slice M6, C-H8-ctl): what the tool's transform handle is posed from.
+/// `acenPlusT`: the action centre plus the run's translation (the transform
+/// family; a press off the handle may place the centre). `opBasePlusAttr`: the
+/// base the tool's own operation took plus its offset attributes
+/// (`Tool.handleAnchorPoint`, Edge Extend); no press places the action centre,
+/// and with no operation open there is no handle to hit (gap 217).
+enum HandleAnchor : ubyte { acenPlusT, opBasePlusAttr }
+
+/// The anchor a `HandleAnchor.opBasePlusAttr` tool answers (slice M6): where
+/// its handle stands, and whether it is drawn (an operation is open). The pose
+/// is reported either way — the first press of an operation hauls about it.
+struct HandleAnchorPoint {
+    Vec3 at;
+    bool shown;
+}
+
+/// A topology tool's current preview basis and gesture carrier. History owns
+/// every completed image; this capability exposes only the live operation.
+interface TopologyStepClient {
+    Mesh* topologyStepMesh();
+    MeshSnapshot topologyStepBasis();
+    Command topologyStepCarrier();
+    bool recordTopologyStep(Command cmd);
+    string topologyStepLabel();
+    void setTopologyDormant(bool dormant);
+    /// The base of a new operation (topology-redo S3, model doc §R6.2): called
+    /// only by `ToolSession` — where an operation ends with the tool bound, and
+    /// on an opening press whose base went stale. Everything the tool derives
+    /// from its base (gizmo, `built`), no attributes; writes no mesh when
+    /// `basis.matches(*mesh)`.
+    void rebaseTopologyStep(MeshSnapshot basis);
+    /// A navigated step: its attributes, then `rebaseTopologyStep(basis)`.
+    /// Law 4 (model doc §R9): navigation writes a row's attributes
+    /// only into the instance that recorded it; an instance re-created by a
+    /// redo gets the image remembered when it was dropped.
+    void restoreTopologyStep(in AttrImage attrs, MeshSnapshot basis);
+}
+
+/// What a tool reports to the session it is bound to (slice M3). Delegates,
+/// not an interface: the tool is never CAST to anything for this, so the
+/// census's session capabilities do not grow. Installed by `EditSession` when
+/// the tool is armed (`EditSession.noteArm`); an unbound tool's reports are
+/// no-ops and its own closes run directly.
+struct ToolSessionLink {
+    void delegate(Tool, PressKind) stepBegins;   // a gesture step starts (before it acts)
+    void delegate(Tool, bool ifChanged) stepEnds; // ... and completes (a step only if the image changed, when asked)
+    void delegate(Tool) operationArmed;          // the tool armed its operation (OpensAt.arm)
+    void delegate(Tool) operationEnded;          // the tool's operation ended by itself
+    bool delegate(Tool, bool commit) closeOwn;   // Enter (commit) / RMB (discard)
+    void delegate(Tool, const(Command)) recordCompleted; // history-owned completed gesture
+    void delegate(Tool, Command) tagPreparedCompleted;
+    ulong delegate(Tool) recordToken;
+    MeshSnapshot delegate(Tool) stepOpenImage;   // the pending step's open image (shared)
+    bool delegate(Tool) previewGated;            // the session holds the tool's preview (topology-redo S2b)
+    PressActivation delegate(Tool) pressActivation; // a press of the tool's door (S6r); unbound when not reporting
+}
+
+enum HeadlessSourcePolicy { current, retainedPositions }
+
+struct ToolSessionPolicy
+{
+    HeadlessSourcePolicy headlessSource;
+    /// H1: arming writes the activation history row (a ToolActivationCommand)
+    /// — read by `toolArmEmitsLifecycle` for both the incoming tool and the
+    /// retained predecessor. Not WHEN the operation opens (that is `opensAt`,
+    /// a later slice): Edge Slice and Slice write the row yet open at the
+    /// first press.
+    bool activationRow;
+    /// H3: a recording command closes the live operation FIRST, through the
+    /// one routine `EditSession.closeOperation` (slice M2), and on which door
+    /// — `allDoors` (the transform family: the 6250 continuation, carried),
+    /// `uiDoor` (the captured C1-h-sel family law, R20) or `none` (the funnel's
+    /// old drop rules). The UI half is captured; the SCRIPT half of `allDoors`
+    /// is carried from today's behaviour, not captured (opponent R3 C7).
+    CommandClose commandClose;
+    /// H2 PORTED: ToolSession coordinates this tool's gesture navigation and
+    /// activation pairing. Most ported tools keep attribute-image stacks in
+    /// ToolSession; `historyTopologySteps` instead puts full completed step
+    /// images in CommandHistory. `false` means H2 is not ported.
+    bool sessionSteps;
+    /// Full topology steps are recorded in CommandHistory as
+    /// they finish. ToolSession keeps only the in-flight image and latest
+    /// attributes, never a live mesh-image stack.
+    bool historyTopologySteps;
+    /// Completed gesture payloads are commands already recorded by the tool.
+    /// ToolSession tags and navigates those rows; it stores no second completed
+    /// geometry or attribute stack for this producer.
+    bool historyRecordedSteps;
+    /// Undoing this session's first recorded geometry step ends the live tool;
+    /// the step's redo re-arms it without a separate activation row.
+    bool recordedFirstUndoEndsTool;
+    /// A fresh user arm selects the pipe stage, but the postmode begins on the
+    /// first viewport press. History replay restores an already armed postmode.
+    bool postmodeStartsOnPress;
+    /// A live preview may itself contain in-session History rows. Undo those
+    /// rows before cancelling the preview (Box's recorded parameter ladder).
+    bool previewHistoryLadder;
+    /// H1: when the operation window opens (see `OpensAt`). Read only for
+    /// `sessionSteps` tools.
+    OpensAt opensAt;
+    /// H5: a Middle press opens an operation boundary WITHOUT cloning the
+    /// previous operation's haul attributes (the no-clone flag: Edge Slice only).
+    bool noClone;
+    /// The attribute image (R4.3): what a gesture step restores. Every name is
+    /// one of the tool's `params()` and none is an `Action` trigger (the policy
+    /// table pins both).
+    immutable(string)[] imageAttrs;
+    /// H5: what a Middle press clones from the previous operation's end and a
+    /// Shift press resets to the declared defaults.
+    immutable(string)[] haulAttrs;
+    /// The attributes the tool's activation returns to their declared defaults
+    /// (topology-redo S6r, model doc §R12 M-init: written over the stored copy
+    /// when the session activates the instance); empty: none.
+    immutable(string)[] activationResetAttrs;
+    /// H1, `OpensAt.arm` (slice M3b, C-H1-bev): the bool image attribute that
+    /// says the tool's operation is APPLIED. The session raises it at a live
+    /// arm (`Tool.applyArmAttr`), so the arm's own apply is the window's first
+    /// group and its undo lowers it again through the image. Empty: the tool
+    /// reports its arm itself (Loop Slice, whose arm is its press, gap 205 (b)).
+    string armAttr;
+    /// `tool.doApply` REPLACES this tool's live window (slice M3b review R1):
+    /// the one-shot apply runs on the window's base and, only once it has
+    /// succeeded, the window ends and the row's undo returns that base. A
+    /// refused apply changes nothing. Polygon Bevel only (its arm applies at
+    /// once); every other tool keeps today's `tool.doApply`. Its long-term
+    /// home is the single command-meets-tool rule of slice M4.
+    bool headlessReplacesWindow;
+    /// H1 (gap 218, slice M4): the record that CLOSES the window's first
+    /// operation carries the activation row that group joined — undoing it pops
+    /// both as one step and ends the tool (Edge Extend, captured). `false`: the
+    /// record is its own step (the other families; not captured for them).
+    bool recordCarriesActivation;
+    /// Whether an undo that cancels the open edit (the whole-edit cancel of
+    /// `EditSession.navigate`, for a tool whose session does not own its
+    /// steps) leaves the tool armed (tasks 0400/0430: the create family and
+    /// Mirror; slice M4 moved it here from the `KeepAliveOnCancel` interface).
+    bool keepAliveOnCancel;
+    /// H7 (slice M6): whether the hovered target is drawn while the tool is
+    /// armed — the rollover flag of the tool's own node (`Rollover` above;
+    /// the flags table, tests/fixtures/tool_rollover_flags.json).
+    Rollover rollovers;
+    /// H8 (slice M6): what the tool's transform handle is posed from.
+    HandleAnchor handleAnchor;
+    /// The prepared arm restores this tool's complete setting image and the
+    /// tool rebuilds from it once at activation, so the arm replays none of
+    /// its changed sticky names one by one (slice M7, formerly an id test in
+    /// `prepareArm`). Loop Slice only; named arguments are still replayed.
+    bool armRestoresWholeImage;
+    /// A user drop (`tool_activation_ownership.dropWritesRowFor`) writes a
+    /// DROP lifecycle row whose undo re-arms the tool (wave plan 8640 S6;
+    /// captured X-esc/X-space/X-q/X-sel for the Topology Pen). The current
+    /// extent and redo retention are independently resolved policy data.
+    /// Other row doors retain their declared admission.
+    bool dropWritesRow;
+    /// A `tool.set` drop — Q / `tool.set <id> off`, or the current type's
+    /// selection key (`DropContext.toolSetDoor`) — writes a drop row whose
+    /// undo resolves its geometry extent from `dropUndo` and re-arms the tool
+    /// fresh (findings_K-RD rule 2; captured on the transform presets and
+    /// Polygon Bevel). The other doors are uncaptured for these tools.
+    bool toolSetDropRow;
+    DropUndoPolicy dropUndo;
+    /// The undo that removes this tool's activation row leaves it LATENT:
+    /// undrawn, and the next plain viewport press re-arms it (K-RD rule 3,
+    /// RD_DROP_Z0D; captured on the transform tool).
+    bool armUndoLeavesToolLatent;
+    /// A PRESS opens a new operation: before the press step's open image is
+    /// taken, the session resets `haulAttrs` to their defaults (the Shift arm
+    /// of `openOperation`), and those names are restored only into the tool
+    /// INSTANCE that recorded a row (M-H). Captured for the Topology Pen
+    /// (H1-move z1, C0-N1/N2, X-w, X-toggle; wave plan 8640 S7a); every other
+    /// tool keeps false, by data.
+    bool pressOpensOperation;
+    /// Parameter rows FOLD into the open block — the activation (key/UI door
+    /// arm) or the last press — at the next press or session close, and pop
+    /// and redo with it as one step; an undo or redo re-keys the block.
+    /// Captured for the Topology Pen (L15, L38, L41-L45, L53-L55; wave plan
+    /// 8640 S7a, §9.19.3); every other tool keeps false, by data.
+    bool foldsParamRowsIntoBlock;
+    /// The tool records its applied mesh image once per operation and again
+    /// after each undo, not at every refire: a redo inside the operation pins
+    /// the redo image of the operation's later refires to the image that redo
+    /// left, until an undo or the operation's end. false: every refire's redo
+    /// shows its own result. Read only by the session, inside the captured
+    /// model (topology-redo S7r, model doc §R13).
+    bool redoPinsRefireImage;
+    /// H3, captured for the pen: a UI-door command meeting this tool with
+    /// nothing committable (`!hasUncommittedEdit()`) ends its open gesture
+    /// through `cancelUncommittedEdit()` before the command applies; false —
+    /// every other tool — step (3) leaves the idle tool untouched, R20 (pen
+    /// wave plan S8 A4-rev, K-B4 Backspace-1, K-B5 UC1-end).
+    bool commandEndsOpenGesture;
+
+    /// Both step arms' one predicate for "a parameter write is a step": the
+    /// producers capture the before-write image under it. In the attribute arm
+    /// a typed value inside the live window is a step of its own in every tool
+    /// (captured on all six: pen, Polygon Bevel, Edge Extend, the slice tools).
+    bool stepsParamWrites() const pure nothrow @nogc {
+        return historyTopologySteps || (sessionSteps && !historyRecordedSteps);
+    }
+}
+
+/// The captured topology-operation model (task 8920, law 1): history-owned
+/// topology steps whose parameter rows do not fold (the pen folds them — a
+/// different captured mechanism). Derived from policy data, never from an id.
+bool capturedTopologyModel(in ToolSessionPolicy p) pure nothrow @nogc {
+    return p.historyTopologySteps && !p.foldsParamRowsIntoBlock;
+}
+
+/// The operation begins at the arm (the families that apply on arming).
+bool opensAtArm(in ToolSessionPolicy p) pure nothrow @nogc {
+    return p.opensAt == OpensAt.arm;
+}
+
+/// Whether a key/UI-door activation joins the record that follows it (one undo
+/// step): inside the model, every tool — the record after the activation is its
+/// operation's beginning (the begin row of an arm-opening tool, else the first
+/// press; topology-redo S5b, model doc §1.1); outside it, the tool's declared
+/// `recordCarriesActivation` (Edge Extend).
+bool firstStepCarriesActivation(in ToolSessionPolicy p) pure nothrow @nogc {
+    return capturedTopologyModel(p) || p.recordCarriesActivation;
+}
+
+/// Whether a user arm leaves the post mode closed until the first press: the
+/// declared flag, or any model tool — the activation does not arm it; the
+/// operation's beginning does (an arm-opening tool's begin row, S5b).
+bool postmodeStartsOnPressFor(in ToolSessionPolicy p) pure nothrow @nogc {
+    return p.postmodeStartsOnPress || capturedTopologyModel(p);
+}
+
+class Tool : ParamProvider {
+    // Bound synchronous display query (20261660); no new polymorphic perimeter.
+    // See doc/tasks/evidence/20261660-bridge-model-preview/amendment.md.
+    private bool delegate(out ModelPreviewView) modelPreviewQuery_;
+    protected final void bindModelPreview(bool delegate(out ModelPreviewView) query) {
+        modelPreviewQuery_ = query;
+    }
+    public final bool modelPreview(out ModelPreviewView view) {
+        view = ModelPreviewView.init;
+        return modelPreviewQuery_ !is null && modelPreviewQuery_(view);
+    }
+
+    // Only a scoped read-only borrow lives on Tool; ToolSession owns the source
+    // receipt (task 20261110; lifecycle completion amendment).
+    private const(Vec3)[] headlessBorrow_;
+    private bool headlessBorrowActive_;
+    final const(Vec3)[] headlessSourcePositions(const(Vec3)[] current) const
+            nothrow @nogc {
+        return headlessBorrowActive_ ? headlessBorrow_ : current;
+    }
+    struct HeadlessBorrow {
+    private:
+        Tool tool_;
+    public:
+        @disable this(this);
+        this(Tool tool, const(Vec3)[] positions) {
+            if (tool.headlessBorrowActive_)
+                throw new Exception("headless source borrow is already active");
+            tool_ = tool;
+            tool.headlessBorrow_ = positions;
+            tool.headlessBorrowActive_ = true;
+        }
+        ~this() nothrow @nogc {
+            if (tool_ is null) return;
+            tool_.headlessBorrow_ = null;
+            tool_.headlessBorrowActive_ = false;
+        }
+    }
+
+    private DropUndoPolicy dropUndoOverride_;
+    private bool hasDropUndoOverride_;
+    private bool dropUndoSealed_;
+    final void setDropUndoOverride(DropUndoPolicy policy) nothrow @nogc {
+        if (dropUndoSealed_) return;
+        dropUndoOverride_ = policy;
+        hasDropUndoOverride_ = true;
+    }
+    final void sealDropUndoPolicy() nothrow @nogc { dropUndoSealed_ = true; }
+    final DropUndoPolicy resolvedDropUndoPolicy() const nothrow @nogc {
+        return hasDropUndoOverride_ ? dropUndoOverride_ : sessionPolicy().dropUndo;
+    }
+private:
+    immutable ulong preparedToolOwnerIdentity_;
+public:
+    this() nothrow @nogc {
+        preparedToolOwnerIdentity_ = atomicOp!"+="(nextPreparedToolOwnerId_, 1UL);
+    }
+protected:
+    final OwnedId preparedToolStateOwner() const nothrow @nogc {
+        return OwnedId(preparedToolOwnerIdentity_);
+    }
+public:
+    /// Scalar identity used by the centralized dormant lifecycle producer.
+    /// It exposes no mutable tool state and is stable for this instance.
+    final OwnedId preparedLifecycleOwner() const nothrow @nogc {
+        return OwnedId(preparedToolOwnerIdentity_);
+    }
+
+    // Set true only while an interactive property write is notifying the
+    // tool, and left false on the headless `tool.attr` path. Tools that build live
+    // geometry on a param change (e.g. EdgeExtrudeTool) gate their preview
+    // rebuild on this so the headless flow's ToolDoApplyCommand pre-snapshot
+    // stays clean — the headless apply is owned solely by applyHeadless().
+    bool interactiveParamEdit = false;
+
+    // Deliver one interactive parameter notification.  This is deliberately
+    // narrower than the raw `tool.attr` path: callers must have established
+    // that their write originated in an interactive control first.
+    //
+    // `final` since task 0705: it is a fixed wrapper around `onParamChanged`
+    // — set the flag, delegate, restore — and had zero overriders. It was
+    // virtual only by omission, and that omission was the audit's off-by-one
+    // (33 counted, 34 present).
+    final void notifyInteractiveParamChanged(string name) {
+        bool wasInteractive = interactiveParamEdit;
+        interactiveParamEdit = true;
+        scope(exit) interactiveParamEdit = wasInteractive;
+        onParamChanged(name);
+    }
+
+    // Preset-applied behaviour bits — see `ToolFlag`. The preset
+    // loader writes this on the freshly-constructed tool before
+    // activation. Tools query via `hasFlag` rather than reading the
+    // mask directly so the bit names stay enforced by the type.
+    uint presetFlags = 0;
+
+    final bool hasFlag(ToolFlag f) const {
+        return (presetFlags & cast(uint)f) != 0;
+    }
+
+    // Static capability bits for this tool class. Override to return the
+    // OR of the constant capabilities the tool always has
+    // (HoverVertices/Edges/Polygons). The base capability predicates below
+    // derive from these. Tools whose capability is computed at runtime
+    // (e.g. hover that depends on the active falloff stage) leave this be
+    // and override the predicate method instead.
+    ToolFlag flags() const { return ToolFlag.None; }
+
+    final bool hasCapability(ToolFlag f) const {
+        return (cast(uint)flags() & cast(uint)f) != 0;
+    }
+
+    // Human-readable name shown in the UI.
+    string name() const { return "Tool"; }
+
+    // Called when the tool becomes the active tool.
+    void activate() {}
+
+    // Called when another tool becomes active.
+    void deactivate() {}
+
+    // Called once per frame to recompute tool state (e.g. gizmo
+    // position). Receives the dispatcher-built vts so any toolpipe
+    // reads stay coherent with the one the input handlers and draw()
+    // see this frame.
+    void update(ref VectorStack vts) {}
+
+    // SDL event handlers — Phase 7 of doc/operator_refactor_plan.md.
+    // The dispatcher (app.d's main event loop) builds a VectorStack
+    // once per input event, walks the live toolpipe, and passes the
+    // populated vts down to the Tool. Tools read upstream packets via
+    // `vts.get!T()` — they MUST NOT call pipeline.evaluate themselves.
+    // Each handler takes `vts` as a parameter. Return true to mark the
+    // event consumed.
+    bool onMouseButtonDown(ref const SDL_MouseButtonEvent e, ref VectorStack vts) { return false; }
+    bool onMouseButtonUp  (ref const SDL_MouseButtonEvent e, ref VectorStack vts) { return false; }
+    bool onMouseMotion    (ref const SDL_MouseMotionEvent  e, ref VectorStack vts) { return false; }
+    bool onKeyDown        (ref const SDL_KeyboardEvent     e, ref VectorStack vts) { return false; }
+
+    // ----- Centralized tool-input / modifier dispatch
+    // (doc/tool_input_dispatch_design.md) ------------------------------------
+    //
+    // A shared alternative to hand-rolling a button x modifier grid inside a
+    // tool: a tool DECLARES its (button, modifier) -> action table instead of
+    // writing its own DOWN-side classifier, and implements one action handler
+    // instead of an UP-side arm-flag cascade. `dispatchInput()` below is the
+    // shared per-button state machine every opted-in tool reuses.
+    //
+    // The three hooks that seam needs live on `InputBindable` (below this
+    // class), NOT on `Tool`. Task 0705 (audit 4, T6) moved them: one tool of
+    // the ~43 in the build implements them, and three base virtuals carried
+    // for one implementor is exactly the "zoo of hooks" the 0428 moratorium
+    // was written against. `dispatchInput` resolves the capability with one
+    // `cast` and answers `false` for a tool that does not implement it —
+    // which is byte-identical to the old defaults (an empty `bindings()`
+    // made every phase return `false` without ever calling the other two).
+
+    // One armed `ToolAction` slot per physical button (`InputButton.Left`/
+    // `Middle`/`Right`), set at Down and read back (then cleared) at Up.
+    // Tracking arming PER BUTTON — instead of one shared set of flags — is
+    // what makes a chord on one button structurally unable to clear a
+    // gesture in progress on a different button.
+    private ToolAction[3] armed_ = [PassThrough, PassThrough, PassThrough];
+
+    /// Drops EVERY button's armed action (`armed_[] = PassThrough`) in one
+    /// call — distinct from `ResetScope` above, which only ever (re)arms the
+    /// SAME button `dispatchInput` is processing this Down on and never
+    /// touches another button's slot. This is the seam an external resync
+    /// trigger (e.g. an undo/redo that invalidates cached vertex/edge
+    /// indices) needs to cancel every gesture in flight regardless of which
+    /// button it is armed on — `armed_` is otherwise module-private, so
+    /// nothing outside `dispatchInput` itself could reach it before this
+    /// existed. Does NOT call `onInputResetAll()` — a caller that needs both
+    /// (clear the tool's own seed state AND drop every arm) calls both
+    /// explicitly; they are separate primitives.
+    protected final void resetAllArmed() {
+        armed_[] = PassThrough;
+    }
+
+    /// The central per-button dispatcher: resolves+arms on Down, routes to
+    /// the armed action (then clears it) on Up, and forwards Move to
+    /// whatever is currently armed on `button` (or declines if nothing is).
+    /// `button`/`mods` are already the neutral `InputButton`/`InputMod`-mask
+    /// forms (`tool_input.toButton`/`toMods` convert from raw SDL at the
+    /// call site); `e`/`vts` pass through untouched to `onToolAction`.
+    final bool dispatchInput(InputButton button, ubyte mods, InputPhase phase,
+                              ref const SDL_MouseButtonEvent e, ref VectorStack vts) {
+        // A physical button with no neutral mapping — a 4th/5th mouse button
+        // that `toButton()` reports as `InputButton.None` — binds to no row and
+        // must never index `armed_[]` (sized for Left/Middle/Right only; the
+        // Up/Move cases below read `armed_[button]` UNCONDITIONALLY before the
+        // PassThrough check, so an out-of-range index here would be a buffer
+        // overread). Decline it outright: identical to a tool whose table lists
+        // no row for the button, and to the pre-dispatch behavior where such
+        // buttons were ignored.
+        if (button == InputButton.None) return false;
+        // The capability, resolved ONCE per dispatch. A tool that does not
+        // implement `InputBindable` has no table, so nothing can resolve to
+        // anything but `PassThrough` and nothing can be armed — the same
+        // answer the empty-`bindings()` default used to produce, reached
+        // without three virtual slots on the base.
+        auto ib = cast(InputBindable) this;
+        if (ib is null) return false;
+        final switch (phase) {
+        case InputPhase.Down: {
+            // bindings() scanned ONCE and shared by both resolvers below —
+            // a migrated tool returning an array literal would otherwise
+            // allocate twice per Down for no reason (NIT-2).
+            auto table = ib.bindings();
+            auto a = resolveToolAction(table, button, mods);
+            if (a == PassThrough) return false;
+            if (resolveResetScope(table, button, mods) == ResetScope.AllButtons)
+                ib.onInputResetAll();
+            armed_[button] = a;
+            return ib.onToolAction(a, InputPhase.Down, e, vts);
+        }
+        case InputPhase.Up: {
+            auto a = armed_[button];
+            if (a == PassThrough) return false;
+            armed_[button] = PassThrough;
+            return ib.onToolAction(a, InputPhase.Up, e, vts);
+        }
+        case InputPhase.Move: {
+            auto a = armed_[button];
+            if (a == PassThrough) return false;
+            return ib.onToolAction(a, InputPhase.Move, e, vts);
+        }
+        }
+    }
+
+    // Called once per frame after the 3-D geometry has been drawn.
+    // Receives the freshly-evaluated toolpipe vts; override to render
+    // overlays (gizmos, falloff overlay, snap highlights, etc.).
+    //
+    // `visualOnly` (tasks 0206/6512, Quad/Split multi-cell overlays): true when
+    // this draw is a NON-interactive replica in a viewport cell OTHER than
+    // the active/origin one. World-derived geometry (handler.draw, the
+    // falloff gizmo, drawSnapOverlay/drawFalloffOverlay) still renders
+    // reprojected under `vp` — that's what makes the same gizmo appear
+    // correctly in every Quad cell. What MUST be skipped under
+    // `visualOnly` is anything that writes INTERACTION state read by this
+    // tool's event handlers under a FOREIGN cell's projection: `cachedVp`
+    // writes and any ToolHandles register/hit-test (`begin`/`add`/
+    // `update`) cycle. See XfrmTransformTool.draw + the Move/Rotate/Scale
+    // sub-tool draw()s for the gated sites. EdgeBevelTool follows this with a
+    // local replica image and draw-only handle. Default false ⇒
+    // every existing call site (single-cell / `--test`) is byte-identical.
+    void draw(const ref Shader shader, const ref Viewport vp,
+              ref VectorStack vts, const ref DrawPlan plan,
+              bool visualOnly = false) {}
+
+    /// The viewport a tool's handlers resolve under: `draw` caches the drawn
+    /// cell's, and the router overwrites it with the event's own cell
+    /// (`SubjectPacket.viewport`) before every mouse handler, so a Quad press
+    /// never reads the last-drawn cell. A subclass that
+    /// declares its own `cachedVp` hides this field and is not synced.
+    Viewport cachedVp;
+    final void syncEventViewport(const ref Viewport vp) { cachedVp = vp; }
+
+    // Called inside the floating "Tool Properties" ImGui window.
+    // Override to show/edit tool-specific properties.
+    void drawProperties() {}
+
+    // Schema: list of parameters. Default: none. Tools that surface a
+    // numeric properties panel override this.
+    Param[] params() { return []; }
+
+    // Called after a parameter value changes. Tools override to drive
+    // their preview re-evaluation.
+    void onParamChanged(string name) {
+        auto prepared = prepareBaseParam(name);
+        ToolPreparedParamHandle handle;
+        if (validateBaseParam(prepared, handle)) installLegacyPreparedParam(handle);
+    }
+
+    /// Generation of the private GPU mesh drawn by this tool's preview pass.
+    /// Zero means the tool has no private preview resource. The viewport folds
+    /// this value with the tool instance identity so a newly activated tool
+    /// cannot alias the previous tool's generation (task 5340).
+    ulong previewUploadVersion() const nothrow @nogc { return 0; }
+
+    /// Hot part owned by a private preview handle bank, if there is one.
+    /// The viewport's shared rollover key uses this after its specialised
+    /// transform/falloff arbiters have declined the active tool.
+    int previewHotPart() const nothrow @nogc { return -1; }
+
+private:
+    PreparedParamDelta prepareBaseParam(string) const nothrow @nogc {
+        return PreparedParamDelta.none(preparedToolStateOwner);
+    }
+    bool validateBaseParam(ref PreparedParamDelta prepared,
+                           out ToolPreparedParamHandle handle) nothrow @nogc {
+        if (prepared.owner != preparedToolStateOwner ||
+            prepared.kind != PreparedParamKind.None) return false;
+        handle = ToolPreparedParamHandle(true);
+        return true;
+    }
+    void installLegacyPreparedParam(ref ToolPreparedParamHandle handle) nothrow @nogc {
+        if (!handle.consumable) return;
+        handle.consumable = false;
+    }
+public:
+
+    // Whether the named parameter widget should be enabled.
+    bool paramEnabled(string name) const { return true; }
+
+    // Per-element-type hover opt-in. Tools override to declare which
+    // element types they want pickVertices / pickEdges / pickFaces to
+    // run (and the renderer to highlight) while they're active.
+    // Defaults to `false` — most tools (Move / Rotate / Scale / Bevel /
+    // primitive-create) own LMB completely and skip hover entirely.
+    // XfrmTransformTool returns `true` for the types matching the
+    // active FalloffStage's `elementMode` when falloff.element is
+    // wired (Auto → all three, vertex → only Vertices, etc.).
+    // The base derives the answer from the static Hover* capability
+    // bits; tools with a fixed hover set just declare the flags, while
+    // tools whose hover depends on runtime state override this method.
+    bool wantsHoverForType(EditMode type) const {
+        final switch (type) {
+            case EditMode.Vertices: return hasCapability(ToolFlag.HoverVertices);
+            case EditMode.Edges:    return hasCapability(ToolFlag.HoverEdges);
+            case EditMode.Polygons: return hasCapability(ToolFlag.HoverPolygons);
+        }
+    }
+
+    // True while the tool owns an in-progress drag gesture (a gizmo / element
+    // haul between mouse-down and mouse-up). The host uses this to FREEZE the
+    // hover pick during the drag — so only the element picked at drag-start
+    // stays highlighted, instead of every element the moving cursor passes
+    // over lighting up. Default false; XfrmTransformTool overrides it.
+    bool isDragging() const { return false; }
+
+    // Pre-highlight the WHOLE edge loop under the cursor (not just the single
+    // hovered edge). True only when an Element falloff is active in EdgeLoops
+    // connect mode — the apply already expands a picked edge to its loop ring,
+    // so the hover preview matches. Default false; XfrmTransformTool overrides
+    // it. The renderer reads this to decide whether to compute + draw the
+    // loop-edge mask (see source/app.d's edge-hover branch).
+    bool wantsEdgeLoopHover() const { return false; }
+
+    // When wantsEdgeLoopHover() is true, choose WHICH ring the hover mask
+    // pre-highlights:
+    //   false (default) — the classic edge LOOP through the hovered edge
+    //     (edgeLoopRing), matching ElementMove / EdgeLoops-falloff whose apply
+    //     expands the picked edge to its loop.
+    //   true — the loop-SLICE ring: the seed edge plus every quad-ring exit
+    //     rail that a loop cut would actually split (Mesh.loopSliceRingEdges).
+    //     These run PERPENDICULAR to the edge loop, so a slice tool must use
+    //     this or the highlighted ring won't match the cut. LoopSliceTool
+    //     overrides it.
+    bool edgeLoopHoverSliceRing() const { return false; }
+
+    // Test-introspection hook (task 0234, GET /api/tool/handles): serialize
+    // this tool's ToolHandles registry (part id / hover-state / visibility /
+    // screen anchor per handle, plus the shared hot/captured part) so tests
+    // can press a handle by data instead of reconstructing gizmo geometry.
+    // Default `null` — tools with no handle arbiter (most non-transform
+    // tools) report no handles; the HTTP provider wraps this under a
+    // top-level `{"handles": ...}` key regardless. XfrmTransformTool
+    // overrides this to wrap its shared `toolHandles.toJson(cachedVp)`.
+    JSONValue toolHandlesJson() const { return JSONValue(null); }
+
+    // Test-introspection hook (task 0234, GET /api/tool/state): per-tool
+    // transient-state dump (active bank, drag axis, hover/latch state, etc.)
+    // for tests that need to assert something other than final geometry.
+    // Default empty object; XfrmTransformTool + LoopSliceTool override it.
+    JSONValue toolStateJson() const { return JSONValue.emptyObject; }
+
+    // Re-apply the tool's preview after a parameter change. Default
+    // no-op (tools without params don't need this).
+    void evaluate() {}
+
+    // Apply tool one-shot (headless / scripted path). Default no-op returns
+    // false. Implementations run business logic with current attribute
+    // state — they MUST NOT snapshot themselves; the caller (eventual
+    // ToolHeadlessCommand in phase 4.4) wraps with snapshot pair for undo.
+    //
+    // Currently unused; renderer in phase 4.4+ will start dispatching to it.
+    bool applyHeadless() { return false; }
+
+    // ----- Session contract (wide per-tool hooks) --------------------------
+    //
+    // hasUncommittedEdit / cancelUncommittedEdit / resyncSession are the
+    // per-tool session contract: genuinely polymorphic (~30 interactive
+    // overriders each), so they stay virtuals on the base. Their DRIVER is
+    // EditSession (edit_session.d) exclusively — the only exception is two
+    // documented READ-ONLY render gates in ui/panels.d (the held-drag
+    // sub-window suppression) that consult hasUncommittedEdit() without
+    // driving the protocol. The NARROW session hooks (standing-preview
+    // redo/cancel shape, per-step in-session undo peel, refire, live
+    // re-eval, lifecycle-undo emit) live as optional capability interfaces
+    // in edit_session.d, discovered by cast.
+    //
+    // INVARIANT: hasUncommittedEdit() <=> a commit would fire if the tool's
+    // session ended *right now*. This is deliberately NOT "state != Idle" and
+    // NOT a single bool reused by every tool — it must equal the tool's REAL
+    // commit guard, including any epsilon terms (e.g. a primitive whose height
+    // is sub-epsilon has a live state but would commit nothing, so it must
+    // return false). Each interactive tool overrides this to mirror the exact
+    // predicate its deactivate()/commit path tests.
+    bool hasUncommittedEdit() const { return false; }
+
+    // Step the tool's open live edit BACK toward the session baseline WITHOUT
+    // recording anything new to history. Contract (measured, 0428): this is
+    // NOT guaranteed one-shot — the primitive live-run family pops ONE
+    // recorded live step per call (the interactive undo ladder) and may
+    // legitimately still report hasUncommittedEdit()==true afterwards; other
+    // tools cancel fully in one call. The driver (EditSession.navigate)
+    // re-reads hasUncommittedEdit() after every call and either steps again
+    // on the next navigate or falls through to the drop branch — do NOT
+    // assert the one-shot postcondition. Cancel bodies are heterogeneous
+    // (live-mesh restore / preview-only reset / transform-cancel code) —
+    // this is not uniformly "reuse the RMB handler".
+    void cancelUncommittedEdit() {}
+
+    // The cancel-survival shape (task 0400) is the policy datum
+    // `keepAliveOnCancel` (slice M4; the create family and Mirror declare it),
+    // and the mid-session per-step undo peel (task 0321) is the session's own
+    // gesture steps (`sessionSteps`, slices M3/M4). The redo direction never
+    // cancels an open edit for ANY tool: a
+    // standing preview's write-points invalidate the redo timeline instead
+    // (task 0429), so the former redo-cancel hook is gone.
+
+    // Re-sync the tool's cached pre-edit baseline / gizmo to the CURRENT mesh
+    // after history navigation moved geometry underneath an active tool. P0
+    // ships a minimal stub (default no-op; transform marks its caches dirty,
+    // EdgeExtrude re-captures its `before` snapshot). Promoted to a first-class
+    // post-mode re-init in P1.
+    void resyncSession() {}
+
+    // Framework "apply and continue" (Shift+click on a creation/interactive-
+    // edit tool, task 0461 — the reference editor's apply-and-continue
+    // gesture). Finalize the tool's CURRENT open edit as its own permanent
+    // undo entry WITHOUT dropping the tool, so the caller can then re-arm the
+    // SAME session in place via resyncSession() — structurally commit-into-
+    // history then re-arm-in-place, never a deactivate/reactivate (ACEN/AXIS/
+    // pipe state persist).
+    //
+    // Returns true if it committed a discrete undo entry (⇒ the driver
+    // re-arms). Default false — the tool opts OUT of in-place apply, and the
+    // driver then LEAVES the open edit untouched (never re-arms on a no-op
+    // commit, so a still-open edit is never silently discarded). Transform
+    // tools that already commit per gesture (record+consolidate) keep the
+    // default: they have nothing extra to finalize here. Only interactive
+    // create/edit tools that hold a STANDING uncommitted edit
+    // (hasUncommittedEdit()==true across frames) override this to record
+    // that edit; the invariant is postcondition hasUncommittedEdit()==true
+    // BEFORE and, after the driver's follow-up resyncSession(), ==false.
+    bool commitUncommittedEdit() { return false; }
+
+    // ----- THE GESTURE RECORDING SEAM (task 1905, phase B) -----------------
+    //
+    // WHAT MOVED AND WHAT DID NOT. Three things about a tool's commit were
+    // per-file; exactly one of them belongs here:
+    //
+    //   WHAT to record (carrier, label, baseline) — stays per tool. It is the
+    //       tool's own knowledge, and the four payload forms in the tree
+    //       (`setSnapshots` / `setDelta` / `setEdit` / a four-argument
+    //       constructor) have nothing in common to hoist.
+    //   WHEN to record (deactivate / mouse-up / mouse-down / Shift+apply /
+    //       panel edit) — stays per tool. `commitUncommittedEdit` has two
+    //       production callers (`edit_session.d`'s apply-and-continue and Edge
+    //       Extend's own middle press, task 7118), so a seam built on it would
+    //       have re-plumbed 17 overrides and left every real commit exactly
+    //       where it was.
+    //   HOW to record — THIS. One site, three modes, one refusal belt, two
+    //       counters.
+    //
+    // These two members are `final` on purpose: `tool.d`'s virtual-surface
+    // whitelist (`kToolVirtualWhitelist` + the `static assert` at the bottom
+    // of this module) is task 0428's moratorium enforced as a build error, and
+    // `final` members are not virtual, so the seam adds nothing to that
+    // surface. It is also the right shape independent of the assert — a tool
+    // that wants a different HOW does not want this seam, it wants a bug.
+
+    /// The undo stack this tool records into. Bound by `setGestureBindings`
+    /// at registration.
+    ///
+    /// ON THE BASE, AND THE NAME IS NOT ARBITRARY (task 1905). Thirty-two
+    /// tool classes declared this field themselves; twenty-nine spelled it
+    /// `history` and three `history_`. It moves here under the DOMINANT
+    /// spelling so that the twenty-nine change no read site at all — they
+    /// only lose a declaration — and so the call-surface census that guards
+    /// this seam (`history{,_}.<NAME>(`) keeps keying on the same term.
+    ///
+    /// `protected` rather than `private` or `package`: the two narrower cases
+    /// in the tree were `private` (`tools/common/command_wrapper.d`) and
+    /// `package` (`tools/edit/topology_pen/tool.d`, whose `history_` had no
+    /// reader outside its own module), and `protected` covers both without
+    /// losing anyone access.
+    ///
+    /// WHY EVERY SUBCLASS DECLARATION HAD TO GO IN THE SAME COMMIT: D lets a
+    /// derived class declare a field of the same name and SILENTLY SHADOWS the
+    /// base one. A half-migrated tool would therefore compile, read its own
+    /// never-bound field, and record into null — the exact failure mode this
+    /// seam exists to make impossible.
+    protected CommandHistory history;
+
+    /// Builds this tool's undo carrier. Bound by `setGestureBindings`.
+    ///
+    /// TYPED `Command delegate()`, NOT `GesturePayload delegate()`, and this
+    /// was verified against the compiler rather than reasoned about: delegate
+    /// covariance in D reaches a base CLASS and stops at an INTERFACE.
+    /// `VertEdit delegate()` converts to `Base delegate()` and does NOT
+    /// convert to `Payload delegate()` ("cannot pass argument … of type
+    /// `VertEdit delegate()` to parameter `Payload delegate() f`"). All three
+    /// carriers are `Command` subclasses, so `Command delegate()` accepts
+    /// every registration closure unchanged; the interface spelling would have
+    /// demanded a wrapper lambda at each factory site instead.
+    ///
+    /// The price is that the carrier's CLASS is not checked here — the tool
+    /// casts to the concrete type it is about to fill, and a null from that
+    /// cast is a counted refusal (`noteGestureCarrierMismatch`), never a
+    /// silent return.
+    protected Command delegate() gestureFactory;
+
+    /// Bind this tool's history and undo-carrier factory. Replaces the
+    /// per-tool `setUndoBindings` declarations family by family.
+    ///
+    /// TEMPLATED SO THE ONE MISTAKE THIS SEAM INVITES CANNOT COMPILE (task
+    /// 3340). The parameter used to be a plain `Command delegate()`, and
+    /// delegate covariance made EVERY carrier class fit it — including the two
+    /// that do not implement `GesturePayload`. So the literal next step of the
+    /// 1905 migration, `t.setGestureBindings(history, morphEditFactory)`,
+    /// compiled, and then `recordGestureEdit`'s `cast(GesturePayload)` came
+    /// back null: the gesture still worked, the mesh was still mutated, and the
+    /// undo entry silently vanished. Measured on this branch (task 3340, group
+    /// B): of the carrier classes the factory table hands out, FOUR implement
+    /// the interface (`MeshSessionEdit`, `MeshVertexEdit`, `MeshVertexNew`,
+    /// `BoxLiveEditCommand`) and TWO do not (`MeshMorphEdit` via
+    /// `morphEditFactory`, `LayerXformEdit` via `layerXformEditFactory`).
+    /// The G7 lane hit exactly this and caught it BY HAND.
+    ///
+    /// WHY A TEMPLATE AND NOT `GesturePayload delegate()` AS THE PARAMETER —
+    /// the same compiler fact this seam's own field comment records: delegate
+    /// covariance reaches a base CLASS and stops at an INTERFACE, so
+    /// `MeshSessionEdit delegate()` does NOT convert to
+    /// `GesturePayload delegate()` and every one of the ~40 registration sites
+    /// would have needed a wrapper lambda. A template keeps the call sites
+    /// byte-identical and moves the check to the STATIC return type, which is
+    /// the thing the mistake actually gets wrong.
+    ///
+    /// THE ESCAPE HATCH IS DELIBERATE AND NARROW. An `F` whose static return
+    /// type is exactly `Command` passes — that is a caller who ERASED the type
+    /// on purpose (`() => cast(Command) …`), which only the belt's own probe
+    /// does, and the runtime belt still refuses and COUNTS such a carrier
+    /// (`changeBus.gestureCarrierMismatch`). Static refusal for the literal
+    /// mistake, counted runtime refusal for the deliberate one; neither is
+    /// silent.
+    public final void setGestureBindings(F)(CommandHistory h, F f)
+        if (is(F : Command delegate()))
+    {
+        static assert(gestureCarrierDeclaresPayload!F, gestureCarrierRefusal!F);
+        history        = h;
+        gestureFactory = f;
+    }
+
+    /// Record one finished gesture. `cmd` is ALREADY FILLED by the tool.
+    ///
+    /// Returns true when a history primitive was actually dispatched to. It
+    /// does NOT promise the stack grew: the primitives have their own gates
+    /// (lockout, suspend state, an open command block), and those are theirs,
+    /// not this seam's.
+    ///
+    /// THE BELT IS A BELT, NOT A POLICY. It refuses a carrier that was never
+    /// filled — a programming error — and it deliberately does NOT answer
+    /// "the gesture changed nothing". By the time this runs the mesh is
+    /// already mutated and only the TOOL still holds the pre-image, so that
+    /// second question stays where it is today (see the delta / snapshot fork
+    /// in `tools/edit/edge_extend.d`). The belt is expected to be UNREACHABLE
+    /// in production, which is why it has a unit cell of its own
+    /// (`tests/unit/gesture_record_belt_test.d`) rather than a comment.
+    protected final bool recordGestureEdit(Command cmd, GestureRecordMode mode) {
+        if (history is null) return false;   // nothing bound; no run of ours
+
+        if (cmd is null) return refuseGestureRecord(mode);
+
+        auto payload = cast(GesturePayload) cmd;
+        if (payload is null) {
+            ++changeBus.gestureCarrierMismatch;
+            return refuseGestureRecord(mode);
+        }
+        if (!payload.hasGesturePayload()) {
+            ++changeBus.gestureRecordEmptyPayload;
+            return refuseGestureRecord(mode);
+        }
+
+        final switch (mode) {
+            case GestureRecordMode.Plain:
+                history.record(cmd);
+                break;
+            case GestureRecordMode.InSession:
+                history.recordInSession(cmd, history.currentRunId);
+                break;
+            case GestureRecordMode.ReplaceRunTail:
+                history.replaceInSessionTailWith(history.currentRunId, cmd);
+                break;
+        }
+        sessionRecordCompleted(cmd);
+        return true;
+    }
+
+    /// Every refusal above lands here, and it exists for ONE mode.
+    ///
+    /// `replaceInSessionTailWith` closes the run on EVERY early return of its
+    /// own — its first statement is `scope(exit) _runOpen = false`. A belt
+    /// that refuses BEFORE that call therefore skips the only site that was
+    /// going to close the run, and a run opened by this same gesture's earlier
+    /// live records (`recordInSession` raises `_runOpen`) is left standing
+    /// open: the next foreign `record` would then be consolidated INTO a
+    /// gesture that was never committed.
+    ///
+    /// `consolidate` is an existing public primitive and is documented safe on
+    /// exactly the degenerate shapes reachable here — an empty stack and "no
+    /// matching tail" are both early no-ops, and a single matching entry has
+    /// its `InSession`/`Refire` tags stripped without an append. So no
+    /// reachable path here moves the stack; it only closes or re-tags what is
+    /// already on it, which is what keeps the belt's own contract ("empty
+    /// payload ⇒ the stack did not move") true.
+    ///
+    /// REJECTED ALTERNATIVE: skip the belt entirely for `ReplaceRunTail` and
+    /// always call the primitive. On "no matching tail" that primitive takes
+    /// its APPEND arm and pushes an entry — moving the stack on an empty
+    /// payload, i.e. breaking the very contract the belt is here to hold.
+    private final bool refuseGestureRecord(GestureRecordMode mode) {
+        if (mode == GestureRecordMode.ReplaceRunTail)
+            history.consolidate(history.currentRunId);
+        return false;
+    }
+
+    /// The tool's cast to its own carrier class came back null: the factory
+    /// bound at registration builds a DIFFERENT command than this tool fills.
+    ///
+    /// Counted, never silent. The mesh is already mutated when a tool reaches
+    /// its commit, so "return quietly" here means an edit with no undo entry —
+    /// and a mis-bound factory is precisely the failure a registration table
+    /// of same-typed factories invites (the Topology Pen's thirteen travel as
+    /// one named `TopoPenFactories` value for that reason).
+    protected final void noteGestureCarrierMismatch() {
+        ++changeBus.gestureCarrierMismatch;
+    }
+
+    // Refire (record-once, re-evaluate panel-edit sessions, undo/redo
+    // migration P4) moved to the optional RefireClient interface in
+    // edit_session.d (task 0428) — wantsRefire / buildRefireCommand /
+    // setRefireDriving / onRefireCommitted. A tool not implementing the
+    // interface keeps its onParamChanged() preview behaviour unchanged and
+    // is never routed through refire.
+
+    // Live re-evaluation (attr / pipe-stage edits re-running a live tool)
+    // moved to the optional LiveEvalClient interface in edit_session.d
+    // (task 0428) — hasLiveEval / hasLiveAttrEval / reEvaluate. A tool not
+    // implementing the interface keeps the former base defaults (no live
+    // session, re-eval a no-op).
+
+    // Whether `params()` should be rendered by the inline PropertyPanel.
+    // Tools that expose params() purely for the headless tool.attr path,
+    // while drawProperties() handles the interactive UI (e.g. BevelTool
+    // edge-mode), override this to false and let drawProperties() own
+    // rendering — preventing duplicate widgets.
+    bool renderParamsAsPanel() const { return true; }
+
+    // The session policy (struct ToolSessionPolicy above). Overrides return
+    // static data: the prepared arm reads it from `nothrow @nogc` code.
+    ToolSessionPolicy sessionPolicy() const nothrow @nogc {
+        return ToolSessionPolicy.init;
+    }
+
+    // H8 (slice M6): the handle anchor of a tool whose policy says
+    // `HandleAnchor.opBasePlusAttr` — its operation's base plus its offset
+    // attributes, and whether a handle is drawn. Read only through that policy
+    // (the transform banks a tool embeds, `TransformTool.handleOwner`).
+    HandleAnchorPoint handleAnchorPoint() const { return HandleAnchorPoint.init; }
+
+    // The operation's close before a recording command (slice M2, H3; read
+    // only by `EditSession.closeOperation`, per `sessionPolicy().commandClose`).
+    // True = the operation is closed and the tool stays armed; false = it could
+    // not be closed in place, and the command funnel drops the tool as before.
+    // The default is the in-place commit the INPLACE family already declares
+    // (`commitUncommittedEdit` then `resyncSession`, the pair and order of
+    // `EditSession.applyAndContinue`); a tool whose operation closes some other
+    // way overrides this with its own commit body.
+    bool commitOperation() {
+        if (!commitUncommittedEdit()) return false;
+        resyncSession();
+        return true;
+    }
+
+    // After the command has applied (and recorded), once per close. `rearm` is
+    // the PRESET's answer (`ToolFlag.NoRearmAfterCommand`, C-rearm-key; read by
+    // the session): true re-opens the window, false keeps the tag with no live
+    // operation. Default: nothing either way — the next gesture opens one.
+    void resumeAfterClose(bool rearm) {}
+
+    // ----- the tool session model's image operations (slice M3, R4.3) -------
+
+    /// The raw image of the attributes the policy declares. `final`: what is
+    /// restorable is decided by the declaration, never by an override.
+    final AttrImage captureAttrImage() {
+        AttrImage img;
+        const names = sessionPolicy().imageAttrs;
+        if (names.length == 0) return img;
+        auto ps = params();
+        foreach (n; names) {
+            bool found;
+            foreach (ref p; ps) {
+                if (p.name != n) continue;
+                img.names ~= n;
+                img.raw ~= p.snapshotRaw();
+                found = true;
+                break;
+            }
+            assert(found, "captureAttrImage: '" ~ n ~ "' is not a param of " ~ name());
+        }
+        return img;
+    }
+
+    /// Restore an image: RAW writes (no `onParamChanged`, no `evaluate`, no
+    /// live re-evaluation, no history), then ONE rebuild of what the tool
+    /// derives from its attributes.
+    final void applyAttrImage(in AttrImage img) {
+        if (img.empty) return;
+        writeRaw(img, null);
+        rebuildPreviewFromAttrs();
+    }
+
+    /// Restore recorded values without evaluating the kernel a second time.
+    final void restoreRecordedAttrs(in AttrImage img) {
+        if (!img.empty) writeRaw(img, null);
+    }
+
+
+    /// H5: a press opens an operation boundary. `middle` clones the previous
+    /// operation's end (`prevEnd`) into the haul attributes unless the policy
+    /// says `noClone`; `shift` resets them to their declared defaults; `plain`
+    /// changes nothing (no ported tool resets on a plain press, H5 verdict).
+    final void openOperation(PressKind kind, in AttrImage prevEnd) {
+        const pol = sessionPolicy();
+        final switch (kind) {
+            case PressKind.plain:
+                return;
+            case PressKind.middle:
+                if (pol.noClone || pol.haulAttrs.length == 0) return;
+                writeRaw(prevEnd, pol.haulAttrs);
+                rebuildPreviewFromAttrs();
+                return;
+            case PressKind.shift: {
+                if (pol.haulAttrs.length == 0) return;
+                resetAttrsToDefaults(pol.haulAttrs);
+                rebuildPreviewFromAttrs();
+                return;
+            }
+        }
+    }
+
+    /// RAW resets of the named attributes to their declared defaults: no
+    /// `onParamChanged`, no history, no rebuild (the caller rebuilds if it must).
+    /// A name that is no param is skipped (the policy table pins every name).
+    final void resetAttrsToDefaults(in string[] names) {
+        if (names.length == 0) return;
+        auto ps = params();
+        foreach (n; names)
+            foreach (ref p; ps)
+                if (p.name == n) { resetParamToDefault(p); break; }
+    }
+
+    /// Re-derive everything the tool computes FROM its attributes (preview,
+    /// phase) after `applyAttrImage` — the tool's Evaluate. Default: nothing.
+    void rebuildPreviewFromAttrs() {}
+
+    /// H5 (slice M3b): whether a press of `kind` APPLIES an operation. A
+    /// Middle press on a no-clone tool is a boundary only — nothing is applied
+    /// (C-H5-es-mmb: no point); on every other tool the clone is applied at the
+    /// press (C-H5-bev-mmb: 12 -> 16 vertices on a motionless tap).
+    final bool pressAppliesOperation(PressKind kind) const nothrow @nogc {
+        return kind != PressKind.middle || !sessionPolicy().noClone;
+    }
+
+    /// H1 (slice M3b): the arm applies the tool — the policy's `armAttr` is
+    /// raised by a raw write, then the ONE rebuild evaluates the operation from
+    /// the attributes. Called by the session at a live arm; `final` like the
+    /// other image operations.
+    final void applyArmAttr() {
+        const n = sessionPolicy().armAttr;
+        if (n.length == 0) return;
+        foreach (ref p; params()) {
+            if (p.name != n) continue;
+            assert(p.kind == Param.Kind.Bool,
+                   "applyArmAttr: '" ~ n ~ "' is not a bool param of " ~ name());
+            *p.bptr = true;
+            rebuildPreviewFromAttrs();
+            return;
+        }
+        assert(false, "applyArmAttr: '" ~ n ~ "' is not a param of " ~ name());
+    }
+
+    private void writeRaw(in AttrImage img, const(string)[] only) {
+        auto ps = params();
+        foreach (i, n; img.names) {
+            if (only !is null) {
+                bool wanted;
+                foreach (o; only) if (o == n) { wanted = true; break; }
+                if (!wanted) continue;
+            }
+            bool found;
+            foreach (ref p; ps) {
+                if (p.name != n) continue;
+                p.restoreRaw(img.raw[i]);
+                found = true;
+                break;
+            }
+            assert(found, "applyAttrImage: '" ~ n ~ "' is not a param of " ~ name());
+        }
+    }
+
+    private static void resetParamToDefault(ref Param p) {
+        final switch (p.kind) {
+            case Param.Kind.Bool:      *p.bptr = p.default_.b;  break;
+            case Param.Kind.Int:       *p.iptr = p.default_.i;  break;
+            case Param.Kind.Float:     *p.fptr = p.default_.f;  break;
+            case Param.Kind.IntEnum:   *p.iePtr = p.default_.i; break;
+            case Param.Kind.Vec3_:     *p.vptr = p.default_.v3; break;
+            case Param.Kind.Enum:
+            case Param.Kind.String:    *p.sptr = p.default_.s;  break;
+            case Param.Kind.IntArray:  *p.uiaPtr = null;        break;
+            case Param.Kind.Vec3Array: *p.v3aPtr = null;        break;
+            case Param.Kind.PodArray:  p.restoreRaw(null);      break;
+        }
+    }
+
+    // ----- what the tool reports to its session (slice M3) ------------------
+
+    private ToolSessionLink sessionLink_;
+
+    /// Installed by the session at the tool's arm.
+    final void bindSession(ToolSessionLink link) nothrow @nogc { sessionLink_ = link; }
+
+    protected final ulong sessionRecordToken() {
+        return sessionLink_.recordToken is null ? 0 : sessionLink_.recordToken(this);
+    }
+
+    /// A gesture step starts: call BEFORE the gesture changes any attribute.
+    protected final void sessionStepBegins(PressKind kind = PressKind.plain) {
+        if (sessionLink_.stepBegins !is null) sessionLink_.stepBegins(this, kind);
+    }
+    /// What a press of this instance's own door is to its session (`PressActivation`);
+    /// read BEFORE `sessionStepBegins`, which runs the activation.
+    protected final PressActivation sessionPressActivation() {
+        return sessionLink_.pressActivation is null ? PressActivation.unbound
+                                                    : sessionLink_.pressActivation(this);
+    }
+    /// The session holds this tool's preview: an attribute write builds no
+    /// preview while its operation is dormant or its post mode is not armed
+    /// (topology-redo S2b, model doc §R7.2). Unbound: never.
+    protected final bool previewGated() {
+        return sessionLink_.previewGated !is null && sessionLink_.previewGated(this);
+    }
+    /// The mesh image the step this instance just opened starts from — the
+    /// session's own capture, shared rather than taken twice (plan 8646
+    /// [R1-m]). `MeshSnapshot.init` (not `filled`) when unbound or when the
+    /// session opened no step for this instance.
+    protected final MeshSnapshot sessionStepOpenImage() {
+        return sessionLink_.stepOpenImage is null ? MeshSnapshot.init
+            : sessionLink_.stepOpenImage(this);
+    }
+    /// The gesture step started by the last `sessionStepBegins` completed.
+    /// `ifChanged`: inside an open window it is a step only if it changed the
+    /// attribute image (a gesture that moved nothing; the window's opening
+    /// gesture is its first group regardless).
+    protected final void sessionStepEnds(bool ifChanged = false) {
+        if (sessionLink_.stepEnds !is null) sessionLink_.stepEnds(this, ifChanged);
+    }
+    /// The tool armed its operation (the `OpensAt.arm` moment).
+    protected final void sessionOperationArmed() {
+        if (sessionLink_.operationArmed !is null) sessionLink_.operationArmed(this);
+    }
+    /// The tool's operation ENDED on its own — its preview dropped (a commit,
+    /// a cancel, a mesh swapped from under it). The session ends its account
+    /// with it: no step of an ended operation may be restored later.
+    protected final void sessionOperationEnded() {
+        if (sessionLink_.operationEnded !is null) sessionLink_.operationEnded(this);
+    }
+    /// Publish the command produced by a completed gesture to the one session
+    /// owner. The command must already be on CommandHistory's undo stack.
+    protected final void sessionRecordCompleted(Command cmd) {
+        if (sessionLink_.recordCompleted !is null)
+            sessionLink_.recordCompleted(this, cmd);
+    }
+    /// Stamp a detached prepared command before a switch transfers its
+    /// history install to the incoming arm transaction.
+    protected final void sessionTagPreparedCompleted(Command cmd) {
+        if (sessionLink_.tagPreparedCompleted !is null)
+            sessionLink_.tagPreparedCompleted(this, cmd);
+    }
+    /// The tool closes its own operation — Enter or a press that opens the next
+    /// operation commits (`commitOperation`), an RMB cancel discards
+    /// (`cancelUncommittedEdit`) — through the session,
+    /// which ends its account of the operation with it. Unbound: directly.
+    protected final bool closeOwnOperation(bool commit) {
+        if (sessionLink_.closeOwn !is null) return sessionLink_.closeOwn(this, commit);
+        if (commit) return commitOperation();
+        cancelUncommittedEdit();
+        return true;
+    }
+
+    // Edit modes in which this tool makes sense. Side-panel /
+    // status-bar buttons auto-disable when the current edit mode is
+    // not in this list. Default: every mode (most tools are mode-
+    // agnostic — Move / Rotate / Scale operate on whatever the
+    // current selection projects to). Specialised tools (BevelTool
+    // only meaningful on edges, etc.) override.
+    EditMode[] supportedModes() const {
+        return [EditMode.Vertices, EditMode.Edges, EditMode.Polygons];
+    }
+
+    // TASK 0669 — does ARMING this tool require a mesh edit target?
+    //
+    // The tool half of `Command.needsEditTarget()`, and the reason the
+    // button's grey and the arm's refusal cannot disagree: `activateToolById`
+    // and the button-draw resolve availability through the SAME answer
+    // (`Registry.actionRefusal`), which reads this.
+    //
+    // TRUE for every tool in the build today — a tool binds `Mesh*` off the
+    // edit target when it arms, and with an empty item selection there is
+    // none, which is what 0654's arming refusal says. It is a method rather
+    // than a constant so a future tool that touches no mesh (a camera or
+    // measurement tool) declares itself once and BOTH sites follow; the
+    // snapshot rule of `Command.needsEditTarget()` applies here too (cached
+    // per id off a cold instance in `Registry.cacheSupportedModes`).
+    bool needsEditTarget() const { return true; }
+}
+
+unittest {
+    auto first = new Tool();
+    auto second = new Tool();
+    assert(first.preparedToolStateOwner.value != 0);
+    assert(second.preparedToolStateOwner.value > first.preparedToolStateOwner.value);
+    auto prepared = first.prepareBaseParam("ignored");
+    ToolPreparedParamHandle handle;
+    assert(first.validateBaseParam(prepared, handle));
+    first.installLegacyPreparedParam(handle);
+    assert(!handle.consumable);
+    first.installLegacyPreparedParam(handle);
+    { // Private borrow storage must release its view as well as its active bit.
+        const(Vec3)[] positions = [Vec3(1, 2, 3)];
+        auto borrow = Tool.HeadlessBorrow(first, positions);
+        assert(first.headlessBorrowActive_ && first.headlessBorrow_.ptr == positions.ptr,
+            "local positive control: the scoped borrow must install its source view");
+    }
+    assert(!first.headlessBorrowActive_ && first.headlessBorrow_.length == 0,
+        "scoped source borrow must release both active bit and retained view");
+}
+
+static assert(!__traits(compiles, {
+    ToolPreparedParamHandle a; ToolPreparedParamHandle b = a;
+}));
+
+// ---------------------------------------------------------------------------
+// InputBindable — the declarative input-dispatch capability (task 0705, T6).
+//
+// A tool that wants `Tool.dispatchInput`'s per-button state machine implements
+// this; every other tool does not mention it and is unaffected. These three
+// were base-class virtuals until task 0705 with ONE implementor between them
+// out of ~43 tools in the build, which is precisely the shape task 0428's
+// moratorium named ("новый одно-тульный хук допускается только с записанным
+// инвариант-тестом" — no invariant test was ever written, and the surface grew
+// 28 -> 34 anyway).
+//
+// The downgrade is free of call-site churn because all five dispatch points
+// live inside `dispatchInput`, which is `final`: one `cast` there replaces
+// three virtual slots on every tool in the program. Behaviour is unchanged —
+// a tool that does not implement this reaches `dispatchInput`'s `ib is null`
+// arm, which returns `false` exactly as the empty-`bindings()` default did in
+// all three phases.
+//
+// Precedent: the session capabilities in `edit_session.d`
+// (LiveEvalClient / RefireClient / FrameParameterEvalClient /
+// SlotActivationClient),
+// all discovered the same way.
+// ---------------------------------------------------------------------------
+interface InputBindable {
+    /// Declarative (button, exact modifier combo) -> `ToolAction` table.
+    const(InputBinding)[] bindings() const;
+
+    /// Deliver one resolved action at one phase. DOWN and UP for the SAME
+    /// gesture arrive with the SAME `a` (the id `dispatchInput` armed on
+    /// Down) — never re-derived from which of several bool flags happens to
+    /// be set, so a tool's `final switch (a)` here cannot have one case's
+    /// early return silently shadow another's.
+    bool onToolAction(ToolAction a, InputPhase p,
+                      ref const SDL_MouseButtonEvent e, ref VectorStack vts);
+
+    /// Hook fired when a binding row declares `ResetScope.AllButtons` (and by
+    /// tools that also wire it to external history navigation moving the mesh
+    /// out from under an open gesture): clears whatever per-gesture SEED state
+    /// the tool itself keeps (e.g. a cached start-vertex index).
+    ///
+    /// This does NOT clear any button's `armed_` slot — `dispatchInput` never
+    /// clears a DIFFERENT button's armed action from here, only ever (re)arms
+    /// the SAME button it is processing this Down on. That per-button
+    /// isolation is REQUIRED for the two-button-chord property and holds
+    /// regardless of which `ResetScope` fired this hook. To drop EVERY
+    /// button's armed action in one call, use `Tool.resetAllArmed()`; it is a
+    /// distinct primitive, not something this hook should do.
+    void onInputResetAll();
+}
+
+// ---------------------------------------------------------------------------
+// THE MORATORIUM, as a build error (task 0705, T6).
+//
+// Task 0428 cut `Tool`'s virtual surface 44 -> 28 and wrote down a moratorium:
+// a new one-tool hook is admissible "only with a recorded invariant test". No
+// such test was written, the rule lived only in a `done/` task file, and the
+// surface grew back to 34 — six additions, none of which honoured the clause
+// that admitted them. A rule with no mechanism is a rule that measures nothing.
+//
+// The list below is that mechanism. It is a hand-written whitelist ON PURPOSE:
+// the point is not to describe the class (the compiler can already do that,
+// which is what `toolVirtuals` does) but to make GROWING it an explicit,
+// reviewable edit. Deriving both sides would assert nothing.
+//
+// Adding a virtual to `Tool` now fails the BUILD with the message below.
+// Before you add a name here, check the alternative: if fewer than about three
+// tools will override it, it belongs on a capability interface (see
+// `InputBindable` above and the ones in `edit_session.d`), not on the base.
+// ---------------------------------------------------------------------------
+private enum string[] kToolVirtualWhitelist = [
+    // Wide contracts — dozens of overriders each. These are what a base class
+    // is for.
+    "name", "activate", "deactivate", "update",
+    "onMouseButtonDown", "onMouseButtonUp", "onMouseMotion",
+    "draw", "drawProperties",
+    "params", "onParamChanged", "paramEnabled",
+    "evaluate", "applyHeadless", "supportedModes",
+    "toolHandlesJson", "toolStateJson",
+    // The wide SESSION contract (task 0428) — ~30 overriders each.
+    "hasUncommittedEdit", "cancelUncommittedEdit", "resyncSession",
+    "commitUncommittedEdit",
+    // The tool session model's policy (slice M1): DATA every tool has by the
+    // captured law H1, read without a cast, so it is on the base by design
+    // and replaces a marker interface. 5 overriders today; the plan's later
+    // slices add fields, not virtuals.
+    "sessionPolicy",
+    // Slice M2: the one close routine's two tool operations (H3), called by
+    // `EditSession` for every tool whose policy closes on a command — not a
+    // one-tool hook: the default body serves the whole in-place family.
+    "commitOperation", "resumeAfterClose",
+    // Slice M3: the image's ONE rebuild (R4.3) — what a tool derives from its
+    // restored attributes, the analogue of the tool's Evaluate. Overridden by
+    // every tool whose session owns its steps; the image operations beside it
+    // are `final`.
+    "rebuildPreviewFromAttrs",
+    // Slice M6: the H8 handle anchor (plan R2.5 M6 names it a base virtual,
+    // read only through the `handleAnchor` policy datum, never by cast). ONE
+    // overrider today (Edge Extend) — under this moratorium's own rule a
+    // standing question, recorded on the M6 card: the plan's alternative, a
+    // capability interface, is the per-tool shape the model retires.
+    "handleAnchorPoint",
+    // Middling — 4 to 8 overriders. Fine on the base; listed so the next
+    // reader can see where the line currently sits.
+    "flags", "isDragging", "onKeyDown",
+    // Task 5340: seven private-preview owners expose the VBO generation;
+    // five of them also expose their private handle-bank rollover.
+    "previewUploadVersion", "previewHotPart",
+    // NARROW, and each one is a standing question rather than a settled
+    // answer. They are on the base today because moving them costs call-site
+    // churn that task 0705 judged not worth spending in a hygiene wave:
+    // (`onKeyUp` left the base in task 9470 with its last overrider.)
+    // Task 0709 also re-ran the "which of these has NO caller" sweep over the
+    // whole list, since a virtual whose overriders never run is invisible to
+    // the compiler. The near miss worth naming so it is not re-reported: `name`
+    // sits in the wide bucket above on 48 overriders, but it has exactly ONE
+    // call site in the tree — `tool_presets.applyToolAttrs`, building the text
+    // of an "unknown attr" exception. Dozens of overriders serving one cold
+    // error message is a different smell from this list's, and not a bug.
+    //   wantsHoverForType       1 runtime overrider, but its BASE body is real
+    //                                          logic over the ToolFlag.Hover*
+    //                                          bits four tools set, and it is
+    //                                          read on the per-frame hover
+    //                                          path from 9 sites.
+    //   wantsEdgeLoopHover      2 overriders, 3 per-frame call sites.
+    //   edgeLoopHoverSliceRing  1 overrider.
+    //   renderParamsAsPanel     1 overrider, 1 cold site.
+    //   needsEditTarget         0 Tool overriders; its own doc admits it is
+    //                                          "TRUE for every tool in the
+    //                                          build today". Read once and
+    //                                          cached at registration.
+    "wantsHoverForType", "wantsEdgeLoopHover",
+    "edgeLoopHoverSliceRing", "renderParamsAsPanel", "needsEditTarget",
+];
+
+/// Every virtual (overridable) method `Tool` declares, in declaration order,
+/// derived by the compiler. `final`, `static` and `private` members are not
+/// virtual and do not appear; a name with several overloads appears once.
+private enum string[] toolVirtuals = () {
+    string[] r;
+    static foreach (m; __traits(derivedMembers, Tool)) {
+        static if (__traits(compiles, __traits(getOverloads, Tool, m))) {
+            static foreach (ov; __traits(getOverloads, Tool, m)) {
+                static if (__traits(isVirtualMethod, ov)) {
+                    {
+                        bool seen = false;
+                        foreach (x; r) if (x == m) seen = true;
+                        if (!seen) r ~= m;
+                    }
+                }
+            }
+        }
+    }
+    return r;
+}();
+
+
+// ---------------------------------------------------------------------------
+// Centralized tool-input dispatch — Tool-base seam tests (Phase 1, ADDITIVE +
+// INERT, doc/tool_input_dispatch_design.md). No SDL runtime call, no GL, no
+// live vibe3d instance: `SDL_MouseButtonEvent` is a plain POD struct and
+// `VectorStack` default-constructs empty, so `dispatchInput` is exercised as
+// bare data exactly like `tool_input.resolveToolAction` is in its own module.
+// ---------------------------------------------------------------------------
+
+version(unittest) {
+    private enum : ToolAction { TestActionMove = 0, TestActionRemove = 1 }
+
+    /// Test-only stub: a non-empty bindings() table plus a recording
+    /// onToolAction/onInputResetAll, so the tests below can assert exactly
+    /// which (action, phase) pairs dispatchInput delivered.
+    private class RecordingTool : Tool, InputBindable {
+        override const(InputBinding)[] bindings() const {
+            return [
+                InputBinding(InputButton.Left,   InputMod.None,  TestActionMove),
+                InputBinding(InputButton.Middle, InputMod.Ctrl,  TestActionRemove, ResetScope.AllButtons),
+            ];
+        }
+
+        string[] log;
+        int resetAllCount;
+
+        override bool onToolAction(ToolAction a, InputPhase p, ref const SDL_MouseButtonEvent e, ref VectorStack vts) {
+            import std.conv : to;
+            log ~= "a=" ~ a.to!string ~ " p=" ~ p.to!string;
+            return true;
+        }
+
+        override void onInputResetAll() { resetAllCount++; }
+    }
+
+    /// Plain base `Tool` — empty bindings(), inert onToolAction/onInputResetAll
+    /// defaults. Stands in for every one of today's unmigrated tool subclasses.
+    private SDL_MouseButtonEvent dummyEvent() {
+        SDL_MouseButtonEvent e;
+        return e;
+    }
+}
+
+// A tool with an EMPTY bindings() (the base Tool default — i.e. every
+// existing, unmigrated subclass) gets PassThrough for every button/phase:
+// dispatchInput declines (returns false) without ever calling onToolAction,
+// so nothing about this seam existing changes an unmigrated tool's behavior.
+unittest {
+    auto t = new Tool();
+    auto e = dummyEvent();
+    VectorStack vts;
+
+    assert(!t.dispatchInput(InputButton.Left, InputMod.None, InputPhase.Down, e, vts));
+    assert(!t.dispatchInput(InputButton.Left, InputMod.None, InputPhase.Up, e, vts));
+    assert(!t.dispatchInput(InputButton.Middle, InputMod.Ctrl, InputPhase.Down, e, vts));
+    assert(!t.dispatchInput(InputButton.Right, InputMod.Shift, InputPhase.Move, e, vts));
+}
+
+// Down arms armed_[button]; Up routes to onToolAction with that SAME action
+// id, then clears the arm — a second Up on the same button (no intervening
+// Down) is then correctly PassThrough.
+unittest {
+    auto t = new RecordingTool();
+    auto e = dummyEvent();
+    VectorStack vts;
+
+    assert(t.dispatchInput(InputButton.Left, InputMod.None, InputPhase.Down, e, vts));
+    assert(t.log == ["a=0 p=Down"]);
+
+    assert(t.dispatchInput(InputButton.Left, InputMod.None, InputPhase.Up, e, vts));
+    assert(t.log == ["a=0 p=Down", "a=0 p=Up"]);
+
+    // Arm was cleared by the Up above — a second Up is a no-op PassThrough.
+    t.log = [];
+    assert(!t.dispatchInput(InputButton.Left, InputMod.None, InputPhase.Up, e, vts));
+    assert(t.log == []);
+}
+
+// The two-button-chord property: a MIDDLE Down/Up pair (its own action, its
+// own button slot) does NOT touch a LEFT gesture that is still armed —
+// proves ResetScope.SelfButton (the default for the Left row here) means a
+// held drag on one button survives a chord on another. Deliberately uses
+// MIDDLE's `AllButtons` row (not a plain SelfButton one) as the a-fortiori
+// case: if firing onInputResetAll() still leaves armed_[Left] untouched,
+// a weaker SelfButton chord trivially leaves it untouched too.
+unittest {
+    auto t = new RecordingTool();
+    auto e = dummyEvent();
+    VectorStack vts;
+
+    // Arm LEFT first (a plain-LMB gesture "in progress").
+    assert(t.dispatchInput(InputButton.Left, InputMod.None, InputPhase.Down, e, vts));
+    t.log = [];
+
+    // A MIDDLE+Ctrl chord arrives mid-drag. Its row is ResetScope.AllButtons,
+    // so onInputResetAll() DOES fire — but that only clears state the tool
+    // itself keeps; the armed_[] slots stay per-button, so LEFT's slot is
+    // unaffected by MIDDLE's own Down/Up below.
+    assert(t.dispatchInput(InputButton.Middle, InputMod.Ctrl, InputPhase.Down, e, vts));
+    assert(t.resetAllCount == 1);
+    assert(t.dispatchInput(InputButton.Middle, InputMod.Ctrl, InputPhase.Up, e, vts));
+    assert(t.log == ["a=1 p=Down", "a=1 p=Up"]);
+
+    // LEFT's arm (from before the MIDDLE chord) is untouched: its Up still
+    // resolves to the ORIGINAL action, not PassThrough.
+    t.log = [];
+    assert(t.dispatchInput(InputButton.Left, InputMod.None, InputPhase.Up, e, vts));
+    assert(t.log == ["a=0 p=Up"]);
+}
+
+// A DIFFERENT button's Down never touches another button's armed_ slot even
+// when that other row's ResetScope is SelfButton (the ordinary case) —
+// dispatchInput only ever writes/reads armed_[button] for the button of the
+// event it's handling.
+unittest {
+    auto t = new RecordingTool();
+    auto e = dummyEvent();
+    VectorStack vts;
+
+    assert(t.dispatchInput(InputButton.Left, InputMod.None, InputPhase.Down, e, vts));
+    // A second, unrelated Down on a button with no matching row (Right is
+    // unbound in RecordingTool's table) resolves to PassThrough and must not
+    // disturb armed_[Left].
+    assert(!t.dispatchInput(InputButton.Right, InputMod.None, InputPhase.Down, e, vts));
+
+    t.log = [];
+    assert(t.dispatchInput(InputButton.Left, InputMod.None, InputPhase.Up, e, vts));
+    assert(t.log == ["a=0 p=Up"]);
+}
+
+// AllButtons reset scope: onInputResetAll() fires exactly once per qualifying
+// Down, not per Up, and not at all for a SelfButton row.
+unittest {
+    auto t = new RecordingTool();
+    auto e = dummyEvent();
+    VectorStack vts;
+
+    assert(t.dispatchInput(InputButton.Left, InputMod.None, InputPhase.Down, e, vts));
+    assert(t.resetAllCount == 0);   // SelfButton row: no reset-all
+
+    assert(t.dispatchInput(InputButton.Middle, InputMod.Ctrl, InputPhase.Down, e, vts));
+    assert(t.resetAllCount == 1);   // AllButtons row: fires once on Down
+
+    assert(t.dispatchInput(InputButton.Middle, InputMod.Ctrl, InputPhase.Up, e, vts));
+    assert(t.resetAllCount == 1);   // Up never triggers a reset
+}
+
+// Move is delivered to whatever is currently armed on that button, and
+// declines once nothing is armed there.
+unittest {
+    auto t = new RecordingTool();
+    auto e = dummyEvent();
+    VectorStack vts;
+
+    assert(!t.dispatchInput(InputButton.Left, InputMod.None, InputPhase.Move, e, vts)); // nothing armed yet
+    assert(t.dispatchInput(InputButton.Left, InputMod.None, InputPhase.Down, e, vts));
+    t.log = [];
+    assert(t.dispatchInput(InputButton.Left, InputMod.None, InputPhase.Move, e, vts));
+    assert(t.log == ["a=0 p=Move"]);
+}
+
+// resetAllArmed() (the Phase 2 resync seam): arm TWO different buttons, call
+// resetAllArmed(), and confirm BOTH armed_ slots are cleared — a subsequent
+// Up on EITHER button now routes nothing. Distinct from ResetScope.AllButtons
+// above: resetAllArmed() clears every button's arm but does NOT itself call
+// onInputResetAll() (they are separate primitives a resync caller can invoke
+// together if it needs both effects).
+unittest {
+    auto t = new RecordingTool();
+    auto e = dummyEvent();
+    VectorStack vts;
+
+    assert(t.dispatchInput(InputButton.Left, InputMod.None, InputPhase.Down, e, vts));
+    assert(t.dispatchInput(InputButton.Middle, InputMod.Ctrl, InputPhase.Down, e, vts));
+    assert(t.resetAllCount == 1); // MIDDLE's row is AllButtons — fired once on its own Down
+    t.log = [];
+    t.resetAllCount = 0;
+
+    t.resetAllArmed();
+
+    // Both armed_ slots are now PassThrough: neither button's Up routes to
+    // onToolAction, and resetAllArmed() itself never touched onInputResetAll.
+    assert(!t.dispatchInput(InputButton.Left, InputMod.None, InputPhase.Up, e, vts));
+    assert(!t.dispatchInput(InputButton.Middle, InputMod.Ctrl, InputPhase.Up, e, vts));
+    assert(t.log == []);
+    assert(t.resetAllCount == 0);
+}
+
+// InputButton.None (an unmapped 4th/5th mouse button from toButton) is declined
+// in EVERY phase and never touches armed_[] — no binding fires, no reset runs,
+// and a LEFT gesture already in flight is left completely undisturbed (the
+// guard runs before armed_[button] is ever indexed, so armed_[None] — which
+// would be an out-of-range read — is never evaluated).
+unittest {
+    auto t = new RecordingTool();
+    auto e = dummyEvent();
+    VectorStack vts;
+
+    // Arm a real LEFT gesture first.
+    assert(t.dispatchInput(InputButton.Left, InputMod.None, InputPhase.Down, e, vts));
+    t.log = [];
+    t.resetAllCount = 0;
+
+    // A None press/move/release in the middle of that gesture is a no-op:
+    // declined in all three phases, no onToolAction call, no onInputResetAll.
+    assert(!t.dispatchInput(InputButton.None, InputMod.None, InputPhase.Down, e, vts));
+    assert(!t.dispatchInput(InputButton.None, InputMod.None, InputPhase.Move, e, vts));
+    assert(!t.dispatchInput(InputButton.None, InputMod.None, InputPhase.Up, e, vts));
+    assert(t.log == []);
+    assert(t.resetAllCount == 0);
+
+    // LEFT's armed slot survived untouched: its Up still routes to onToolAction.
+    assert(t.dispatchInput(InputButton.Left, InputMod.None, InputPhase.Up, e, vts));
+    assert(t.log.length == 1);
+}
+
+
+static assert(sameSet(toolVirtuals, kToolVirtualWhitelist),
+    "Tool's virtual surface no longer matches kToolVirtualWhitelist.\n"
+  ~ "  added, not in the whitelist: " ~ missingFrom(toolVirtuals, kToolVirtualWhitelist) ~ "\n"
+  ~ "  whitelisted, no longer present: " ~ missingFrom(kToolVirtualWhitelist, toolVirtuals) ~ "\n"
+  ~ "This is task 0428's moratorium, finally enforced (task 0705). REMOVING a "
+  ~ "virtual is good news — delete its line. ADDING one is the question: if "
+  ~ "fewer than about three tools will override it, put it on a capability "
+  ~ "interface (see InputBindable above, and the five in edit_session.d) and "
+  ~ "reach it with a cast, instead of giving every tool in the program a slot "
+  ~ "it does not use.");
+
+private bool sameSet(const(string)[] a, const(string)[] b) pure {
+    return missingFrom(a, b).length == 0 && missingFrom(b, a).length == 0;
+}
+
+/// Names present in `a` but not in `b`, comma-joined (CTFE, so a `static
+/// assert` can name the offender instead of just failing).
+private string missingFrom(const(string)[] a, const(string)[] b) pure {
+    string r;
+    foreach (x; a) {
+        bool found = false;
+        foreach (y; b) if (x == y) { found = true; break; }
+        if (!found) r ~= (r.length ? ", " : "") ~ x;
+    }
+    return r;
+}

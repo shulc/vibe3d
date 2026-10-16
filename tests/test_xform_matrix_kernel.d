@@ -24,12 +24,12 @@
 import std.stdio;
 import std.math : PI, fabs, sqrt;
 
-import math : Vec3, identityMatrix, translationMatrix, pivotRotationMatrix, pivotScaleMatrixBasis, normalize, lookAt, perspectiveMatrix;
+import vibe3d.util.math.math : Vec3, identityMatrix, translationMatrix, pivotRotationMatrix, pivotScaleMatrixBasis, normalize, lookAt, perspectiveMatrix;
 import vibe3d.util.spatial.spatial : Viewport, AimViewport, aimSpace, ModelSpace;
 import vibe3d.mesh.core.mesh : Mesh;
 import vibe3d.editing.pipeline.contracts.toolpipe.packets : FalloffPacket, SymmetryPacket;
-import tools.transform.transform : TransformTool;
-import tools.transform.xform_kernels :
+import vibe3d.editing.tools.interactive.tools.transform.transform : TransformTool;
+import vibe3d.editing.tools.transform.tools.transform.xform_kernels :
     applyTranslateIncremental, applyRotateIncremental,
     applyXformMatrix, BlendMode, blendToIdentity;
 
@@ -133,8 +133,8 @@ private Vec3[] sampleVerts() {
 private void refScale(Mesh* m, const(int)[] idx, const(Vec3)[] act, Vec3 pivot,
                       Vec3 bx, Vec3 by, Vec3 bz, Vec3 s, const ref FalloffPacket fp,
                       const AimViewport vp, const(Vec3)[] weightVerts = null) {
-    import math : scaleAlongBasis;
-    import falloff : evaluateFalloff;
+    import vibe3d.util.math.math : scaleAlongBasis;
+    import vibe3d.editing.pipeline.runtime.falloff : evaluateFalloff;
     foreach (vi; idx) {
         const float w = fp.enabled
             ? evaluateFalloff(fp, weightVerts.length ? weightVerts[vi] : act[vi], vi, vp)
@@ -314,7 +314,7 @@ unittest {
     auto Rm = pivotRotationMatrix(Vec3(0,0,0), axis, ang);
     auto Sm = pivotScaleMatrixBasis(Vec3(0,0,0), Vec3(1,0,0), Vec3(0,1,0),
                                     Vec3(0,0,1), 1.6f, 0.7f, 1.2f);
-    import math : matMul4;
+    import vibe3d.util.math.math : matMul4;
     float[16] M = matMul4(Rm, Sm);   // rotation · scale (origin-fixing)
     M[12] = 0.5f; M[13] = -0.3f; M[14] = 0.9f;  // translation column
 
@@ -330,7 +330,7 @@ unittest {
         auto Mb = blendToIdentity(M, w, BlendMode.MatrixLerp);
         auto Mc = blendToIdentity(M, w, BlendMode.PolarQuat);
         foreach (p; probes) {
-            import math : applyAffine;
+            import vibe3d.util.math.math : applyAffine;
             Vec3 pa = applyAffine(Ma, p);
             Vec3 pb = applyAffine(Mb, p);
             Vec3 pc = applyAffine(Mc, p);
@@ -745,7 +745,7 @@ private double medianOf(double[] xs) {
 unittest {
     import std.math : acos, PI, fabs;
     import std.format : format;
-    import math : matMul4, applyAffine;
+    import vibe3d.util.math.math : matMul4, applyAffine;
 
     // blendToIdentity returns an ORIGIN-fixing matrix, so the blend's fixed
     // point — the "pivot" in the (p - pivot) framing below — is the origin.

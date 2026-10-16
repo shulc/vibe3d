@@ -6,7 +6,7 @@ module tests.unit.face_sides_test;
 
 import std.format : format;
 
-import mesh_gpu : FacePass, FaceSide, FaceSides, faceSidesFor;
+import vibe3d.viewport.gpu.mesh_gpu : FacePass, FaceSide, FaceSides, faceSidesFor;
 
 unittest {
     size_t rows;
@@ -43,8 +43,8 @@ unittest { // the other members do not choose the sides
 }
 
 unittest { // previewFacePass: a create-tool preview takes the plan's sidedness and nothing else
-    import display_state : DrawPlan, ViewportDisplay, resolveDrawPlan;
-    import shader : previewFacePass;
+    import vibe3d.viewport.display_policy.display_state : DrawPlan, ViewportDisplay, resolveDrawPlan;
+    import vibe3d.viewport.gpu.shader : previewFacePass;
     DrawPlan bare;
     assert(previewFacePass(bare) == FacePass.init, "DrawPlan.init must give the uncull'd preview pass");
     ViewportDisplay d;

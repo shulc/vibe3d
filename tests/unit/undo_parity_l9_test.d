@@ -75,17 +75,17 @@ module tests.unit.undo_parity_l9_test;
 import std.format : format;
 import std.json   : JSONValue, parseJSON;
 
-import command;
+import vibe3d.editing.commands.runtime.command;
 import vibe3d.mesh.core.mesh;
 import vibe3d.viewport.camera.view;
 import vibe3d.editing.contracts.editmode;
-import http_json : meshPlanesJson, PlaneDumpMeta;
+import vibe3d.runtime.application_core.http_json : meshPlanesJson, PlaneDumpMeta;
 
 import tests.unit.fixtures            : makeTaggedGridFull;
 import tests.unit.undo_parity_l0_test : ParityCell, comparePlanes, fixturePath,
                                         fixtureJson, setF, setI;
 
-import commands.mesh.loop_slice : MeshAddLoop, MeshLoopSlice;
+import vibe3d.editing.commands.editor.commands.mesh.loop_slice : MeshAddLoop, MeshLoopSlice;
 
 enum string kL9Family = "loop_slice";
 enum string kL9Stand  = "makeTaggedGridFull(3)+selectFace(0)";

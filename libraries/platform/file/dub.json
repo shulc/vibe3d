@@ -1,0 +1,279 @@
+{
+  "name": "platform-file",
+  "targetType": "staticLibrary",
+  "sourcePaths": [
+    "source"
+  ],
+  "importPaths": [
+    "source"
+  ],
+  "toolchainRequirements": {
+    "dmd": ">=2.111.0",
+    "ldc": ">=1.41.0"
+  },
+  "buildTypes": {
+    "profile-fp": {
+      "buildOptions": [
+        "debugMode",
+        "debugInfo",
+        "optimize"
+      ],
+      "dflags-dmd": [
+        "-gs"
+      ],
+      "dflags-ldc": [
+        "--frame-pointer=all"
+      ]
+    },
+    "perf": {
+      "buildOptions": [
+        "releaseMode",
+        "optimize",
+        "inline"
+      ],
+      "versions": [
+        "PerfProbe"
+      ]
+    },
+    "perf-count": {
+      "buildOptions": [
+        "debugMode",
+        "debugInfo"
+      ],
+      "versions": [
+        "PerfProbe"
+      ]
+    },
+    "perf-unit": {
+      "buildOptions": [
+        "unittests",
+        "debugMode",
+        "debugInfo"
+      ],
+      "versions": [
+        "PerfProbe"
+      ]
+    },
+    "check": {
+      "buildOptions": [
+        "debugMode",
+        "debugInfo"
+      ],
+      "dflags-ldc": [
+        "--boundscheck=on",
+        "--checkaction=C",
+        "--frame-pointer=all"
+      ],
+      "versions": [
+        "SanitizerSelfTest"
+      ]
+    },
+    "check-unit": {
+      "buildOptions": [
+        "unittests",
+        "debugMode",
+        "debugInfo"
+      ],
+      "dflags-ldc": [
+        "--boundscheck=on",
+        "--frame-pointer=all"
+      ],
+      "versions": [
+        "SanitizerSelfTest"
+      ]
+    },
+    "check-release": {
+      "buildOptions": [
+        "releaseMode",
+        "optimize",
+        "inline",
+        "debugInfo"
+      ],
+      "dflags-ldc": [
+        "--boundscheck=on",
+        "--frame-pointer=all"
+      ],
+      "versions": [
+        "SanitizerSelfTest"
+      ]
+    },
+    "sanitize": {
+      "buildOptions": [
+        "debugMode",
+        "debugInfo"
+      ],
+      "dflags-ldc": [
+        "--fsanitize=address",
+        "--fsanitize-address-use-after-return=never",
+        "--checkaction=C",
+        "--frame-pointer=all"
+      ],
+      "versions": [
+        "SanitizerSelfTest"
+      ]
+    },
+    "sanitize-unit": {
+      "buildOptions": [
+        "unittests",
+        "debugMode",
+        "debugInfo"
+      ],
+      "dflags-ldc": [
+        "--fsanitize=address",
+        "--fsanitize-address-use-after-return=never",
+        "--frame-pointer=all"
+      ],
+      "versions": [
+        "SanitizerSelfTest"
+      ]
+    },
+    "tsan": {
+      "buildOptions": [
+        "debugMode",
+        "debugInfo"
+      ],
+      "dflags-ldc": [
+        "--fsanitize=thread",
+        "--enable-asserts=false",
+        "--frame-pointer=all"
+      ],
+      "versions": [
+        "SanitizerSelfTest",
+        "SanitizerThreadPreinit"
+      ]
+    }
+  },
+  "dependencies": {
+    "vibe3d:application-core": {
+      "path": "../../.."
+    },
+    "vibe3d:command-runtime": {
+      "path": "../../.."
+    },
+    "vibe3d:document-io": {
+      "path": "../../.."
+    },
+    "vibe3d:edit-contracts": {
+      "path": "../../.."
+    },
+    "vibe3d:interchange": {
+      "path": "../../.."
+    },
+    "vibe3d:mesh": {
+      "path": "../../.."
+    }
+  },
+  "configurations": [
+    {
+      "name": "modeling",
+      "versions": [
+        "WithAI"
+      ],
+      "subConfigurations": {
+        "vibe3d:application-core": "modeling",
+        "vibe3d:command-runtime": "modeling",
+        "vibe3d:document-io": "modeling",
+        "vibe3d:edit-contracts": "modeling",
+        "vibe3d:interchange": "modeling",
+        "vibe3d:mesh": "modeling"
+      },
+      "dependencies": {
+        "nfde": {
+          "path": "../../../third_party/nfde"
+        }
+      }
+    },
+    {
+      "name": "modeling-noai",
+      "versions": [],
+      "subConfigurations": {
+        "vibe3d:application-core": "modeling-noai",
+        "vibe3d:command-runtime": "modeling-noai",
+        "vibe3d:document-io": "modeling-noai",
+        "vibe3d:edit-contracts": "modeling-noai",
+        "vibe3d:interchange": "modeling-noai",
+        "vibe3d:mesh": "modeling-noai"
+      },
+      "dependencies": {
+        "nfde": {
+          "path": "../../../third_party/nfde"
+        }
+      }
+    },
+    {
+      "name": "with-render",
+      "versions": [
+        "WithRender",
+        "WithAI"
+      ],
+      "subConfigurations": {
+        "vibe3d:application-core": "with-render",
+        "vibe3d:command-runtime": "with-render",
+        "vibe3d:document-io": "with-render",
+        "vibe3d:edit-contracts": "with-render",
+        "vibe3d:interchange": "with-render",
+        "vibe3d:mesh": "with-render"
+      },
+      "dependencies": {
+        "nfde": {
+          "path": "../../../third_party/nfde"
+        }
+      }
+    },
+    {
+      "name": "web",
+      "versions": [
+        "web"
+      ],
+      "subConfigurations": {
+        "vibe3d:application-core": "web",
+        "vibe3d:command-runtime": "web",
+        "vibe3d:document-io": "web",
+        "vibe3d:edit-contracts": "web",
+        "vibe3d:interchange": "web",
+        "vibe3d:mesh": "web"
+      }
+    },
+    {
+      "name": "root-tests",
+      "versions": [
+        "WithAI",
+        "MeshSnapshotFixtures"
+      ],
+      "subConfigurations": {
+        "vibe3d:application-core": "root-tests",
+        "vibe3d:command-runtime": "root-tests",
+        "vibe3d:document-io": "root-tests",
+        "vibe3d:edit-contracts": "root-tests",
+        "vibe3d:interchange": "root-tests",
+        "vibe3d:mesh": "root-tests"
+      },
+      "targetType": "sourceLibrary",
+      "dependencies": {
+        "nfde": {
+          "path": "../../../third_party/nfde"
+        }
+      }
+    },
+    {
+      "name": "isolated-tests",
+      "versions": [],
+      "subConfigurations": {
+        "vibe3d:application-core": "isolated-tests",
+        "vibe3d:command-runtime": "isolated-tests",
+        "vibe3d:document-io": "isolated-tests",
+        "vibe3d:edit-contracts": "isolated-tests",
+        "vibe3d:interchange": "isolated-tests",
+        "vibe3d:mesh": "isolated-tests"
+      },
+      "targetType": "sourceLibrary",
+      "dependencies": {
+        "nfde": {
+          "path": "../../../third_party/nfde"
+        }
+      }
+    }
+  ],
+  "targetName": "vibe3d-platform-file",
+  "targetPath": "."
+}

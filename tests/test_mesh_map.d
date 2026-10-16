@@ -95,7 +95,7 @@ unittest {
 
     // Grow vertices, then drive the documented resize funnel. The map must
     // follow vertex count in lock-step.
-    import math : Vec3;
+    import vibe3d.util.math.math : Vec3;
     m.vertices ~= Vec3(2, 2, 2);
     m.resizeVertexSelection(); // funnel that resizeMeshMaps(Point) hooks into
     assert(m.meshMap("weight").data.length == m.vertices.length * 1,
@@ -305,7 +305,7 @@ unittest {
 unittest {
     auto m = makeCube();
     // Add an unreferenced vertex so compactUnreferenced has work to do.
-    import math : Vec3;
+    import vibe3d.util.math.math : Vec3;
     m.vertices ~= Vec3(5, 5, 5);
     m.resizeVertexSelection();
     m.addMeshMap(kUvMapName, 2, MapDomain.PolyVertex);
@@ -441,7 +441,7 @@ unittest {
     // adjacent collapse that consecutive-dup corner (arity shrinks); faces with
     // only one of them re-point. Capture, before welding, the expected surviving
     // per-face corner uv stream by replaying the weld's corner-collapse logic.
-    import math : Vec3;
+    import vibe3d.util.math.math : Vec3;
     m.vertices[1] = m.vertices[0];
 
     // Replay the collapse on a copy of faces to compute the expected surviving

@@ -1,21 +1,21 @@
 module tests.unit.tool_session_recorded_steps_test;
 
-import command : Command, CmdFlags;
-import command_history : CommandHistory;
-import command_history : RecordMode;
-import command_history : HistoryFlags;
-import command_history : RunCloseMode, RecordedRunBoundaryMode, RunCloseScope, HistoryEntry;
-import commands.tool.lifecycle : ToolActivationCommand;
-import command_executor : CommandExecutor;
-import edit_session : EditSession, RefireClient;
+import vibe3d.editing.commands.runtime.command : Command, CmdFlags;
+import vibe3d.editing.commands.runtime.command_history : CommandHistory;
+import vibe3d.editing.commands.runtime.command_history : RecordMode;
+import vibe3d.editing.commands.runtime.command_history : HistoryFlags;
+import vibe3d.editing.commands.runtime.command_history : RunCloseMode, RecordedRunBoundaryMode, RunCloseScope, HistoryEntry;
+import vibe3d.editing.tools.interactive.commands.tool.lifecycle : ToolActivationCommand;
+import vibe3d.editing.commands.runtime.command_executor : CommandExecutor;
+import vibe3d.editing.tools.interactive.edit_session : EditSession, RefireClient;
 import vibe3d.editing.contracts.editmode : EditMode;
-import tool : Tool, ToolSessionPolicy;
-import tool_presets : loadToolPresets;
-import tool_activation_ownership : ToolTransition;
-import tool_activation_ownership : postmodeArmedOnArm;
+import vibe3d.editing.tools.interactive.tool : Tool, ToolSessionPolicy;
+import vibe3d.editing.tools.interactive.tool_presets : loadToolPresets;
+import vibe3d.editing.commands.runtime.tool_activation_ownership : ToolTransition;
+import vibe3d.editing.commands.runtime.tool_activation_ownership : postmodeArmedOnArm;
 import vibe3d.viewport.camera.view : View;
 import vibe3d.mesh.core.mesh : Mesh;
-import math : Vec3;
+import vibe3d.util.math.math : Vec3;
 
 import tests.unit.census_symbols : readText = wave15ReadText;
 import std.format : format;
@@ -849,12 +849,12 @@ private void pendingFamily(Tool producer, string id, CommandHistory history,
 
 unittest {
     import vibe3d.mesh.core.mesh : Mesh, makeCube;
-    import mesh_gpu : GpuMesh;
-    import math : Vec3;
-    import commands.mesh.vertex_edit : MeshVertexEdit;
-    import tools.transform.xfrm_transform : XfrmTransformTool;
-    import tools.deform.magnet : MagnetTool;
-    import tools.common.command_wrapper : XfrmSmoothTool, XfrmJitterTool, XfrmQuantizeTool;
+    import vibe3d.viewport.gpu.mesh_gpu : GpuMesh;
+    import vibe3d.util.math.math : Vec3;
+    import vibe3d.editing.commands.editor.commands.mesh.vertex_edit : MeshVertexEdit;
+    import vibe3d.editing.tools.interactive.tools.transform.xfrm_transform : XfrmTransformTool;
+    import vibe3d.editing.tools.interactive.tools.deform.magnet : MagnetTool;
+    import vibe3d.editing.tools.interactive.tools.common.command_wrapper : XfrmSmoothTool, XfrmJitterTool, XfrmQuantizeTool;
     foreach (foreign; [false,true]) {
         foreach (family; 0..5) {
             auto source=makeCube(); auto original=source.vertices.dup;
@@ -875,7 +875,7 @@ unittest {
                 // retain its seeded baseline exactly, then make a real edit.
                 source=Mesh.init; source.addVertex(Vec3(91,92,93));
                 original=source.vertices.dup;
-                import tools.common.command_wrapper : CommandWrapperTool;
+                import vibe3d.editing.tools.interactive.tools.common.command_wrapper : CommandWrapperTool;
                 CommandWrapperTool wrapper;
                 if (family == 2) { wrapper=new XfrmSmoothTool(&source,view,mode,&gpu); id="xfrm.smooth"; }
                 else if (family == 3) { wrapper=new XfrmJitterTool(&source,view,mode,&gpu); id="xfrm.jitter"; }
@@ -890,10 +890,10 @@ unittest {
 
 
 unittest {
-    import tools.alignment.linear_align_tool : LinearAlignTool;
-    import tools.alignment.radial_align_tool : RadialAlignTool;
+    import vibe3d.editing.tools.interactive.tools.alignment.linear_align_tool : LinearAlignTool;
+    import vibe3d.editing.tools.interactive.tools.alignment.radial_align_tool : RadialAlignTool;
     import vibe3d.mesh.core.mesh : makeCube;
-    import mesh_gpu : GpuMesh;
+    import vibe3d.viewport.gpu.mesh_gpu : GpuMesh;
     foreach (radial; [false,true]) foreach (foreign; [false,true]) {
         auto source=makeCube(); auto original=source.vertices.dup;
         GpuMesh gpu; gpu.suppressCageUpload=true; EditMode mode=EditMode.Vertices;
@@ -936,7 +936,7 @@ unittest {
 }
 
 unittest {
-    import create_tool_registration, edit_tool_registration, transform_tool_registration;
+    import vibe3d.apps.desktop.create_tool_registration, vibe3d.apps.desktop.edit_tool_registration, vibe3d.apps.desktop.transform_tool_registration;
     import core.memory : GC;
     import std.algorithm : sort;
     import std.stdio : writeln;

@@ -1,0 +1,567 @@
+module vibe3d.editing.tools.interactive.tools.create.create_common;
+
+import vibe3d.editing.selection.query.toolpipe.guide : SnapQueryPolicy, SnapPurpose, SnapGuideScope;
+import vibe3d.util.math.math : Vec3, dot, matMul4, matrixMirrorsWinding, normalize, rayPlaneIntersect;
+import vibe3d.util.spatial.spatial : Viewport, isOrtho, projectToWindowFull, screenPointToRay;
+import std.math : abs;
+public import vibe3d.util.spatial.workplane_basis : BuildPlane, mostFacingAxis, pickMostFacingPlane;
+import vibe3d.editing.selection.query.viewgrid : vectorSnap, viewVectorQuantum, viewWorkPlaneAnchor;
+
+/// Kernel cap on a primitive's ring counts (sides / segments): the captured
+/// maximum (K-A3), also the DoS backstop for the unclamped stored counts.
+enum int MAX_PRIM_RING = 1024;
+
+/// A stored ring count as a kernel builds it: floored at `lo`, capped.
+int ringCount(int v, int lo) pure nothrow @nogc @safe {
+    return v < lo ? lo : v > MAX_PRIM_RING ? MAX_PRIM_RING : v;
+}
+
+import vibe3d.editing.pipeline.runtime.toolpipe.pipeline       : g_pipeCtx;
+import vibe3d.editing.pipeline.contracts.toolpipe.packets        : SubjectPacket, WorkplanePacket;
+import vibe3d.editing.pipeline.runtime.toolpipe.stage          : TaskCode;
+import vibe3d.editing.pipeline.evaluation.toolpipe.stages.workplane : WorkplaneStage;
+import vibe3d.editing.pipeline.contracts.operator                : VectorStack;
+import vibe3d.editing.tools.interactive.drag                    : HandleDrag, DragFrame, DragKind, planeDragDelta;
+import vibe3d.editing.tools.interactive.handler                 : MoveHandler;
+
+import vibe3d.mesh.core.mesh : Mesh;
+import vibe3d.editing.contracts.editmode : EditMode;
+import vibe3d.editing.contracts.seltype : SelType;
+import vibe3d.editing.pipeline.runtime.toolpipe.subject : evaluateSubject, viewOnlySubject, SubjectSource;
+import vibe3d.editing.selection.query.snap : SnapResult, snapCursor, snapPacketOf;
+import vibe3d.editing.pipeline.evaluation.toolpipe.stages.snap : liveSnapGuides;
+import vibe3d.editing.tools.interactive.snap_render : publishLastSnap, clearLastSnap;
+// Task 0617 Stage 4: Create-tools always build into the active/primary
+// layer's mesh (the `mesh` argument below), so its ModelSpace is the same
+// resolver every other cross-module picking/snap call site uses.
+import vibe3d.documents.model.document : primaryModelSpace;
+
+// ---------------------------------------------------------------------------
+// Helpers shared by interactive Create-tools (BoxTool and the upcoming
+// SphereTool / CylinderTool / ConeTool / CapsuleTool / TorusTool / PenTool).
+// Extracted from BoxTool's private helpers so multiple Create-tools can share.
+//
+// Single-source note: `WorkplaneStage.evaluate` (source/toolpipe/stages/
+// workplane.d) is the ONE production source of the active construction
+// plane — the camera-facing auto pick only ever runs there, driven by a
+// live `SubjectPacket.viewport`. Every direct `pickMostFacingPlane` call
+// left in this file (`pickWorkplane`, `pickWorkplaneFrame`,
+// `pickWorkplaneGizmoBasis`) is a no-pipe / no-stage fallback — it only
+// fires when `g_pipeCtx` is unset (unit tests with no app loop) or the
+// stage can't be found, and exists purely so those callers still return a
+// sane plane in that degenerate case. Tools should always prefer the
+// pipe-routed accessors over calling `pickMostFacingPlane` themselves.
+// ---------------------------------------------------------------------------
+
+/// The index of `f`'s axis most facing `vp`'s camera (0 = axis1 / local X,
+/// 1 = normal / local Y, 2 = axis2 / local Z): the local principal plane a
+/// placement on `f` takes (task 9408).
+int viewPrincipalAxis(in WorkplaneFrame f, const ref Viewport vp) {
+    return mostFacingAxis(Vec3(vp.view[2], vp.view[6], vp.view[10]),
+                          f.axis1, f.normal, f.axis2);
+}
+
+/// The unit local axis `k` (0 = X, 1 = Y, 2 = Z).
+Vec3 axisUnit(int k) @safe pure nothrow @nogc {
+    return Vec3(k == 0 ? 1 : 0, k == 1 ? 1 : 0, k == 2 ? 1 : 0);
+}
+
+// ---------------------------------------------------------------------------
+// WorkplaneFrame — full local↔world transform for the current Tool Pipe
+// workplane state, plus the basis vectors / origin extracted from the
+// matrix columns for callers that prefer them as separate fields.
+//
+// `toWorld` columns: [axis1, normal, axis2, origin]. So local-Y is the
+// workplane normal — a primitive built in local XZ (Y=0) lies ON the
+// workplane plane after `toWorld * v`.
+// ---------------------------------------------------------------------------
+struct WorkplaneFrame {
+    float[16] toWorld;
+    float[16] toLocal;
+    Vec3      normal;
+    Vec3      axis1;
+    Vec3      axis2;
+    Vec3      origin;
+    bool      isAuto;
+}
+
+/// The construction plane through the global ToolPipeContext (the
+/// WorkplaneStage's mode honoured) as the full transform. In auto-mode the basis comes from the camera-facing pick (via
+/// pipeline.evaluate) and origin = (0,0,0); in non-auto mode the
+/// WorkplaneStage's stored center is used. When `g_pipeCtx` is unset
+/// (tests without an app loop) the auto-mode pick is used and the
+/// returned frame is identity-translated.
+WorkplaneFrame pickWorkplaneFrame(const ref Viewport vp) {
+    WorkplaneFrame f;
+    if (g_pipeCtx is null) {
+        auto bp = pickMostFacingPlane(vp);
+        f.normal = bp.normal;
+        f.axis1  = bp.axis1;
+        f.axis2  = bp.axis2;
+        // Auto plane passes through the camera focus, not the world origin,
+        // so primitives land on the plane the user is looking at.
+        f.origin = vp.focus;
+        f.isAuto = true;
+    } else {
+        // Task 1904 Stage 4 / plan §1.3a: FROZEN view-only source — never
+        // live editor state.
+        SubjectPacket subj;
+        VectorStack   vts;
+        evaluateSubject(subj, vts, viewOnlySubject(vp));
+        if (auto wp = vts.get!WorkplanePacket()) {
+            f.normal = wp.normal;
+            f.axis1  = wp.axis1;
+            f.axis2  = wp.axis2;
+            // Non-auto: use the stored workplane center exactly.
+            // Auto: the WorkplaneStage publishes center=(0,0,0); override with
+            // the camera focus so the plane passes through what the user is
+            // looking at rather than the world origin.
+            f.origin = wp.isAuto ? vp.focus : wp.center;
+            f.isAuto = wp.isAuto;
+        }
+    }
+    fillFrameMatrices(f);
+    return f;
+}
+
+/// The world identity frame (world XZ, normal +Y, origin 0, isAuto) — the
+/// auto / no-pipe answer of `primitivePlacementFrame`.
+private WorkplaneFrame worldXZFrame() {
+    return frameFromBasis(Vec3(0, 1, 0), Vec3(1, 0, 0), Vec3(0, 0, 1),
+                           Vec3(0, 0, 0), true);
+}
+
+/// The ONE parameter frame (task 9408): primitive channels, placement gestures,
+/// the `applyHeadless` builds, arc, slice headless and the relocate all read
+/// it. Auto, no pipe or no stage ⇒ the
+/// world identity (§10, §23); pinned ⇒ the stage's stored basis + centre. It
+/// reads the stage, never `pipeline.evaluate` (re-entrancy on event paths,
+/// doc/acen_auto_port_plan.md Risk 3); the live camera-facing basis is
+/// `pickWorkplaneFrame`'s.
+WorkplaneFrame primitivePlacementFrame() {
+    auto wp = g_pipeCtx is null ? null
+            : cast(WorkplaneStage)g_pipeCtx.pipeline.findByTask(TaskCode.Work);
+    if (wp is null || wp.isAuto) return worldXZFrame();
+    const p = wp.currentState();
+    return frameFromBasis(p.normal, p.axis1, p.axis2, p.center);
+}
+
+/// The view re-expressed in `frame`'s LOCAL space: every read a gesture makes
+/// of the camera (cursor ray, eye, focus, view axes) comes out plane-local.
+/// This is the ONE conversion point for the create family's gestures — the
+/// placement click (§13/§23), the centre drag (§14) and the principal-plane
+/// choice all read this view instead of converting a world answer after the
+/// fact, which is how a WORLD point ended up in a plane-local field (task
+/// 7139, doc/measured_laws.md §23). With the identity frame it is `vp` itself.
+Viewport planeLocalViewport(const ref Viewport vp, in WorkplaneFrame frame) {
+    Viewport l = vp;
+    l.view  = matMul4(vp.view, frame.toWorld);
+    l.eye   = transformPoint(frame.toLocal, vp.eye);
+    l.focus = transformPoint(frame.toLocal, vp.focus);
+    return l;
+}
+
+/// A create tool's mover drag (M-HANDLE): the centre at the press
+/// plus the pointer travel, in `frame`'s LOCAL space (= the Position channels).
+/// Arrows 0/1/2 travel along the drawn arrow (LAW A, own); the centre box by
+/// LAW B linearised at the press centre on its principal plane (capture
+/// K-CM), on the plane-local view (§14 read by §23). False = skip.
+bool moverDrag(const ref HandleDrag grab, int part, int mx, int my, MoveHandler mover,
+               in WorkplaneFrame frame, const ref Viewport vp, out Vec3 centre)
+{
+    import vibe3d.editing.tools.interactive.drag : primitiveCenterPlaneAxis;
+    static immutable int[3] planeOfNormal = [5, 6, 4];   // normal X / Y / Z
+    Viewport lvp = planeLocalViewport(vp, frame);
+    DragFrame f;
+    f.kind  = DragKind.handlePlane;
+    f.plane = planeOfNormal[primitiveCenterPlaneAxis(grab.point, lvp)];
+    if (part <= 2) {
+        f.kind = DragKind.screenAxis;
+        f.axis = moverArrowLocal(mover, part, frame);
+    }
+    bool skip;
+    centre = grab.client(mx, my, f, lvp, skip);
+    return !skip;
+}
+
+private Vec3 moverArrowLocal(MoveHandler mover, int part, in WorkplaneFrame frame) {
+    immutable Vec3 end = part == 0 ? mover.arrowX.end : part == 1 ? mover.arrowY.end : mover.arrowZ.end;
+    return transformDir(frame.toLocal, end - mover.center);
+}
+
+/// The mover's snap (task 9472, K-H / K-H2 CENTRE+TRAVEL): `moverDrag`'s
+/// centre snapped as a point, then only the part's free channels taken — along
+/// the arrow, or off the centre box's locked axis. Never fed back.
+SnapResult snapMoverCentre(ref Vec3 centre, int part, MoveHandler mover, in WorkplaneFrame frame,
+                           int x, int y, const ref Viewport vp, const ref Mesh mesh)
+{
+    import vibe3d.editing.tools.interactive.drag : primitiveCenterPlaneAxis;
+    Vec3 s = centre;
+    auto sr = snapLocalHit(s, frame, x, y, vp, mesh, EditMode.Vertices);   // unsnapped: s == centre
+    if (part <= 2) {
+        immutable Vec3 u = normalize(moverArrowLocal(mover, part, frame));
+        centre += u * dot(s - centre, u);
+    } else {
+        Viewport lvp = planeLocalViewport(vp, frame);
+        immutable Vec3 n = axisUnit(primitiveCenterPlaneAxis(centre, lvp));
+        centre = s - n * dot(s - centre, n);
+    }
+    return sr;
+}
+
+/// A height drag's plane normal: in the work plane (perpendicular to
+/// `normal`), facing the camera from `origin`; `fallback` when the eye sits on
+/// the normal's line. The Box and the radial primitives differ only in origin.
+Vec3 heightDragNormal(Vec3 origin, Vec3 eyeLocal, Vec3 normal, Vec3 fallback) {
+    Vec3 toCamera = eyeLocal - origin;
+    Vec3 inPlane  = toCamera - normal * dot(toCamera, normal);
+    immutable float len = inPlane.length;
+    return len > 1e-6f ? inPlane / len : fallback;
+}
+
+/// Where a placement click meets the view work plane, in `frame`'s LOCAL
+/// space, UNQUANTISED: the cursor ray of the plane-local view meets the plane
+/// perpendicular to the most-facing local axis (`axisLocal`) through the view
+/// anchor (`viewWorkPlaneAnchor`; task 9411). Total: a parallel plane falls
+/// back to the view-perpendicular plane through the same anchor.
+Vec3 placementPlaneHit(float sx, float sy, const ref Viewport vp,
+                       in WorkplaneFrame frame, out int axisLocal)
+{
+    Viewport l = planeLocalViewport(vp, frame);
+    axisLocal = viewPrincipalAxis(frame, vp);
+    immutable Vec3 anchor = viewWorkPlaneAnchor(l, axisLocal);
+    Vec3 o, d, hit;
+    screenPointToRay(sx, sy, l, o, d);
+    if (rayPlaneIntersect(o, d, anchor, axisUnit(axisLocal), hit)) return hit;
+    if (rayPlaneIntersect(o, d, anchor, Vec3(l.view[2], l.view[6], l.view[10]), hit))
+        return hit;
+    return anchor;
+}
+
+/// Where a placement click lands, in `frame`'s LOCAL space (= the channels):
+/// `placementPlaneHit` snapped to the view quantum on every channel — the one
+/// click law of the create tools, the radial-array centre, the falloff point
+/// and the relocate click (K-W / K-W2, tests/fixtures/create_click_plane.json).
+Vec3 screenToPlacementLocal(float sx, float sy, const ref Viewport vp,
+                            in WorkplaneFrame frame, out int axisLocal)
+{
+    return vectorSnap(placementPlaneHit(sx, sy, vp, frame, axisLocal),
+                      viewVectorQuantum(vp));
+}
+
+/// The constraint's background surface on the view ray of plane point
+/// `planeLocal`'s own screen position (task 9404, K-C2 QPLANE-RAY), offset
+/// along the hit normal, NOT quantised; false (`local` untouched) = no hit,
+/// or the constraint does not take the pointer.
+bool backgroundSurfacePoint(Vec3 planeLocal, const ref Viewport vp, in WorkplaneFrame frame,
+                            ref Vec3 local)
+{
+    import vibe3d.editing.pipeline.evaluation.toolpipe.stages.constrain : liveConstrainStage;
+    import vibe3d.editing.selection.scene_query.bvh_pick : SurfaceHit;
+    auto cs = liveConstrainStage();
+    float px, py, ndcZ;
+    Vec3 org, dir;
+    SurfaceHit sh;
+    if (cs is null || !projectToWindowFull(transformPoint(frame.toWorld, planeLocal), vp, px, py, ndcZ))
+        return false;
+    screenPointToRay(px, py, vp, org, dir);
+    if (!cs.surfaceOnRay(org, dir, sh)) return false;
+    local = transformPoint(frame.toLocal, cs.offsetPoint(sh.point, sh.normal));
+    return true;
+}
+
+/// A plane point onto the background: `backgroundSurfacePoint`; no hit ⇒
+/// `planeLocal` snapped to the view quantum.
+Vec3 backgroundPoint(Vec3 planeLocal, const ref Viewport vp, in WorkplaneFrame frame,
+                     out bool onSurface)
+{
+    Vec3 p = vectorSnap(planeLocal, viewVectorQuantum(vp));
+    onSurface = backgroundSurfacePoint(planeLocal, vp, frame, p);
+    return p;
+}
+
+/// A primitive's BASE-DRAG point (task 9473, K-C2 C2d + K-C3): the press
+/// corner `grab.point` (q of the press plane hit) carried by the pixel travel
+/// through drag.d's press-frozen plane map on the base plane (normal `n`), onto
+/// the background (`backgroundPoint`: the hit unquantised, else q); the
+/// base-plane channel stays the press's. The snap runs after it. False (`p`
+/// untouched) = no map at the press corner (behind the camera): the caller
+/// keeps its last corner.
+bool baseDragPoint(const ref HandleDrag grab, int x, int y, Vec3 n,
+                   const ref Viewport vp, in WorkplaneFrame frame, ref Vec3 p)
+{
+    bool onSurface;
+    Vec3 t;
+    if (!baseDragTarget(grab, x, y, n, vp, frame, t)) return false;
+    p = backgroundPoint(t, vp, frame, onSurface);
+    p -= n * dot(p - grab.point, n);
+    return true;
+}
+
+/// T = `grab.point` + the pixel travel through drag.d's press-frozen map on
+/// the plane of normal `n`; false = no map at the press point.
+bool baseDragTarget(const ref HandleDrag grab, int x, int y, Vec3 n,
+                    const ref Viewport vp, in WorkplaneFrame frame, out Vec3 t)
+{
+    bool skip;
+    Viewport lvp = planeLocalViewport(vp, frame);
+    t = grab.point + planeDragDelta(x, y, grab.pressX, grab.pressY, 3, grab.point,
+        lvp, skip, Vec3(1, 0, 0), Vec3(0, 1, 0), Vec3(0, 0, 1), n);
+    return !skip;
+}
+
+/// The FREE point at plane point `planeLocal` (the click's plane hit, or a
+/// drag's press q + travel, K-C5): its q onto the background, then the snap at
+/// pixel (x, y), replacing all three channels (K-C2 C2i). A primitive's press
+/// is the plane point and never comes here (K-C role law).
+Vec3 placeFreePoint(Vec3 planeLocal, int x, int y, const ref Viewport vp, in WorkplaneFrame frame,
+                    const ref Mesh mesh, out SnapResult snap, const(uint)[] excludeVerts = [])
+{
+    bool onSurface;
+    Vec3 p = backgroundPoint(vectorSnap(planeLocal, viewVectorQuantum(vp)), vp, frame, onSurface);
+    snap = snapLocalHit(p, frame, x, y, vp, mesh, EditMode.Vertices, excludeVerts);
+    return p;
+}
+
+/// World-space basis triple for Create-tool gizmos (mover arrows / plane
+/// handles / etc.) — same basis the construction-plane pickers use, so the
+/// gizmo always agrees with where primitives actually drop:
+///   - auto  ⇒ pickMostFacingPlane(vp) (camera-snapped world axis triple)
+///   - non-auto ⇒ WorkplaneStage's (axis1, normal, axis2)
+/// Used by Sphere / Cylinder / Cone / Capsule / Torus mover.setOrientation
+/// in draw(). Box has its own captured frame and doesn't need this.
+void pickWorkplaneGizmoBasis(const ref Viewport vp,
+                             out Vec3 ax, out Vec3 ay, out Vec3 az)
+{
+    if (g_pipeCtx !is null) {
+        auto wp = cast(WorkplaneStage)g_pipeCtx.pipeline.findByTask(TaskCode.Work);
+        if (wp !is null && !wp.isAuto) {
+            Vec3 n, a1, a2;
+            wp.currentBasis(n, a1, a2);
+            ax = a1; ay = n; az = a2;
+            return;
+        }
+    }
+    auto bp = pickMostFacingPlane(vp);
+    ax = bp.axis1; ay = bp.normal; az = bp.axis2;
+}
+
+// ---------------------------------------------------------------------------
+// The cursor ray, in a workplane frame's LOCAL space — ORTHO-AWARE.
+//
+// This exists as ONE shared helper because the four Create-tool families
+// (box / pen / vertex_place / the PrimitiveCreateTool hierarchy) each carried
+// their own `localEye()` + `localRay()` pair built from `vp.eye` and
+// `screenRay`, and that pair is the PERSPECTIVE law: one common apex, with the
+// direction fanning out from it. It is the only construction of a cursor ray
+// left in the tree that does not go through `spatial.screenPointToRay`, which has
+// carried the orthographic arm all along.
+//
+// Under an orthographic projection the rays are PARALLEL — each starts at its
+// own point on the image plane and they all share the view forward. Feeding a
+// plane the perspective pencil instead scales the answer: the ray leaves the
+// eye and only reaches the construction plane after travelling the camera
+// DISTANCE, so the in-plane offset it accumulates is the click's offset times
+// that distance. Measured on a distance-3 camera (task 0661 Ph0): a click
+// intended for 0.4 world units right of the focus created geometry 1.206 units
+// right of it, in EVERY one of the six axis presets — Top and Bottom included.
+//
+// The two entry points below take the plane test with them so no call site can
+// pair an apex with a parallel ray again: `workplaneCursorPlaneHit` is the one
+// the tools call, and the ray form is exposed for the rare site that wants the
+// ray itself.
+// ---------------------------------------------------------------------------
+
+/// The cursor ray at pixel (sx, sy), expressed in `frame`'s LOCAL space.
+///
+/// `frame` is rigid (orthonormal basis + translation), so the transformed
+/// direction stays unit length and the ray parameter keeps meaning a world
+/// distance.
+void workplaneCursorRay(in WorkplaneFrame frame, const ref Viewport vp,
+                        float sx, float sy,
+                        out Vec3 orgLocal, out Vec3 dirLocal)
+{
+    // Through the one plane-local conversion (task 7139): the ray of the
+    // plane-local view IS the local ray, in both projection arms.
+    Viewport l = planeLocalViewport(vp, frame);
+    screenPointToRay(sx, sy, l, orgLocal, dirLocal);
+}
+
+/// Intersect the cursor ray at pixel (sx, sy) with a plane stated in `frame`'s
+/// LOCAL space. Returns false on the same parallel-ray condition
+/// `rayPlaneIntersect` refuses on.
+bool workplaneCursorPlaneHit(in WorkplaneFrame frame, const ref Viewport vp,
+                             float sx, float sy,
+                             Vec3 planeOrigin, Vec3 planeNormal,
+                             out Vec3 hitLocal)
+{
+    Vec3 o, d;
+    workplaneCursorRay(frame, vp, sx, sy, o, d);
+    return rayPlaneIntersect(o, d, planeOrigin, planeNormal, hitLocal);
+}
+
+/// `screenToPlacementLocal` on the parameter frame, in WORLD space: the click
+/// point of a reader with no frame of its own (falloff point, radial-array
+/// centre, wrapped-command handle, relocate).
+Vec3 screenToPlacementWorld(float sx, float sy, const ref Viewport vp) {
+    auto f = primitivePlacementFrame();
+    return transformPoint(f.toWorld, screenToPlacementLocal(sx, sy, vp, f));
+}
+
+/// `screenToPlacementLocal` for a caller that does not need the axis.
+Vec3 screenToPlacementLocal(float sx, float sy, const ref Viewport vp,
+                            in WorkplaneFrame frame)
+{
+    int axisLocal;
+    return screenToPlacementLocal(sx, sy, vp, frame, axisLocal);
+}
+
+/// Build a frame from explicit basis + origin. Useful for tools that
+/// want to lock the workplane at activation time and cache the frame
+/// (matches today's BoxTool's `choosePlane` pattern).
+WorkplaneFrame frameFromBasis(Vec3 normal, Vec3 axis1, Vec3 axis2, Vec3 origin,
+                              bool isAuto = false) {
+    WorkplaneFrame f;
+    f.normal = normal;
+    f.axis1  = axis1;
+    f.axis2  = axis2;
+    f.origin = origin;
+    f.isAuto = isAuto;
+    fillFrameMatrices(f);
+    return f;
+}
+
+// Populate toWorld + toLocal from the frame's basis / origin fields.
+// Assumes (axis1, normal, axis2) are mutually orthonormal — true for
+// every code path that produces a frame today (alignToSelection
+// orthogonalises; the world / preset modes are world-axis-aligned).
+private void fillFrameMatrices(ref WorkplaneFrame f) {
+    f.toWorld = [
+        f.axis1.x, f.axis1.y, f.axis1.z, 0,
+        f.normal.x, f.normal.y, f.normal.z, 0,
+        f.axis2.x, f.axis2.y, f.axis2.z, 0,
+        f.origin.x, f.origin.y, f.origin.z, 1,
+    ];
+    // Orthonormal inverse: transpose the rotation, translate by -Rᵀ·origin.
+    float tx = -(f.axis1.x * f.origin.x + f.axis1.y * f.origin.y + f.axis1.z * f.origin.z);
+    float ty = -(f.normal.x * f.origin.x + f.normal.y * f.origin.y + f.normal.z * f.origin.z);
+    float tz = -(f.axis2.x * f.origin.x + f.axis2.y * f.origin.y + f.axis2.z * f.origin.z);
+    f.toLocal = [
+        f.axis1.x, f.normal.x, f.axis2.x, 0,
+        f.axis1.y, f.normal.y, f.axis2.y, 0,
+        f.axis1.z, f.normal.z, f.axis2.z, 0,
+        tx,        ty,         tz,        1,
+    ];
+}
+
+// ---------------------------------------------------------------------------
+// frameIsLeftHanded / reverseFaceWinding — task 0424. Hoisted from BoxTool
+// (box.d), the only Create-tool that self-corrected this, into shared
+// helpers so every Create-tool built on `PrimitiveCreateTool` can apply the
+// same fix.
+//
+// `pickMostFacingPlane`'s X-dominant and Z-dominant camera cases each
+// return a basis triple whose (axis1, normal, axis2) ordering is
+// LEFT-handed — e.g. X-dominant returns normal=+X, axis1=+Y, axis2=+Z, and
+// axis1×normal (+Y×+X = -Z) is the negation of axis2 (+Z), unlike the
+// Y-dominant / world-default case. `fillFrameMatrices` lays `toWorld`'s
+// columns out as [axis1, normal, axis2, origin] regardless of handedness,
+// so a left-handed input triple produces a `toWorld` with
+// det(upper-left 3×3) = -1. Builders emit primitives in LOCAL space with a
+// fixed CCW winding (assuming a right-handed local→world map); transforming
+// those vertices through a det=-1 `toWorld` mirrors the winding, flipping
+// every face normal to point inward. `frameIsLeftHanded` detects this;
+// `reverseFaceWinding` corrects it by reversing the newly emitted faces'
+// vertex order.
+// ---------------------------------------------------------------------------
+
+/// True when `frame.toWorld`'s rotation part (upper-left 3×3, column-major)
+/// is a left-handed basis — i.e. transforming local-space geometry through
+/// it mirrors winding. See the banner above for why the auto-mode
+/// X/Z-dominant camera cases trigger this and the Y-dominant case never
+/// does.
+/// (Task 0684: the determinant test itself now lives in `math` as
+/// `matrixMirrorsWinding` — the export boundary needs the SAME predicate on
+/// `ItemXform.composedMatrix()`, and two hand-written 3x3 determinants would be
+/// a latent divergence rather than a redundancy. This name stays as the
+/// workplane-flavoured spelling of it.)
+bool frameIsLeftHanded(in WorkplaneFrame frame) {
+    return matrixMirrorsWinding(frame.toWorld);
+}
+
+/// Reverse the vertex order of every face in `m` from `firstFaceIdx`
+/// onward (in place). Callers pass the pre-emission `m.faces.length` as
+/// `firstFaceIdx` so only the newly appended faces are touched — existing
+/// scene geometry (and any other tool's prior output) is left alone.
+void reverseFaceWinding(Mesh* m, size_t firstFaceIdx) {
+    foreach (fi; firstFaceIdx .. m.faces.length) {
+        auto face = m.faces[fi];
+        for (size_t k = 0; k < face.length / 2; k++) {
+            auto t = face[k]; face[k] = face[$ - 1 - k]; face[$ - 1 - k] = t;
+        }
+    }
+}
+
+/// Apply `m` (column-major 4×4) to a point (w=1). Convenience for tools.
+Vec3 transformPoint(in float[16] m, Vec3 v) @nogc nothrow {
+    return Vec3(
+        m[0]*v.x + m[4]*v.y + m[8] *v.z + m[12],
+        m[1]*v.x + m[5]*v.y + m[9] *v.z + m[13],
+        m[2]*v.x + m[6]*v.y + m[10]*v.z + m[14],
+    );
+}
+
+/// Apply `m` to a direction (w=0). No translation; rotates only.
+Vec3 transformDir(in float[16] m, Vec3 v) @nogc nothrow {
+    return Vec3(
+        m[0]*v.x + m[4]*v.y + m[8] *v.z,
+        m[1]*v.x + m[5]*v.y + m[9] *v.z,
+        m[2]*v.x + m[6]*v.y + m[10]*v.z,
+    );
+}
+
+/// Run SNAP against a workplane-local hit. Each Create-tool computes
+/// the cursor's intersection with the construction plane in LOCAL
+/// workplane coordinates via `rayPlaneIntersect(localEye, localRay,
+/// ...)`. Snap targets live in WORLD coordinates, so this helper:
+///
+///   1. Converts the local hit to world.
+///   2. Queries the SnapStage via the live ToolPipeContext.
+///   3. If a snap target was found, overwrites `hitLocal` with the
+///      target's world position transformed back to the tool's local
+///      frame.
+///   4. Returns the raw SnapResult so the tool can publish it for
+///      overlay rendering.
+///
+/// Falls through (leaves `hitLocal` untouched, returns `SnapResult.init`)
+/// when there's no toolpipe / SnapStage is disabled / no candidate
+/// within outerRange. `excludeVerts` is empty by default — Create-tools
+/// don't have a "moving set" the way MoveTool's drag does, and
+/// snapping a primitive's first corner to a selected vertex is a
+/// legitimate gesture.
+SnapResult snapLocalHit(ref Vec3 hitLocal,
+                        in WorkplaneFrame frame,
+                        int sx, int sy,
+                        const ref Viewport vp,
+                        const ref Mesh mesh,
+                        EditMode editMode,
+                        const(uint)[] excludeVerts = [])
+{
+    SubjectPacket subj;     // selType frozen at Vertex (plan §1.3); no pipe ⇒ no packet
+    VectorStack   vts;
+    evaluateSubject(subj, vts, SubjectSource(cast(Mesh*)&mesh, editMode, SelType.Vertex, vp));
+    const localPkt = snapPacketOf(vts);
+    if (!localPkt.enabled) return SnapResult.init;
+
+    Vec3 hitWorld = transformPoint(frame.toWorld, hitLocal);
+    auto sr = snapCursor(hitWorld, sx, sy, vp, mesh, primaryModelSpace(), localPkt, excludeVerts,
+                         null, liveSnapGuides(SnapQueryPolicy(SnapPurpose.placement, SnapGuideScope.registered)));
+    if (sr.snapped)
+        hitLocal = transformPoint(frame.toLocal, sr.worldPos);
+    return sr;
+}
+
+
+
+
+

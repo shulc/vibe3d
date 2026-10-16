@@ -31,7 +31,7 @@ module tests.unit.primary_memo_order_test;
 
 // --- cell (a): the real `layer.reorder` command moves the tie-break ---------
 unittest {
-    import commands.layer.commands : LayerReorder;
+    import vibe3d.runtime.document_actions.commands.layer.commands : LayerReorder;
     import vibe3d.documents.model.document;
     import vibe3d.editing.contracts.editmode : EditMode;
     import tests.unit.primary_memo_fixture : layeredDocument, setIntParam;

@@ -10,7 +10,7 @@
 module tests.unit.array_hidden_operand_test;
 
 import vibe3d.mesh.core.mesh;
-import math : Vec3;
+import vibe3d.util.math.math : Vec3;
 import std.math : PI;
 
 private struct Rig { Mesh m; bool[] mask; size_t top, bottom; }

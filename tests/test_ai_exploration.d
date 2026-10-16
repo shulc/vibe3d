@@ -25,12 +25,12 @@ import std.file       : exists, readText, remove, tempDir;
 import std.path       : buildPath;
 
 // Pull in the exploration module so its own unittests are triggered by -i.
-import ai.exploration;
-import ai.interaction_log;
+import vibe3d.runtime.ai_advisor.ai.exploration;
+import vibe3d.runtime.ai_advisor.ai.interaction_log;
 import vibe3d.editing.interaction.data.ai.interaction;
-import ai.training_dataset;
+import vibe3d.runtime.ai_advisor.ai.training_dataset;
 // Pull in command_history so its Phase-0 unittests run too.
-import command_history;
+import vibe3d.editing.commands.runtime.command_history;
 
 // Task 1111: this file carries its OWN unittest blocks, so druntime runs them
 // and never calls main() — which means the `void main() { runHttpTests(); }`

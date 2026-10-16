@@ -35,9 +35,9 @@
 import std.conv : to;
 import std.math : abs, sqrt;
 
-import handler : ScaleHandler, gizmoSize, gizmoBoxHalfPx, gizmoHeadLenPx,
+import vibe3d.editing.tools.interactive.handler : ScaleHandler, gizmoSize, gizmoBoxHalfPx, gizmoHeadLenPx,
                  getGizmoPixels, setGizmoPixels, setGizmoHandleScale;
-import math : Vec3;
+import vibe3d.util.math.math : Vec3;
 import vibe3d.util.spatial.spatial : Viewport, projectToWindowFull, Orientation;
 import vibe3d.viewport.camera.view : View;
 

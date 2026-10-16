@@ -104,22 +104,22 @@ module tests.unit.undo_parity_l6_test;
 import std.format : format;
 
 import vibe3d.mesh.change.change_bus : changeBus;
-import command;
+import vibe3d.editing.commands.runtime.command;
 import vibe3d.mesh.core.mesh;
-import math    : Vec3;
+import vibe3d.util.math.math    : Vec3;
 import vibe3d.viewport.camera.view;
 import vibe3d.editing.contracts.editmode;
-import http_json : meshPlanesJson, PlaneDumpMeta;
+import vibe3d.runtime.application_core.http_json : meshPlanesJson, PlaneDumpMeta;
 
 import tests.unit.fixtures            : makeTaggedGridFull;
 import tests.unit.undo_parity_l0_test : ParityCell, compareOrCapture,
                                         setF, setI, setV, setS;
 
-import commands.mesh.array_        : MeshArray;
-import commands.mesh.clone_        : MeshClone;
-import commands.mesh.duplicate_    : MeshDuplicate;
-import commands.mesh.mirror_       : MeshMirror;
-import commands.mesh.radial_array_ : MeshRadialArray;
+import vibe3d.editing.commands.editor.commands.mesh.array_        : MeshArray;
+import vibe3d.editing.commands.editor.commands.mesh.clone_        : MeshClone;
+import vibe3d.editing.commands.editor.commands.mesh.duplicate_    : MeshDuplicate;
+import vibe3d.editing.commands.editor.commands.mesh.mirror_       : MeshMirror;
+import vibe3d.editing.commands.editor.commands.mesh.radial_array_ : MeshRadialArray;
 
 enum string kL6Family = "duplicate";
 enum string kL6Stand  = "makeTaggedGridFull(3)";

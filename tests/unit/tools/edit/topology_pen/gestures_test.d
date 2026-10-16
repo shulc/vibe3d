@@ -24,51 +24,51 @@
 //
 // Run with: dub test --config=tests.
 
-module tools.edit.topology_pen.gestures_test;
+module vibe3d.editing.tools.interactive.tools.edit.topology_pen.gestures_test;
 
-import tools.edit.topology_pen;
+import vibe3d.editing.tools.interactive.tools.edit.topology_pen;
 
 import bindbc.sdl;
 import std.json : JSONValue;
 import std.math : hypot, SQRT2;
 
-import tool;
+import vibe3d.editing.tools.interactive.tool;
 import vibe3d.mesh.core.mesh                : Mesh, MeshCacheKey;
 import vibe3d.mesh.ops.mesh_ops.select_loop : selectLoopEdges, isEdgeBorder, isVertexBorder;
-import math : Vec3, closestOnSegment2D, closestPointOnSegmentToRay, dot, pointInPolygon2D, rayPlaneIntersect;
+import vibe3d.util.math.math : Vec3, closestOnSegment2D, closestPointOnSegmentToRay, dot, pointInPolygon2D, rayPlaneIntersect;
 import vibe3d.util.spatial.spatial : Viewport, projectToWindowFull, screenPointToRay, AimViewport, aimSpace, ModelSpace, screenPointToLocalRay;
 import vibe3d.documents.model.document             : primaryModelSpace;
-import shader              : Shader;
+import vibe3d.viewport.gpu.shader              : Shader;
 import vibe3d.editing.pipeline.contracts.operator            : VectorStack, viewportOf;
 import vibe3d.editing.pipeline.contracts.toolpipe.packets    : ConstrainHitPacket, HoverTarget, HoverTargetKind,
                              SubjectPacket, SnapPacket, SnapType;
-import toolpipe.pipeline   : g_pipeCtx;
-import toolpipe.stage      : TaskCode;
-import toolpipe.stages.constrain : ConstrainStage;
-import toolpipe.stages.snap : SnapStage, liveSnapStage;
-import toolpipe.guide       : SnapGuide, GuideDrawState, kGuidePrioritySeed;
-import constraint           : resolveHoverTarget, topoPenPressPickPx,
+import vibe3d.editing.pipeline.runtime.toolpipe.pipeline   : g_pipeCtx;
+import vibe3d.editing.pipeline.runtime.toolpipe.stage      : TaskCode;
+import vibe3d.editing.pipeline.evaluation.toolpipe.stages.constrain : ConstrainStage;
+import vibe3d.editing.pipeline.evaluation.toolpipe.stages.snap : SnapStage, liveSnapStage;
+import vibe3d.editing.selection.query.toolpipe.guide       : SnapGuide, GuideDrawState, kGuidePrioritySeed;
+import vibe3d.editing.selection.query.constraint           : resolveHoverTarget, topoPenPressPickPx,
                               topoPenSnapAcceptPx, topoPenSnapGatherPx,
                               kTopoPenSnapAuto, closestPointOnMeshes;
-import snap                  : backgroundSourcesFull, SnapAdmit;
-import tools.edit.smooth_relax : RelaxVec3, RelaxTopology, deriveBoundary, relaxPasses;
-import bvh_pick              : BvhPick;
-import command_history      : CommandHistory;
-import commands.mesh.vertex_new : MeshVertexNew;
-import commands.mesh.session_edit : MeshSessionEdit;
+import vibe3d.editing.selection.query.snap                  : backgroundSourcesFull, SnapAdmit;
+import vibe3d.editing.tools.interactive.tools.edit.smooth_relax : RelaxVec3, RelaxTopology, deriveBoundary, relaxPasses;
+import vibe3d.editing.selection.scene_query.bvh_pick              : BvhPick;
+import vibe3d.editing.commands.runtime.command_history      : CommandHistory;
+import vibe3d.editing.commands.editor.commands.mesh.vertex_new : MeshVertexNew;
+import vibe3d.editing.commands.editor.commands.mesh.session_edit : MeshSessionEdit;
 import vibe3d.mesh.snapshot.snapshot              : MeshSnapshot;
-import display_sync         : refreshDisplay;
+import vibe3d.viewport.gpu.display_sync         : refreshDisplay;
 import vibe3d.mesh.change.change_bus            : MeshEditScope;
 import vibe3d.editing.params.params                : Param, IntEnumEntry, wireTagForValue;
 import vibe3d.platform.input.tool_input            : ToolAction, PassThrough, InputPhase, InputButton,
                                 InputMod, ResetScope, InputBinding,
                                 resolveToolAction, toButton, toMods;
-import drag                  : planeDragDelta;
+import vibe3d.editing.tools.interactive.drag                  : planeDragDelta;
 import vibe3d.platform.input.eventlog               : queryMouse;
 
 import ImGui = d_imgui;
 import d_imgui.imgui_h;
-import edit_session : EditSession;
+import vibe3d.editing.tools.interactive.edit_session : EditSession;
 import vibe3d.mesh.change.change_bus : changeBus;
 
 // ---------------------------------------------------------------------------
@@ -616,7 +616,7 @@ unittest {
     // The cancel ended the SESSION's pending step too: a close right after it
     // (the drop that follows a document replace) has nothing left to record.
     {
-        import tool_activation_ownership : CloseReason;
+        import vibe3d.editing.commands.runtime.tool_activation_ownership : CloseReason;
         session.closeOperation(CloseReason.drop);
         session.finishClose();
         assert(history.undoEntries().length == 0,
@@ -856,7 +856,7 @@ unittest {
 // (1.2e-7), so a kept change would show, and below the eps, so it must not.
 unittest {
     import vibe3d.mesh.core.mesh : makeGridPlane;
-    import snap : setBackgroundSnapSources;
+    import vibe3d.editing.selection.query.snap : setBackgroundSnapSources;
     setBackgroundSnapSources(null, null);
     static Vec3[] smoothOnce(float strength, out size_t rows, out Vec3[] before) {
         auto t       = new TopologyPenTool();
@@ -2896,7 +2896,7 @@ unittest {
 unittest {
     import vibe3d.viewport.camera.view : View;
     import vibe3d.editing.contracts.editmode : EditMode;
-    import snap : setBackgroundSnapSources;
+    import vibe3d.editing.selection.query.snap : setBackgroundSnapSources;
 
     // Defensive (test-isolation, not a production call site): `snap.d`'s
     // background-source list is a module-level `__gshared` — explicitly
@@ -2947,7 +2947,7 @@ unittest {
 unittest {
     import vibe3d.viewport.camera.view : View;
     import vibe3d.editing.contracts.editmode : EditMode;
-    import snap : setBackgroundSnapSources;
+    import vibe3d.editing.selection.query.snap : setBackgroundSnapSources;
 
     auto bg = new Mesh();
     bg.vertices = [Vec3(-10, -10, -5), Vec3(10, -10, -5), Vec3(10, 10, -5), Vec3(-10, 10, -5)];
@@ -3004,7 +3004,7 @@ unittest {
     import std.format : format;
     import vibe3d.viewport.camera.view : View;
     import vibe3d.editing.contracts.editmode : EditMode;
-    import snap : setBackgroundSnapSources;
+    import vibe3d.editing.selection.query.snap : setBackgroundSnapSources;
 
     setBackgroundSnapSources(null, null);   // no background — isolate pure relaxation
 
@@ -4203,7 +4203,7 @@ unittest {
     import vibe3d.viewport.camera.view : View;
     import vibe3d.editing.contracts.editmode : EditMode;
     import vibe3d.mesh.core.mesh : makeGridPlane;
-    import display_sync : activeMeshResolver;
+    import vibe3d.viewport.gpu.display_sync : activeMeshResolver;
     import vibe3d.editing.pipeline.contracts.toolpipe.packets : SubjectPacket;
     import std.format : format;
 
@@ -4273,7 +4273,7 @@ unittest {
     import vibe3d.viewport.camera.view : View;
     import vibe3d.editing.contracts.editmode : EditMode;
     import vibe3d.mesh.core.mesh : makeGridPlane;
-    import display_sync : activeMeshResolver;
+    import vibe3d.viewport.gpu.display_sync : activeMeshResolver;
     import vibe3d.editing.pipeline.contracts.toolpipe.packets : SubjectPacket;
     import std.format : format;
 
@@ -4331,7 +4331,7 @@ unittest {
     import vibe3d.viewport.camera.view : View;
     import vibe3d.editing.contracts.editmode : EditMode;
     import vibe3d.mesh.core.mesh : makeGridPlane;
-    import display_sync : activeMeshResolver;
+    import vibe3d.viewport.gpu.display_sync : activeMeshResolver;
     import vibe3d.editing.pipeline.contracts.toolpipe.packets : SubjectPacket;
     import std.format : format;
 
@@ -4413,8 +4413,8 @@ unittest {
     import vibe3d.viewport.camera.view : View;
     import vibe3d.editing.contracts.editmode : EditMode;
     import vibe3d.mesh.core.mesh : makeGridPlane;
-    import display_sync : activeMeshResolver;
-    import snap : setBackgroundSnapSources;
+    import vibe3d.viewport.gpu.display_sync : activeMeshResolver;
+    import vibe3d.editing.selection.query.snap : setBackgroundSnapSources;
     import vibe3d.editing.pipeline.contracts.toolpipe.packets : SubjectPacket;
     import std.format : format;
 
@@ -4538,7 +4538,7 @@ unittest {
 unittest {
     import vibe3d.viewport.camera.view : View;
     import vibe3d.editing.contracts.editmode : EditMode;
-    import display_sync : activeMeshResolver;
+    import vibe3d.viewport.gpu.display_sync : activeMeshResolver;
     import vibe3d.editing.pipeline.contracts.toolpipe.packets : SubjectPacket;
     import std.format : format;
 
@@ -4609,7 +4609,7 @@ unittest {
     import vibe3d.viewport.camera.view : View;
     import vibe3d.editing.contracts.editmode : EditMode;
     import vibe3d.mesh.core.mesh : makeGridPlane;
-    import display_sync : activeMeshResolver;
+    import vibe3d.viewport.gpu.display_sync : activeMeshResolver;
     import vibe3d.editing.pipeline.contracts.toolpipe.packets : SubjectPacket;
 
     Mesh offscreen;
@@ -4684,7 +4684,7 @@ unittest {
     import vibe3d.viewport.camera.view : View;
     import vibe3d.editing.contracts.editmode : EditMode;
     import vibe3d.mesh.core.mesh : makeGridPlane;
-    import display_sync : activeMeshResolver;
+    import vibe3d.viewport.gpu.display_sync : activeMeshResolver;
     import vibe3d.editing.pipeline.contracts.toolpipe.packets : SubjectPacket;
     import std.format : format;
 
@@ -4979,8 +4979,8 @@ unittest {
 // ---------------------------------------------------------------------------
 unittest {
     import vibe3d.viewport.camera.view : View;
-    import math : normalize, cross;
-    import snap : setBackgroundSnapSources;
+    import vibe3d.util.math.math : normalize, cross;
+    import vibe3d.editing.selection.query.snap : setBackgroundSnapSources;
     import std.math : abs, cos, sin, PI;
     import std.format : format;
 
@@ -5073,7 +5073,7 @@ unittest {
 // ---------------------------------------------------------------------------
 unittest {
     import vibe3d.viewport.camera.view : View;
-    import snap : setBackgroundSnapSources;
+    import vibe3d.editing.selection.query.snap : setBackgroundSnapSources;
     import std.math : abs;
     import std.format : format;
 
@@ -5143,7 +5143,7 @@ unittest {
 // ---------------------------------------------------------------------------
 unittest {
     import vibe3d.viewport.camera.view : View;
-    import snap : setBackgroundSnapSources;
+    import vibe3d.editing.selection.query.snap : setBackgroundSnapSources;
     import std.math : abs;
     import std.format : format;
 
@@ -5362,7 +5362,7 @@ unittest {
     import vibe3d.editing.contracts.editmode : EditMode;
     import vibe3d.mesh.core.mesh : makeGridPlane;
     import vibe3d.editing.pipeline.contracts.toolpipe.packets : SubjectPacket;
-    import snap : setBackgroundSnapSources;
+    import vibe3d.editing.selection.query.snap : setBackgroundSnapSources;
     import std.math : abs;
     import std.format : format;
 
@@ -5461,7 +5461,7 @@ unittest {
 // ---------------------------------------------------------------------------
 
 version (unittest) private Viewport makeHoverIndicatorTestViewport() {
-    import math : lookAt, perspectiveMatrix;
+    import vibe3d.util.math.math : lookAt, perspectiveMatrix;
     import std.math : PI;
     Viewport vp;
     vp.eye    = Vec3(0, 0, 5);
@@ -5492,7 +5492,7 @@ version (unittest) private SnapPacket* penTestSnapOn() {
 }
 
 version (unittest) private Viewport makeGridPlaneTestViewport() {
-    import math : lookAt, perspectiveMatrix;
+    import vibe3d.util.math.math : lookAt, perspectiveMatrix;
     import std.math : PI;
     Viewport vp;
     vp.eye    = Vec3(0, 5, 0);
@@ -5530,7 +5530,7 @@ version (unittest) private Viewport makeGridPlaneTestViewport() {
 /// to fix a test camera would be a mesh-wide behaviour change smuggled in as a
 /// test edit.
 version (unittest) private Viewport makeGridPlaneFrontViewport() {
-    import math : lookAt, perspectiveMatrix;
+    import vibe3d.util.math.math : lookAt, perspectiveMatrix;
     import std.math : PI;
     Viewport vp;
     vp.eye    = Vec3(0, -5, 0);
@@ -6350,7 +6350,7 @@ unittest {
     import vibe3d.editing.contracts.editmode : EditMode;
     import vibe3d.mesh.core.mesh : makeGridPlane;
     import vibe3d.editing.pipeline.contracts.toolpipe.packets : SubjectPacket;
-    import snap : setBackgroundSnapSources;
+    import vibe3d.editing.selection.query.snap : setBackgroundSnapSources;
     import std.math : abs;
     import std.format : format;
 
@@ -6545,7 +6545,7 @@ unittest { // applySmoothLoopPasses — interior relax + nearest-foot re-snap,
     import vibe3d.viewport.camera.view : View;
     import vibe3d.editing.contracts.editmode : EditMode;
     import vibe3d.mesh.core.mesh : makeGridPlane;
-    import snap : setBackgroundSnapSources;
+    import vibe3d.editing.selection.query.snap : setBackgroundSnapSources;
     import std.math : abs;
     import std.format : format;
 
@@ -6648,7 +6648,7 @@ unittest { // applySmoothLoopPasses — the corner lock holds on EVERY pass, not
     import vibe3d.viewport.camera.view : View;
     import vibe3d.editing.contracts.editmode : EditMode;
     import vibe3d.mesh.core.mesh : makeGridPlane;
-    import snap : setBackgroundSnapSources;
+    import vibe3d.editing.selection.query.snap : setBackgroundSnapSources;
     import std.format : format;
 
     setBackgroundSnapSources(null, null);   // test-isolation: relax only, no re-snap
@@ -6708,7 +6708,7 @@ unittest { // applySmoothLoopPasses — a gesture that nets to ZERO movement
     import vibe3d.viewport.camera.view : View;
     import vibe3d.editing.contracts.editmode : EditMode;
     import vibe3d.mesh.core.mesh : makeGridPlane;
-    import snap : setBackgroundSnapSources;
+    import vibe3d.editing.selection.query.snap : setBackgroundSnapSources;
 
     setBackgroundSnapSources(null, null);   // test-isolation, not a production call site
 
@@ -6761,7 +6761,7 @@ unittest { // applySmoothLoopPasses — the no-op guard is SCALE-RELATIVE, so a
     import vibe3d.viewport.camera.view : View;
     import vibe3d.editing.contracts.editmode : EditMode;
     import vibe3d.mesh.core.mesh : makeGridPlane;
-    import snap : setBackgroundSnapSources;
+    import vibe3d.editing.selection.query.snap : setBackgroundSnapSources;
     import std.format : format;
 
     setBackgroundSnapSources(null, null);   // test-isolation, not a production call site
@@ -6895,7 +6895,7 @@ unittest {
     import vibe3d.viewport.camera.view : View;
     import vibe3d.editing.contracts.editmode : EditMode;
     import vibe3d.mesh.core.mesh : makeGridPlane;
-    import snap : setBackgroundSnapSources;
+    import vibe3d.editing.selection.query.snap : setBackgroundSnapSources;
 
     setBackgroundSnapSources(null, null);   // test-isolation: force the deterministic no-bg no-op path
 
@@ -7010,7 +7010,7 @@ unittest {
     import vibe3d.editing.contracts.editmode : EditMode;
     import vibe3d.mesh.core.mesh : makeGridPlane;
     import vibe3d.editing.pipeline.contracts.toolpipe.packets : SubjectPacket;
-    import snap : setBackgroundSnapSources;
+    import vibe3d.editing.selection.query.snap : setBackgroundSnapSources;
     import std.math : abs;
     import std.format : format;
 
@@ -7222,7 +7222,7 @@ unittest {
         assert(p.kind == Param.Kind.PodArray && p.hidden_,
             "the S7a step descriptor must be a hidden podArray_ (not injectable): " ~ p.name);
     {
-        import tools.edit.topology_pen.defs : PenStepKind;
+        import vibe3d.editing.tools.interactive.tools.edit.topology_pen.defs : PenStepKind;
         t.stepKind_ = [PenStepKind.MoveLoop];
         const raw = ps[bf + 4].snapshotRaw();
         t.stepKind_ = null;
@@ -9888,7 +9888,7 @@ unittest {
     // the LOCAL one: the anchor is the local point under the press, on the
     // polygon's local plane.
     import vibe3d.documents.model.document : ItemXform, primaryModelSpaceResolver;
-    import math : dot;
+    import vibe3d.util.math.math : dot;
     import std.math : abs;
     ItemXform xf;
     xf.pos = Vec3(0.3f, 0.7f, -0.2f);
@@ -9913,7 +9913,7 @@ unittest {
 // but local (0.0025,0,0.03): WORLD X wins while LOCAL Z would win.
 unittest {
     import vibe3d.documents.model.document : ItemXform, primaryModelSpaceResolver;
-    import math : lookAt, orthographicMatrix;
+    import vibe3d.util.math.math : lookAt, orthographicMatrix;
     import std.format : format;
     enum double ps = 0.002275172049;
     ItemXform xf;
@@ -9959,7 +9959,7 @@ unittest {
                format("transformed-primary: corner %s stays on elected WORLD X by 0.16; got %s", i, worldDelta));
     }
     // Query admission and this tool's bound mesh are independent identities.
-    import hover_state : ToolPressSource, toolPressSourcesResolver;
+    import vibe3d.editing.selection.query.hover_state : ToolPressSource, toolPressSourcesResolver;
     import vibe3d.mesh.core.mesh : makeGridPlane;
     import std.algorithm : reverse;
     auto secondary = makeGridPlane(2);
@@ -9994,8 +9994,8 @@ unittest {
 // click and elects nothing; the (6,-1) after it elects X.
 // ---------------------------------------------------------------------------
 unittest {
-    import math : lookAt, orthographicMatrix;
-    import viewgrid : viewVectorQuantum;
+    import vibe3d.util.math.math : lookAt, orthographicMatrix;
+    import vibe3d.editing.selection.query.viewgrid : viewVectorQuantum;
     import std.format : format;
     import std.math : abs;
     enum double ps = 0.002275172049;
@@ -10329,7 +10329,7 @@ unittest {
 // ---------------------------------------------------------------------------
 unittest {
     import vibe3d.mesh.core.mesh : makeGridPlane;
-    import constraint : topoPenPressPickPx, topoPenSnapAcceptPx, topoPenSnapGatherPx;
+    import vibe3d.editing.selection.query.constraint : topoPenPressPickPx, topoPenSnapAcceptPx, topoPenSnapGatherPx;
 
     auto t = new TopologyPenTool();
     Mesh m = makeGridPlane(2);          // 3x3 verts, 4 quads, 80px per cell here
@@ -10973,7 +10973,7 @@ unittest {
     import vibe3d.editing.contracts.editmode : EditMode;
     import vibe3d.mesh.core.mesh     : makeGridPlane;
     import vibe3d.editing.pipeline.contracts.toolpipe.packets  : SubjectPacket;
-    import toolpipe.pipeline : ToolPipeContext;
+    import vibe3d.editing.pipeline.runtime.toolpipe.pipeline : ToolPipeContext;
 
     loadSDL();
     SDL_SetModState(cast(SDL_Keymod)0);
@@ -11075,7 +11075,7 @@ unittest {
 //      and inherits snapping still on.
 // ---------------------------------------------------------------------------
 unittest {
-    import toolpipe.pipeline : ToolPipeContext;
+    import vibe3d.editing.pipeline.runtime.toolpipe.pipeline : ToolPipeContext;
 
     auto saved = g_pipeCtx;
     scope(exit) g_pipeCtx = saved;   // process-wide global — restore, never null
@@ -11214,7 +11214,7 @@ unittest {
     import std.format : format;
 
     // 9513: exercise the actual registered innerSnap-off guide during Split.
-    import toolpipe.pipeline : ToolPipeContext;
+    import vibe3d.editing.pipeline.runtime.toolpipe.pipeline : ToolPipeContext;
     auto savedPipe = g_pipeCtx;
     scope(exit) g_pipeCtx = savedPipe;
     auto ctx = new ToolPipeContext;
@@ -11482,7 +11482,7 @@ unittest {
     import vibe3d.editing.contracts.editmode : EditMode;
     import vibe3d.mesh.core.mesh : makeGridPlane;
     import vibe3d.editing.pipeline.contracts.toolpipe.packets : SubjectPacket;
-    import constraint : topoPenSnapAcceptPx;
+    import vibe3d.editing.selection.query.constraint : topoPenSnapAcceptPx;
 
     loadSDL();
     SDL_SetModState(cast(SDL_Keymod)0);
@@ -12310,7 +12310,7 @@ version (unittest) private Vec3 shaderNormalWorld(const ModelSpace ms, Vec3 nLoc
 
 // A perspective viewport whose centre-pixel ray points along `dir`.
 version (unittest) private Viewport viewportAlong(Vec3 dir, Vec3 focus) {
-    import math : lookAt, perspectiveMatrix, normalize;
+    import vibe3d.util.math.math : lookAt, perspectiveMatrix, normalize;
     import std.math : PI, fabs;
     Vec3 d = normalize(dir);
     Viewport vp;
@@ -12327,7 +12327,7 @@ version (unittest) private Viewport viewportAlong(Vec3 dir, Vec3 focus) {
 
 unittest { // P6a — MIRROR. Separates candidate B (and the pre-0619 law) from A.
     import vibe3d.documents.model.document : ItemXform, primaryModelSpaceResolver;
-    import math : normalize;
+    import vibe3d.util.math.math : normalize;
     import std.format : format;
 
     Mesh m = makeObliqueFanRig();
@@ -12394,7 +12394,7 @@ unittest { // P6a — MIRROR. Separates candidate B (and the pre-0619 law) from 
 
 unittest { // P6b — NON-UNIFORM SCALE. Separates candidate C from A.
     import vibe3d.documents.model.document : ItemXform, primaryModelSpaceResolver;
-    import math : normalize;
+    import vibe3d.util.math.math : normalize;
     import std.format : format;
 
     Mesh m = makeObliqueFanRig();
@@ -12597,7 +12597,7 @@ unittest {
 // banked, orbited one (the C3 orbit basis), including the perspective term
 // that is the whole image of an end-on axis.
 unittest {
-    import math : perspectiveMatrix;
+    import vibe3d.util.math.math : perspectiveMatrix;
 import vibe3d.util.spatial.spatial : Orientation, viewMatrixFrom;
     import std.format : format;
     import std.math : PI, abs, sqrt;

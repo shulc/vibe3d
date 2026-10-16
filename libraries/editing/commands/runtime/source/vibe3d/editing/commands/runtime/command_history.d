@@ -1,0 +1,3078 @@
+module vibe3d.editing.commands.runtime.command_history;
+
+import vibe3d.editing.commands.runtime.command;
+import vibe3d.editing.commands.runtime.command : CmdFlags;
+import vibe3d.editing.params.argstring : serializeParams, serializeCommandLine;
+import vibe3d.editing.params.params : Param;
+// Byte-neutral in the default build (perf_probe.g_perf.count is a no-op
+// inline stub without version(PerfProbe) — task 0200's undoApply counter).
+import vibe3d.util.profiling.perf_probe : g_perf, Cat;
+import core.atomic : atomicOp;
+import vibe3d.editing.commands.runtime.record_observer_hub : RecordObserverHub, PreparedRecordObserverImage;
+
+/// Selects the history write used after a command applies successfully.
+/// This is command/history policy, not application UI state (task 4711).
+enum RecordMode { Record, Coalescing }
+
+// ---------------------------------------------------------------------------
+// CommandHistory — linear undo/redo stack of Command instances.
+//
+// Lifecycle: a Command is created via the registry, its apply() is invoked
+// (possibly by the HTTP dispatcher or interactive tool), and on success the
+// dispatcher passes the command to record(). The history retains the
+// instance for the lifetime of the entry; revert() / re-apply() are called
+// directly on it.
+//
+// State machine:
+//   - Active   — record() pushes new entries, redo stack cleared on push.
+//   - Suspend  — record() silently drops entries (no stack mutation). Used
+//                during file load / internal sub-commands so they don't
+//                pollute the undo timeline.
+//   - Invalid  — record() refuses; treated as a programming error in
+//                debug builds.
+//
+// Refire blocks (Phase C) — refire-begin/end pattern for interactive drags.
+// Inside a refire block, each fire() reverts the previous live command
+// before applying the new one.
+// refireEnd() commits the latest live command as a single undo entry — the
+// net effect of an interactive drag is one stack entry, regardless of how
+// many sub-fires happened.
+//
+// Command blocks (blockBegin/blockEnd) — general N-commands-as-one grouping.
+// While a block is open, record() appends each command into the open block's
+// child list instead of pushing its own entry. blockEnd() wraps the children
+// in a CompositeCommand and records that as ONE undo entry (so undo/redo of
+// the block re-applies/reverts every child as a unit). Distinct from refire:
+// refire keeps only the LAST live command (interactive drag), whereas a block
+// retains and re-runs ALL children in order. Nested blockBegin flattens into
+// the outermost block (children accumulate in one flat list); blockEnd matches
+// the innermost open block. An empty block (no children recorded) is a no-op.
+// ---------------------------------------------------------------------------
+
+enum UndoState { Invalid, Active, Suspend }
+
+/// How a transform producer exposes a completed run after its tool closes.
+/// The commands remain the single owner of finished geometry in both visible
+/// modes; ToolSession decides how many linked rows one outside Undo traverses.
+enum RunCloseMode : ubyte { consolidate, groupUndo, stepUndo, groupRedo }
+enum RecordedRunBoundaryMode : ubyte { consolidate, retainSteps }
+enum RunCloseScope : ubyte { run, session }
+
+/// Per-entry status flags (Phase 7 of the history-panel design doc).
+/// Drives the history panel's per-row visual cues: badge column shows
+/// ✓ for Succeeded, ✗ for Failed, `·` for Quiet, `⋯` for SideEffect.
+/// `Undoable` is implicit for
+/// anything that actually landed on the stack but kept as a bit
+/// for future filter toggles (e.g. "hide undoable" in Phase 4).
+///
+/// Set at record() time from the command's CmdFlags: Undoable mirrors
+/// CmdFlags.Model, Quiet mirrors CmdFlags.Quiet, SideEffect mirrors
+/// CmdFlags.SideEffect; Succeeded is always set here (the dispatcher
+/// only records on a successful apply()). Failed is reserved for a
+/// future widening that records failed applies too.
+enum HistoryFlags : uint {
+    None       = 0,
+    Succeeded  = 1 << 0,
+    Failed     = 1 << 1,
+    Quiet      = 1 << 2,
+    SideEffect = 1 << 3,
+    Undoable   = 1 << 4,
+    UiUndo     = 1 << 5, // Entry is UI-undo class (selection / edit-mode
+                         // state) rather than Model-undo (geometry). Mirrors
+                         // Command.isUiUndo(). Surfaced per-entry so the
+                         // history panel + /api/history can distinguish the
+                         // two undoable classes.
+    UndoForced = 1 << 6, // Entry landed because the command carried
+                         // CmdFlags.UndoForce (explicit opt-IN overriding the
+                         // derived rule). Provenance only — surfaced for the
+                         // panel / api; behaviour is identical to any other
+                         // undoable entry once it is on the stack.
+    InSession  = 1 << 7, // Entry was recorded mid tool-session as one step of
+                         // a RUN — a sequence of gestures that share a runId.
+                         // A producer may consolidate or retain its rows at
+                         // the run boundary / tool drop. Set by
+                         // recordInSession(); the matching entry carries the
+                         // run's id in HistoryEntry.runId. Surfaced per-entry so
+                         // a future command-history panel can group + badge the
+                         // per-gesture steps of an open run. Navigation-neutral:
+                         // an in-session entry is a normal undoable stack entry
+                         // until consolidate() rewrites the run.
+    Refire     = 1 << 8, // Entry is an in-session RE-GRADE (a falloff re-fire of
+                         // the open run's last gesture), recorded by
+                         // replaceInSessionTail(). ALWAYS accompanies InSession.
+                         // It is the trustworthy "the tail is a re-grade" signal
+                         // the REPLACE-vs-APPEND decision keys on: a fresh
+                         // re-grade REPLACES the prior re-grade tail (so N
+                         // consecutive tweaks stay ONE undo step) ONLY when the
+                         // tail itself is a Refire of the same run — a plain
+                         // gesture entry (InSession but NOT Refire) is never
+                         // dropped, so a second gesture's geometry contribution
+                         // is never lost (the multi-gesture-run REPLACE hazard).
+                         // The contiguous-run gather (consolidate) keys on
+                         // InSession+runId, so a Refire entry merges normally;
+                         // the n==1 tag-strip clears BOTH bits.
+    UndoBoundary = 1 << 9, // Entry is a hard-stop for the current-session scan.
+                           // The entry IS undoable and stays on the stack, but
+                           // depth/count scans stop before it. Mirrors
+                           // CmdFlags.UndoBoundary and marks scene.reset /
+                           // file.new as the edge of the current session.
+    PressMarker = 1 << 17, // A payload-free, irreversible consumed press boundary.
+    ToolLifecycle = 1 << 10, // Entry is a strict-LIFO tool-lifecycle step.
+                             // Never counted in modelDepth / uiDepth, but surfaced
+                             // by /api/history as the named step that it is.
+    ClosedRun = 1 << 11, // A completed gesture row retained for a closed tool run.
+                         // The runId groups its contiguous rows for outside navigation.
+    ClosedGroupRedo = 1 << 13, // A closed group retains all linked rows for one Redo.
+    ClosedStep = 1 << 12, // A closed run whose outside navigation moves one
+                          // completed gesture and preserves its redo branch.
+    // The parameter-row fold of a `foldsParamRowsIntoBlock` session (wave plan
+    // 8640 S7a, §9.19.3/§9.22.1/§9.24): set by ToolSession only, travelling
+    // with the entry across undo and redo.
+    JoinsBelow = 1 << 14, // Pops and redoes as ONE step with the run below it,
+                          // down to the first unmarked row (the block's base).
+    FoldBase   = 1 << 15, // The lowest row of a model operation the session's
+                          // fold closed (law 6) — a one-row operation too; law
+                          // 3's redo cut keeps it (topology-redo S5).
+    PreNavOpen = 1 << 16, // Written while the open block was a press or the
+                          // activation; unclosed, it redoes only in the
+                          // instance that wrote it (L2p, L53).
+}
+
+// A consumed press retains only its boundary identity (9508). This carrier
+// owns no edit image or producer; navigation and serializers read its role.
+final class DropPressMarkerCommand : Command {
+    private string pressName_;
+    this(ulong token, string pressName) {
+        import vibe3d.viewport.camera.view : View;
+        import vibe3d.editing.contracts.editmode : EditMode;
+        View emptyView;
+        super(null, emptyView, EditMode.Vertices);
+        markSession(token);
+        pressName_ = pressName;
+        noteUndoRecorded();
+    }
+    override string name() const { return "history.pressMarker"; }
+    override string label() const { return "Consumed press: " ~ pressName_; }
+    override CmdFlags cmdFlags() const { return CmdFlags.UndoForce; }
+    protected override bool applyImpl() { return false; }
+    protected override void revertImpl() {}
+}
+
+version (unittest) private HistoryEntry preparedTestEntry(Command cmd,
+        string name, uint extra = 0, ulong runId = 0, ulong generation = 0) {
+    return HistoryEntry(name, "x=1", name, cmd, 17,
+        HistoryFlags.Succeeded | HistoryFlags.Undoable | extra,
+        runId, generation, "");
+}
+
+unittest { // P1.0b.3b scalar token, ordered shadow, joint observer ownership.
+    auto cmd = new _EpochTestCmd();
+    auto h = new CommandHistory();
+    auto hub = new RecordObserverHub(); hub.setMacroActive(true);
+    auto token = h.beginPrepared();
+    auto overlap = h.beginPrepared();
+    auto invalidOverlap = h.validatesPreparedToken(overlap);
+    assert(!invalidOverlap.valid);
+    auto result = h.prepareRecord(token, cmd, PreparedHistoryKind.Plain, 0, hub);
+    assert(result.accepted && result.undoDepth == 1 && h.undoStack.length == 0);
+    auto wrongHub = new RecordObserverHub();
+    auto wrongValidated = h.validatesPreparedToken(token, wrongHub);
+    assert(!wrongValidated.valid);
+    auto valid = h.validatesPreparedToken(token, hub); assert(valid.valid);
+    h.installPreparedToken(valid);
+    assert(h.undoStack.length == 1 && hub.macroLength == 1);
+    h.installPreparedToken(valid);
+    assert(h.undoStack.length == 1); // consumed token is inert.
+
+    auto abandoned = new CommandHistory();
+    auto abandonedToken = abandoned.beginPrepared();
+    assert(abandoned.prepareRecord(abandonedToken, cmd,
+        PreparedHistoryKind.Plain, 0).accepted);
+    auto abandonedValid = abandoned.validatesPreparedToken(abandonedToken);
+    assert(abandonedValid.valid && abandoned.undoStack.length == 0);
+    abandoned.discardValidatedPreparedToken(abandonedValid);
+    auto retryToken = abandoned.beginPrepared();
+    assert(abandoned.prepareRecord(retryToken, cmd,
+        PreparedHistoryKind.Plain, 0).accepted,
+        "validated abort did not release the history owner");
+    abandoned.discardPreparedToken(retryToken);
+
+    auto ordered = new CommandHistory(); ordered._currentRunId = 55;
+    auto orderedToken = ordered.beginPrepared();
+    ordered.prepareRecord(orderedToken, cmd, PreparedHistoryKind.InSession, 7);
+    ordered.prepareRecord(orderedToken, cmd,
+        PreparedHistoryKind.ReplaceInSessionTail, 7);
+    ordered.prepareConsolidate(orderedToken, 7);
+    auto orderedValid = ordered.validatesPreparedToken(orderedToken); assert(orderedValid.valid);
+    ordered.installPreparedToken(orderedValid);
+    assert(ordered._currentRunId == 55 && !ordered._runOpen);
+
+    auto blocked = new CommandHistory(); blocked.blockBegin("b");
+    blocked.redoStack = [preparedTestEntry(cmd, "redo")];
+    auto blockedToken = blocked.beginPrepared();
+    blocked.prepareRecord(blockedToken, cmd, PreparedHistoryKind.Plain, 0);
+    auto blockedValid = blocked.validatesPreparedToken(blockedToken); assert(blockedValid.valid);
+    blocked.installPreparedToken(blockedValid);
+    assert(blocked.blockChildren.length == 1 && blocked.redoStack.length == 1);
+
+    auto invalidated = new CommandHistory();
+    invalidated.redoStack = [preparedTestEntry(cmd, "redo")];
+    auto invalidateToken = invalidated.beginPrepared();
+    auto invalidateResult = invalidated.prepareInvalidateRedo(invalidateToken);
+    assert(invalidateResult.accepted && invalidateResult.mustInstall &&
+        invalidateResult.redoDepth == 0 && invalidated.redoStack.length == 1);
+    auto invalidateValid = invalidated.validatesPreparedToken(invalidateToken);
+    assert(invalidateValid.valid); invalidated.installPreparedToken(invalidateValid);
+    assert(invalidated.redoStack.length == 0);
+
+    auto lockedInvalidation = new CommandHistory();
+    lockedInvalidation.redoStack = [preparedTestEntry(cmd, "redo")];
+    lockedInvalidation.setLockout(true);
+    auto lockedInvalidateToken = lockedInvalidation.beginPrepared();
+    auto lockedInvalidate = lockedInvalidation.prepareInvalidateRedo(
+        lockedInvalidateToken);
+    assert(lockedInvalidate.accepted && !lockedInvalidate.mustInstall &&
+        lockedInvalidate.redoDepth == 1);
+    lockedInvalidation.discardPreparedToken(lockedInvalidateToken);
+    assert(lockedInvalidation.redoStack.length == 1);
+
+    auto discarded = new CommandHistory(); auto discardedToken = discarded.beginPrepared();
+    discarded.prepareRecord(discardedToken, cmd, PreparedHistoryKind.Plain, 0);
+    discarded.discardPreparedToken(discardedToken);
+    assert(discarded.undoStack.length == 0);
+
+    auto replace = new CommandHistory(); replace._runOpen = true;
+    replace.undoStack = [preparedTestEntry(cmd, "before"),
+        preparedTestEntry(cmd, "g1", HistoryFlags.InSession, 8),
+        preparedTestEntry(cmd, "g2", HistoryFlags.InSession, 8)];
+    replace.undoStack[1].timestampMs = 123;
+    replace.redoStack = [preparedTestEntry(cmd, "redo")];
+    auto replaceToken = replace.beginPrepared();
+    auto replaced = replace.prepareRecord(replaceToken, cmd,
+        PreparedHistoryKind.ReplaceRunTail, 8, hub);
+    assert(replaced.accepted && replaced.mustInstall && !replaced.runOpen &&
+           replaced.undoDepth == 2 && replaced.redoDepth == 0);
+    auto replaceValid = replace.validatesPreparedToken(replaceToken, hub); assert(replaceValid.valid);
+    replace.installPreparedToken(replaceValid);
+    assert(replace.undoStack[$-1].timestampMs == 123 &&
+           !(replace.undoStack[$-1].flags & HistoryFlags.InSession));
+
+    auto refusal = new CommandHistory(); refusal._runOpen = true;
+    refusal.setLockout(true); auto refusalToken = refusal.beginPrepared();
+    auto refused = refusal.prepareRecord(refusalToken, cmd,
+        PreparedHistoryKind.ReplaceRunTail, 3);
+    assert(!refused.accepted && refused.mustInstall && !refused.runOpen);
+    assert(refusal._runOpen); // close exists only in the pending shadow.
+    auto refusalValid = refusal.validatesPreparedToken(refusalToken); assert(refusalValid.valid);
+    refusal.installPreparedToken(refusalValid);
+    assert(!refusal._runOpen);
+
+    auto lifecycle = new CommandHistory(); auto lifecycleCmd = new _ThrowingParamsCmd();
+    auto lifecycleToken = lifecycle.beginPrepared();
+    assert(lifecycle.prepareLifecycle(lifecycleToken, lifecycleCmd).accepted);
+    assert(lifecycleCmd.paramCalls == 0);
+    auto lifecycleValid = lifecycle.validatesPreparedToken(lifecycleToken); assert(lifecycleValid.valid);
+    lifecycle.installPreparedToken(lifecycleValid);
+    assert(lifecycle.undoStack[0].args == "" && lifecycleCmd.paramCalls == 0);
+
+    auto many = new CommandHistory(); auto manyHub = new RecordObserverHub();
+    manyHub.setMacroActive(true); manyHub.setTraceArmed(true);
+    auto manyToken = many.beginPrepared();
+    many.prepareRecord(manyToken, cmd, PreparedHistoryKind.Plain, 0,
+                       manyHub, `{"n":1}`);
+    many.prepareRecord(manyToken, cmd, PreparedHistoryKind.Plain, 0,
+                       manyHub, `{"n":2}`);
+    auto switchedHub = new RecordObserverHub();
+    assert(!many.prepareRecord(manyToken, cmd, PreparedHistoryKind.Plain, 0,
+                               switchedHub).accepted);
+    auto manyValid = many.validatesPreparedToken(manyToken, manyHub);
+    assert(manyValid.valid); many.installPreparedToken(manyValid);
+    assert(many.undoStack.length == 2 && manyHub.macroLength == 2 &&
+           manyHub.traceLength == 2 && manyHub.traceAt(0) == `{"n":1}` &&
+           manyHub.traceAt(1) == `{"n":2}`);
+
+    foreach (mode; [PreparedHistoryKind.InSession,
+                    PreparedHistoryKind.ReplaceInSessionTail,
+                    PreparedHistoryKind.ReplaceRunTail]) {
+        auto block = new CommandHistory(); block.blockBegin("b"); block._runOpen = true;
+        auto blockHub = new RecordObserverHub(); blockHub.setTraceArmed(true);
+        auto blockToken = block.beginPrepared();
+        auto blockResult = block.prepareRecord(blockToken, cmd, mode, 4,
+                                               blockHub, `{"plain":true}`);
+        assert(blockResult.accepted);
+        auto blockValid = block.validatesPreparedToken(blockToken, blockHub);
+        assert(blockValid.valid); block.installPreparedToken(blockValid);
+        assert(block.blockChildren.length == 1 && blockHub.traceLength == 1);
+    }
+
+    auto appendTail = new CommandHistory(); appendTail._runOpen = true;
+    appendTail.undoStack = [preparedTestEntry(cmd, "foreign")];
+    auto appendHub = new RecordObserverHub(); appendHub.setMacroActive(true);
+    auto appendToken = appendTail.beginPrepared();
+    auto appended = appendTail.prepareRecord(appendToken, cmd,
+        PreparedHistoryKind.ReplaceRunTail, 99, appendHub);
+    assert(appended.accepted && appended.undoDepth == 2 && appended.mustInstall);
+    auto appendValid = appendTail.validatesPreparedToken(appendToken, appendHub);
+    assert(appendValid.valid); appendTail.installPreparedToken(appendValid);
+    assert(appendTail.undoStack.length == 2 && !appendTail._runOpen &&
+           appendHub.macroLength == 1);
+}
+
+static assert(!__traits(compiles, {
+    PreparedHistoryToken a; PreparedHistoryToken b = a;
+}));
+static assert(!__traits(compiles, {
+    CommandHistory h; PreparedHistoryToken t; HistoryEntry e;
+    h.prepareRecord(t, e, PreparedHistoryKind.Plain, 0);
+}));
+
+struct HistoryEntry {
+    string  label;          // human-readable
+    string  args;           // serialized argstring (user-set params only)
+    string  commandName;    // internal id (e.g. "mesh.bevel")
+    Command cmd;            // owns the snapshot via instance fields
+    long    timestampMs;    // monotonic ms since session start; written
+                            //  by record() at push time. Phase 6 of the
+                            //  history-panel design doc surfaces this in
+                            //  the panel's display options.
+    uint    flags;          // bitfield of HistoryFlags; Phase 7.
+    ulong   runId;          // Run identity for in-session and retained closed
+                            //  entries. Gestures of one run share this id;
+                            //  consolidate(runId) can collapse the open tail.
+                            // 0 for ordinary entries.
+    ulong   tweakGeneration;// Pipe-tweak GENERATION token (P-E). Stamped on every
+                            //  recorded entry from CommandHistory._tweakGeneration
+                            //  at record time. Load-bearing ONLY on a Refire
+                            //  entry: replaceInSessionTail() REPLACES the tail
+                            //  Refire ONLY when the tail's generation == the new
+                            //  entry's generation — i.e. both re-grades belong to
+                            //  ONE continuous tweak interaction (a held slider
+                            //  scrub / a falloff-handle drag, whose setAttr stream
+                            //  shares one generation). Two DISCRETE tweaks (each a
+                            //  separate setAttr command / handle gesture) carry
+                            //  DIFFERENT generations, so the second APPENDS — it
+                            //  is its own in-session undo step (reference fact G2:
+                            //  drag + 2 discrete tweaks = 3 steps; one continuous
+                            //  scrub = 1 step). The generation is bumped by
+                            //  bumpTweakGeneration() at a tweak boundary: per
+                            //  discrete (non-interactive) tool.pipe.attr command,
+                            //  and at the END of a continuous interaction (panel-
+                            //  slider deactivate / falloff-handle mouse-up). 0 for
+                            //  ordinary entries (irrelevant — the gate consults it
+                            //  only for Refire tails).
+    string closedOwnerId;  // Owner of a retained closed run. Travels with each
+                           // row so maxDepth eviction cannot orphan the tail.
+    ulong closedNavigationGroupId;
+    RunCloseScope closedScope;
+
+    // Task 8560: closed session navigation may span separately retired runs.
+    // Commands keep their geometry and run identity; only navigation is grouped.
+    // Evidence: doc/transform_8560_navigation_group_amendment_2026-09-30.md.
+    bool sameClosedNavigation(const ref HistoryEntry other) const {
+        if (closedNavigationGroupId == 0 && other.closedNavigationGroupId == 0)
+            return sameClosedRun(other);
+        enum mask = HistoryFlags.ClosedRun | HistoryFlags.ClosedStep |
+                    HistoryFlags.ClosedGroupRedo;
+        return closedNavigationGroupId == other.closedNavigationGroupId &&
+            (flags & HistoryFlags.ClosedRun) != 0 &&
+            (flags & mask) == (other.flags & mask) &&
+            cmd.sessionToken() != 0 && cmd.sessionToken() == other.cmd.sessionToken() &&
+            closedOwnerId.length != 0 && closedOwnerId == other.closedOwnerId &&
+            closedScope == RunCloseScope.session && closedScope == other.closedScope;
+    }
+
+    // Task 8530: both navigation directions group only rows with the same
+    // owner, token, run and close law. History commands remain the geometry owner.
+    bool sameClosedRun(const ref HistoryEntry other) const {
+        enum mask = HistoryFlags.ClosedRun | HistoryFlags.ClosedStep |
+                    HistoryFlags.ClosedGroupRedo;
+        return (flags & HistoryFlags.ClosedRun) != 0 &&
+            (flags & mask) == (other.flags & mask) &&
+            runId == other.runId && cmd.sessionToken() == other.cmd.sessionToken() &&
+            closedOwnerId == other.closedOwnerId;
+    }
+}
+
+/// Map a command's CmdFlags to the per-entry HistoryFlags recorded on
+/// the stack. Succeeded is always set here because record() / refire
+/// only fire after a successful apply().
+private uint historyFlagsFor(const Command cmd) {
+    CmdFlags cf = cmd.cmdFlags();
+    uint flags = HistoryFlags.Succeeded;
+    // Undoable mirrors "lands on the stack" — true for BOTH undo classes
+    // (Model-undo and UI-undo). The UiUndo bit then narrows which class it is.
+    if (cmd.isUndoable())            flags |= HistoryFlags.Undoable;
+    if (cmd.isUiUndo())              flags |= HistoryFlags.UiUndo;
+    if (cf & CmdFlags.Quiet)         flags |= HistoryFlags.Quiet;
+    if (cf & CmdFlags.SideEffect)    flags |= HistoryFlags.SideEffect;
+    if (cf & CmdFlags.UndoForce)     flags |= HistoryFlags.UndoForced;
+    if (cf & CmdFlags.UndoBoundary)  flags |= HistoryFlags.UndoBoundary;
+    if (cf & CmdFlags.ToolLifecycle) flags |= HistoryFlags.ToolLifecycle;
+    return flags;
+}
+
+// ---------------------------------------------------------------------------
+// CompositeCommand — a single Command that wraps N child commands recorded
+// inside a blockBegin/blockEnd pair. It IS its own undo object (same model as
+// a plain Command): the history entry holds the composite, and undo()/redo()
+// call revert()/apply() on it without ever peeking at the children.
+//
+// The children have ALREADY been apply()'d once (record() is called after a
+// successful apply), so the composite's first life on the stack needs no
+// re-apply. revert() walks children in REVERSE order; a later redo's apply()
+// walks them forward again — symmetric with how a sequence of single commands
+// would undo/redo if they were separate entries.
+//
+// cmdFlags(): union of the children's flags. Model (=> undoable) is set if ANY
+// child is a model-mutating command, so a block that contains at least one
+// real edit lands on the stack. A block of purely non-model commands carries
+// no Model bit and record() drops it (consistent with single-command rules).
+// ---------------------------------------------------------------------------
+final class CompositeCommand : Command {
+    private Command[] children_;
+    private string    blockLabel_;
+    private CmdFlags   unionFlags_;
+
+    this(Command[] children, string blockLabel) {
+        // Construct the Command base with the first child's mesh/view/editMode
+        // context (the base ctor requires them). The composite never uses these
+        // fields directly — it delegates to children — but they must be set so
+        // the base is well-formed and any generic Command consumer is safe.
+        assert(children.length > 0,
+            "CompositeCommand requires at least one child");
+        super(children[0].meshPtr, children[0].viewRef, children[0].editModeVal);
+        children_   = children;
+        blockLabel_ = blockLabel;
+        CmdFlags u = CmdFlags.None;
+        foreach (c; children_) u |= c.cmdFlags();
+        unionFlags_ = u;
+        noteUndoRecorded();   // task 2500 — the image is `children_`
+    }
+
+    /// Children, in record order. Exposed for inspection/tests.
+    const(Command)[] children() const { return children_; }
+
+    override string name() const {
+        return blockLabel_.length > 0 ? blockLabel_ : "command.block";
+    }
+    override string label() const {
+        return blockLabel_.length > 0 ? blockLabel_ : "Command block";
+    }
+
+    // Re-apply children forward. Used by redo(). Stops and reports failure on
+    // the first child that fails to apply (partial state — same best-effort
+    // contract as the single-command redo path).
+    protected override bool applyImpl() {
+        foreach (c; children_) {
+            if (!c.apply()) return false;
+        }
+        return true;
+    }
+
+    // Revert children in REVERSE order (mirror of the apply order). Used by
+    // undo(). Stops and reports failure on the first child that fails to
+    // revert.
+    //
+    // TASK 2500 — THE BLOCK'S UNDO IMAGE IS ITS CHILD LIST, so the flag is
+    // raised in the constructor, beside the assignment that creates it. And
+    // this is the site the task's caveat protects: a child that answers
+    // `false` is a GENUINE restore failure, the chain stops there, and
+    // `Command.revert` must be able to carry that out. `false` for EMPTINESS
+    // is what went away; `false` for failure is what this depends on.
+    protected override void revertImpl() {
+        foreach_reverse (c; children_) {
+            if (!c.revert()) {
+                failRevert("child command '" ~ c.name() ~ "' failed to revert");
+                return;
+            }
+        }
+    }
+
+    override CmdFlags cmdFlags() const { return unionFlags_; }
+}
+
+/// Owner-built history image for the P1 prepared transition. Its slice fields
+/// are private and can only be produced by CommandHistory's copying prepare
+/// method; commit transfers their headers without allocation.
+struct PreparedHistoryImage {
+private:
+    HistoryEntry[] undoStack, redoStack;
+    size_t maxDepth;
+    UndoState state;
+    ulong undoEpoch;
+    bool lockout, coalesceBarrier, refireOpen;
+    Command liveCmd;
+    int blockDepth;
+    Command[] blockChildren;
+    string blockLabel;
+    ulong currentRunId;
+    bool runOpen;
+    ulong tweakGeneration;
+public:
+    @disable this(this);
+}
+
+/// Closed detached recording operations admitted by the future atomic arm
+/// transaction. The caller supplies only its Command; CommandHistory owns all
+/// entry metadata and never invokes the legacy open observer delegate.
+enum PreparedHistoryKind : ubyte {
+    Plain, InSession, ReplaceInSessionTail, ReplaceRunTail
+}
+
+private shared ulong nextPreparedHistoryOwnerId_;
+
+/// Owner-issued, noncopyable, one-shot history+observer transaction image.
+/// All allocating work is complete before this value becomes valid.
+private struct PreparedHistoryBatch {
+private:
+    PreparedHistoryImage history;
+    PreparedRecordObserverImage observer;
+    RecordObserverHub observerOwner;
+    bool hasObserver, accepted, validated;
+public:
+    @disable this(this);
+}
+
+/// The only history value allowed to escape into a future PreparedArm.
+struct PreparedHistoryToken {
+private:
+    ulong owner, generation;
+public:
+    @disable this(this);
+}
+
+struct ValidatedPreparedHistoryToken {
+private:
+    ulong owner, generation;
+public:
+    @disable this(this);
+    bool valid() const nothrow @nogc { return owner != 0; }
+}
+
+/// Scalar result safe to inspect without exposing any owned containers.
+struct PreparedHistoryResult {
+    bool accepted;
+    size_t undoDepth, redoDepth;
+    bool runOpen;
+    ulong runId, tweakGeneration;
+    bool mustInstall;
+}
+
+final class CommandHistory {
+    /// A consolidated run keeps its ToolSession owner only when every source
+    /// row belongs to that same session. Shared by live and prepared images.
+    private static ulong commonSessionToken(const HistoryEntry[] entries,
+                                             size_t start, size_t end) nothrow @nogc {
+        if (start >= end) return 0;
+        const token = entries[start].cmd.sessionToken();
+        if (token == 0) return 0;
+        foreach (i; start + 1 .. end)
+            if (entries[i].cmd.sessionToken() != token) return 0;
+        return token;
+    }
+    private immutable ulong preparedOwner_;
+    private ulong preparedGeneration_;
+    private bool preparedPending_;
+    private PreparedHistoryBatch pendingPrepared_;
+    private HistoryEntry[] undoStack;
+    private HistoryEntry[] redoStack;
+    private size_t maxDepth = 50;
+    private UndoState _state = UndoState.Active;
+
+    // Undo-epoch counter — bumped exactly once in the SUCCESS branch of undo()
+    // (after e.cmd.revert() succeeds, alongside the redo push). Never bumped
+    // by redo(), record*(), consolidate(), replaceInSessionTail(), or coalesce.
+    // Purpose: gives the exploration controller a reliable undo signal that is
+    // immune to consolidate/coalesce/replace side-effects on stack length.
+    private ulong _undoEpoch = 0;
+    // Bumped by every record, undo, redo, clear and prepared install: "has the
+    // history moved?" for a reader that keeps no row reference (K-RD rule 3).
+    private ulong _generation = 0;
+    ulong generation() const nothrow @nogc { return _generation; }
+
+    // Undo/redo step UI, Model and ToolLifecycle records in strict LIFO order:
+    // one record transfers between the stacks and calls revert()/apply(). A
+    // ToolArmLifecyclePolicy may deliberately clear redo after its undo.
+    //
+    // History: this landed behind a `_classAwareStepping` flag with an env-var
+    // kill-switch (VIBE3D_UNDO_CLASS_STEP=0) selecting a class-blind LIFO path,
+    // as a burn-in rollback hatch. Task 0727 deleted both — nothing in the tree
+    // ever set the var, no failure of this path routed to the other one, and the
+    // mechanisms that landed after it (ToolLifecycle entries and depth
+    // reporting) were never taught to the LIFO arm, so the "rollback" would not
+    // have rolled back to anything anyone had validated.
+
+    /// Read-only access to the undo epoch counter. Callers snapshot the value
+    /// at "interesting" moments and compare later; a strict increase means at
+    /// least one successful user undo occurred between snapshots.
+    ulong undoEpoch() const { return _undoEpoch; }
+
+    // Lockout — a hard, queryable gate over the WHOLE history service, DISTINCT
+    // from Suspend. While locked out, record / recordCoalescing / undo / redo /
+    // fire and the block/refire commit paths all early-return as no-ops: the
+    // stacks are frozen and navigation is refused. Suspend, by contrast, only
+    // silently drops new RECORDS during an internal revert (undo/redo still
+    // work). Lockout is the switch automation flips to assert "no history
+    // mutation may happen right now" — e.g. while a non-undoable external
+    // operation owns the document — and to query that state via /api/undo/status.
+    private bool _lockout = false;
+
+    // One-shot coalesce barrier. When set, the NEXT recordCoalescing() refuses
+    // to merge into the current top entry (it appends a fresh entry instead) and
+    // then clears the flag. Used by the active-layer-switch hook: a selection /
+    // delta edit recorded right after switching layers must start a fresh
+    // history entry rather than coalesce with the prior layer's top entry. The
+    // compareOp target-mesh equality term already prevents cross-mesh merges
+    // statelessly; this barrier is the explicit belt-and-braces for the case
+    // where an undo of layer.select resurfaces an older SAME-mesh entry as top
+    // and a new edit on that same mesh could otherwise merge across the switch.
+    private bool _coalesceBarrier = false;
+
+    // Refire block state. One slot — refire blocks don't nest. fire()
+    // checks `refireOpen` to decide whether to revert the previous live
+    // command before applying the new one.
+    private bool    refireOpen = false;
+    private Command liveCmd;
+
+    // Command-block state (blockBegin/blockEnd). `blockDepth` counts open
+    // blocks; nesting FLATTENS — every blockBegin past the first just bumps
+    // the depth, and all recorded children accumulate in the single flat
+    // `blockChildren` list. blockEnd decrements; only the outermost blockEnd
+    // (depth → 0) actually records the composite. `blockLabel` is captured at
+    // the first (outermost) blockBegin. record() routes into blockChildren
+    // whenever blockDepth > 0.
+    private int       blockDepth = 0;
+    private Command[] blockChildren;
+    private string    blockLabel;
+
+    // In-session run state. A RUN is a sequence of in-session gestures that
+    // share one runId and consolidate into ONE surviving stack entry at the
+    // run boundary / tool drop. `_currentRunId` is a monotone allocator (bumped
+    // by nextRun()); `_runOpen` is true between the first recordInSession() of a
+    // run and the consolidate() that closes it. The open-run flag is what the
+    // foreign-record guard in record()/recordCoalescing() keys on (Q-a, layer A
+    // of the design doc): a NON-tagged undoable entry appending while a run is
+    // open first consolidates that run, so the run's tagged entries are always a
+    // contiguous tail with no foreign entry buried inside.
+    //
+    // THREAD NOTE: every recorder (interactive commits, navHistory, and the
+    // epoch-marshalled HTTP /api/command, /api/toolpipe/eval handlers) runs on
+    // the MAIN thread, so this run state — like the rest of
+    // CommandHistory — needs no locking. A future HTTP-thread-direct recorder
+    // would have to marshal to main like every existing path.
+    private ulong _currentRunId = 0;
+    private ulong _lastClosedNavigationGroupId;
+    private bool  _runOpen      = false;
+
+    // Pipe-tweak GENERATION (P-E). A monotone token that distinguishes a
+    // CONTINUOUS tweak interaction (one held slider scrub / one falloff-handle
+    // drag — its setAttr stream shares ONE generation) from a DISCRETE tweak
+    // (each a separate setAttr command / handle gesture, its own generation).
+    // recordInSession()/replaceInSessionTail() stamp the recorded entry with
+    // this value; replaceInSessionTail() REPLACES a Refire tail ONLY when the
+    // tail's generation matches (same continuous interaction), else APPENDS. The
+    // counter starts at 0 and is bumped by bumpTweakGeneration() at a tweak
+    // boundary (see the field doc on HistoryEntry.tweakGeneration). Default 0
+    // means a caller that never bumps (e.g. the replaceInSessionTail unit tests)
+    // sees pure REPLACE — the historical Refire-keyed behaviour, unchanged.
+    private ulong _tweakGeneration = 0;
+
+    this() nothrow @nogc {
+        preparedOwner_ = atomicOp!"+="(nextPreparedHistoryOwnerId_, 1UL);
+    }
+
+    private static HistoryEntry preparedEntry(Command cmd, uint flags,
+            ulong runId, ulong tweakGeneration) {
+        auto args = serializeParams(cmd.params());
+        return HistoryEntry(cmd.label, args, cmd.name, cmd, nowMs(), flags,
+                            runId, tweakGeneration, "");
+    }
+
+    private static void consolidatePrepared(ref PreparedHistoryImage p,
+                                             ulong runId) {
+        scope(exit) p.runOpen = false;
+        size_t end = p.undoStack.length, start = end;
+        while (start && (p.undoStack[start-1].flags & HistoryFlags.InSession) &&
+               p.undoStack[start-1].runId == runId) --start;
+        size_t n = end - start;
+        if (!n) return;
+        import vibe3d.editing.commands.editor.commands.mesh.vertex_edit : MeshVertexEdit;
+        MeshVertexEdit[] gathered;
+        gathered.reserve(n);
+        bool allVertexEdits = true;
+        foreach (i; start .. end) {
+            auto edit = cast(MeshVertexEdit) p.undoStack[i].cmd;
+            if (edit is null) { allVertexEdits = false; break; }
+            gathered ~= edit;
+        }
+        if (allVertexEdits) {
+            if (n == 1) {
+                p.undoStack[start].flags &=
+                    ~cast(uint)(HistoryFlags.InSession | HistoryFlags.Refire);
+                p.undoStack[start].runId = 0;
+                return;
+            }
+            auto merged = MeshVertexEdit.mergeRun(gathered);
+            merged.markSession(commonSessionToken(p.undoStack, start, end));
+            auto first = p.undoStack[start];
+            auto entry = HistoryEntry(merged.label, serializeParams(merged.params()),
+                merged.name, merged, first.timestampMs, historyFlagsFor(merged), 0, 0, "");
+            p.undoStack = p.undoStack[0..start] ~ entry ~ p.undoStack[end..$];
+            return;
+        }
+        auto mergeable = cast(RunMergeable) p.undoStack[start].cmd;
+        if (mergeable is null) return;
+        if (n == 1) {
+            p.undoStack[start].flags &=
+                ~cast(uint)(HistoryFlags.InSession | HistoryFlags.Refire);
+            p.undoStack[start].runId = 0;
+            return;
+        }
+        Command[] later;
+        later.reserve(n - 1);
+        foreach (i; start + 1 .. end) later ~= p.undoStack[i].cmd;
+        auto merged = mergeable.mergeRunTail(later);
+        if (merged is null) return;
+        merged.markSession(commonSessionToken(p.undoStack, start, end));
+        auto first = p.undoStack[start];
+        auto entry = HistoryEntry(merged.label, serializeParams(merged.params()),
+            merged.name, merged, first.timestampMs, historyFlagsFor(merged), 0, 0, "");
+        p.undoStack = p.undoStack[0..start] ~ entry ~ p.undoStack[end..$];
+    }
+
+    PreparedHistoryToken beginPrepared() {
+        PreparedHistoryToken token;
+        if (preparedPending_) return token;
+        preparedPending_ = true;
+        ++preparedGeneration_;
+        pendingPrepared_.history = prepareCurrentImage();
+        pendingPrepared_.observerOwner = null;
+        pendingPrepared_.hasObserver = false;
+        pendingPrepared_.accepted = false;
+        pendingPrepared_.validated = false;
+        token.owner = preparedOwner_;
+        token.generation = preparedGeneration_;
+        return token;
+    }
+
+    private bool ownsPrepared(ref PreparedHistoryToken token) const nothrow @nogc {
+        return preparedPending_ && token.owner == preparedOwner_ &&
+               token.generation == preparedGeneration_;
+    }
+
+    /// Evolve the owner-held detached image from the Command itself. Metadata
+    /// and HistoryEntry construction remain private owner responsibilities.
+    PreparedHistoryResult prepareRecord(ref PreparedHistoryToken token,
+            Command cmd, PreparedHistoryKind kind, ulong runId,
+            RecordObserverHub observerHub = null,
+            string preparedTraceJson = null) {
+        if (!ownsPrepared(token)) return PreparedHistoryResult.init;
+        ref batch = pendingPrepared_;
+        batch.accepted = false;
+        batch.validated = false;
+        if (batch.hasObserver && observerHub !is batch.observerOwner)
+            return PreparedHistoryResult.init;
+
+        bool wasRunOpen = batch.history.runOpen;
+        bool guarded = batch.history.lockout || cmd is null ||
+            !cmd.isUndoable || batch.history.state != UndoState.Active;
+        if (kind == PreparedHistoryKind.ReplaceRunTail)
+            batch.history.runOpen = false;
+        HistoryEntry entry;
+        uint observerFlags;
+        if (!guarded) {
+            uint flags = historyFlagsFor(cmd);
+            observerFlags = flags;
+            final switch (kind) {
+            case PreparedHistoryKind.Plain:
+                entry = preparedEntry(cmd, flags, 0, 0); break;
+            case PreparedHistoryKind.InSession:
+                entry = preparedEntry(cmd, flags | HistoryFlags.InSession,
+                    runId, batch.history.tweakGeneration); break;
+            case PreparedHistoryKind.ReplaceInSessionTail:
+                entry = preparedEntry(cmd, flags | HistoryFlags.InSession |
+                    HistoryFlags.Refire, runId, batch.history.tweakGeneration); break;
+            case PreparedHistoryKind.ReplaceRunTail:
+                entry = preparedEntry(cmd, flags, 0, 0); break;
+            }
+        }
+        if (!guarded) final switch (kind) {
+        case PreparedHistoryKind.Plain:
+            if (batch.history.runOpen)
+                consolidatePrepared(batch.history, batch.history.currentRunId);
+            if (batch.history.blockDepth) batch.history.blockChildren ~= cmd;
+            else batch.history.undoStack ~= entry;
+            break;
+        case PreparedHistoryKind.InSession:
+            if (batch.history.blockDepth) {
+                if (wasRunOpen)
+                    consolidatePrepared(batch.history, batch.history.currentRunId);
+                batch.history.blockChildren ~= cmd;
+                observerFlags = historyFlagsFor(cmd);
+                break;
+            }
+            batch.history.undoStack ~= entry;
+            batch.history.runOpen = true;
+            break;
+        case PreparedHistoryKind.ReplaceInSessionTail:
+            if (batch.history.blockDepth) {
+                if (batch.history.runOpen)
+                    consolidatePrepared(batch.history, batch.history.currentRunId);
+                batch.history.blockChildren ~= cmd;
+                observerFlags = historyFlagsFor(cmd);
+                break;
+            }
+            bool replace = batch.history.undoStack.length &&
+                (batch.history.undoStack[$-1].flags & HistoryFlags.InSession) &&
+                (batch.history.undoStack[$-1].flags & HistoryFlags.Refire) &&
+                batch.history.undoStack[$-1].runId == runId &&
+                batch.history.undoStack[$-1].tweakGeneration == batch.history.tweakGeneration;
+            if (replace) batch.history.undoStack[$-1] = entry;
+            else batch.history.undoStack ~= entry;
+            batch.history.runOpen = true;
+            break;
+        case PreparedHistoryKind.ReplaceRunTail:
+            if (batch.history.blockDepth) {
+                if (wasRunOpen)
+                    consolidatePrepared(batch.history, batch.history.currentRunId);
+                batch.history.blockChildren ~= cmd;
+                observerFlags = historyFlagsFor(cmd);
+                break;
+            }
+            size_t end = batch.history.undoStack.length, start = end;
+            while (start &&
+                   (batch.history.undoStack[start-1].flags & HistoryFlags.InSession) &&
+                   batch.history.undoStack[start-1].runId == runId) --start;
+            if (start < end) {
+                entry.timestampMs = batch.history.undoStack[start].timestampMs;
+                batch.history.undoStack = batch.history.undoStack[0..start] ~
+                    entry ~ batch.history.undoStack[end..$];
+            } else batch.history.undoStack ~= entry;
+            break;
+        }
+        if (!guarded) {
+            if (!batch.history.blockDepth) {
+                if (batch.history.undoStack.length > batch.history.maxDepth)
+                    batch.history.undoStack =
+                        batch.history.undoStack[$-batch.history.maxDepth..$].dup;
+                batch.history.redoStack = null;
+            }
+            batch.accepted = true;
+            if (observerHub !is null) {
+                string line = entry.commandName ~
+                    (entry.args.length ? " " ~ entry.args : "");
+                if (batch.hasObserver) {
+                    if (!observerHub.evolvePrepared(batch.observer, line,
+                            observerFlags, preparedTraceJson))
+                        return PreparedHistoryResult.init;
+                } else {
+                    batch.observer = observerHub.prepareRecord(line, observerFlags,
+                                                                preparedTraceJson);
+                    batch.observerOwner = observerHub;
+                    batch.hasObserver = true;
+                }
+            }
+        }
+        return PreparedHistoryResult(batch.accepted,
+            batch.history.undoStack.length, batch.history.redoStack.length,
+            batch.history.runOpen, batch.history.currentRunId,
+            batch.history.tweakGeneration,
+            batch.accepted || kind == PreparedHistoryKind.ReplaceRunTail);
+    }
+
+    PreparedHistoryResult prepareConsolidate(ref PreparedHistoryToken token,
+                                              ulong runId) {
+        if (!ownsPrepared(token)) return PreparedHistoryResult.init;
+        ref batch = pendingPrepared_;
+        batch.validated = false;
+        consolidatePrepared(batch.history, runId);
+        batch.accepted = true;
+        return PreparedHistoryResult(true, batch.history.undoStack.length,
+            batch.history.redoStack.length, batch.history.runOpen,
+            batch.history.currentRunId, batch.history.tweakGeneration);
+    }
+
+    PreparedHistoryResult prepareInvalidateRedo(ref PreparedHistoryToken token) {
+        if (!ownsPrepared(token)) return PreparedHistoryResult.init;
+        ref batch = pendingPrepared_;
+        batch.validated = false;
+        const accepted = !batch.history.lockout &&
+                         batch.history.state == UndoState.Active;
+        if (accepted) batch.history.redoStack = null;
+        batch.accepted = accepted;
+        return PreparedHistoryResult(true, batch.history.undoStack.length,
+            batch.history.redoStack.length, batch.history.runOpen,
+            batch.history.currentRunId, batch.history.tweakGeneration,
+            accepted);
+    }
+
+    ulong prepareNextRun(ref PreparedHistoryToken token) {
+        if (!ownsPrepared(token)) return 0;
+        pendingPrepared_.validated = false;
+        return ++pendingPrepared_.history.currentRunId;
+    }
+
+    PreparedHistoryResult prepareLifecycle(ref PreparedHistoryToken token,
+                                            Command cmd) {
+        if (!ownsPrepared(token)) return PreparedHistoryResult.init;
+        ref batch = pendingPrepared_;
+        batch.validated = false;
+        bool accepted = !batch.history.lockout && cmd !is null &&
+                        batch.history.state == UndoState.Active;
+        if (accepted) {
+            auto entry = HistoryEntry(cmd.label, "", cmd.name, cmd, nowMs(),
+                historyFlagsFor(cmd), 0, 0, "");
+            batch.history.undoStack ~= entry;
+            if (batch.history.undoStack.length > batch.history.maxDepth)
+                batch.history.undoStack = batch.history.undoStack[$-batch.history.maxDepth..$].dup;
+            batch.history.redoStack = null;
+        }
+        batch.accepted = accepted;
+        return PreparedHistoryResult(accepted, batch.history.undoStack.length,
+            batch.history.redoStack.length, batch.history.runOpen,
+            batch.history.currentRunId, batch.history.tweakGeneration);
+    }
+
+    ValidatedPreparedHistoryToken validatesPreparedToken(ref PreparedHistoryToken token,
+                                RecordObserverHub observerHub = null) nothrow @nogc {
+        ValidatedPreparedHistoryToken validated;
+        if (!ownsPrepared(token)) return validated;
+        if (pendingPrepared_.hasObserver &&
+            (observerHub !is pendingPrepared_.observerOwner ||
+             !observerHub.validates(pendingPrepared_.observer))) return validated;
+        pendingPrepared_.validated = true;
+        validated.owner = token.owner; validated.generation = token.generation;
+        token.owner = 0; token.generation = 0;
+        return validated;
+    }
+
+    bool ownsValidated(ref ValidatedPreparedHistoryToken token) const nothrow @nogc {
+        return preparedPending_ && pendingPrepared_.validated &&
+               token.owner == preparedOwner_ && token.generation == preparedGeneration_;
+    }
+
+    /// Consume after all fallible validation. History installs first; the
+    /// detached observer image follows at the legacy post-history point.
+    void installPreparedToken(ref ValidatedPreparedHistoryToken token) nothrow @nogc {
+        if (!ownsValidated(token)) return;
+        preparedPending_ = false;
+        token.owner = 0; token.generation = 0;
+        installPreparedImage(pendingPrepared_.history);
+        if (pendingPrepared_.hasObserver)
+            pendingPrepared_.observerOwner.installPrepared(pendingPrepared_.observer);
+        pendingPrepared_.observerOwner = null;
+        pendingPrepared_.hasObserver = false;
+        pendingPrepared_.validated = false;
+    }
+
+    void discardPreparedToken(ref PreparedHistoryToken token) nothrow @nogc {
+        if (!ownsPrepared(token)) return;
+        preparedPending_ = false;
+        token.owner = 0; token.generation = 0;
+        pendingPrepared_.history.undoStack = null;
+        pendingPrepared_.history.redoStack = null;
+        pendingPrepared_.history.blockChildren = null;
+        pendingPrepared_.observerOwner = null;
+        pendingPrepared_.hasObserver = false;
+        pendingPrepared_.validated = false;
+    }
+
+    void discardValidatedPreparedToken(ref ValidatedPreparedHistoryToken token)
+            nothrow @nogc {
+        if (!ownsValidated(token)) return;
+        preparedPending_ = false;
+        token.owner = 0; token.generation = 0;
+        pendingPrepared_.history.undoStack = null;
+        pendingPrepared_.history.redoStack = null;
+        pendingPrepared_.history.blockChildren = null;
+        pendingPrepared_.observerOwner = null;
+        pendingPrepared_.hasObserver = false;
+        pendingPrepared_.validated = false;
+    }
+
+    /// Fallible prepare half: duplicate every mutable history-owned container.
+    /// This is inert until installPreparedImage is called by the future P1.0c
+    /// commit; no existing recorder or navigation door calls either method.
+    PreparedHistoryImage prepareCurrentImage() {
+        PreparedHistoryImage p;
+        p.undoStack = undoStack.dup;
+        p.redoStack = redoStack.dup;
+        p.maxDepth = maxDepth; p.state = _state; p.undoEpoch = _undoEpoch;
+        p.lockout = _lockout; p.coalesceBarrier = _coalesceBarrier;
+        p.refireOpen = refireOpen; p.liveCmd = liveCmd;
+        p.blockDepth = blockDepth; p.blockChildren = blockChildren.dup;
+        p.blockLabel = blockLabel.dup;
+        p.currentRunId = _currentRunId; p.runOpen = _runOpen;
+        p.tweakGeneration = _tweakGeneration;
+        return p;
+    }
+
+    /// Prepare the exact lifecycle append image: append to undo, enforce the
+    /// owner's depth policy and invalidate redo, with every allocation here.
+    PreparedHistoryImage prepareLifecycleAppend(HistoryEntry entry) {
+        auto p = prepareCurrentImage();
+        p.undoStack ~= entry;
+        if (p.undoStack.length > p.maxDepth)
+            p.undoStack = p.undoStack[$ - p.maxDepth .. $].dup;
+        p.redoStack = null;
+        return p;
+    }
+
+    /// Nonallocating owner install. Assignments transfer already-prepared
+    /// array/string headers; no command hooks or history callbacks run.
+    void installPreparedImage(ref PreparedHistoryImage p) nothrow @nogc {
+        undoStack = p.undoStack; redoStack = p.redoStack;
+        maxDepth = p.maxDepth; _state = p.state; _undoEpoch = p.undoEpoch;
+        ++_generation;
+        _lockout = p.lockout; _coalesceBarrier = p.coalesceBarrier;
+        refireOpen = p.refireOpen; liveCmd = p.liveCmd;
+        blockDepth = p.blockDepth; blockChildren = p.blockChildren;
+        blockLabel = p.blockLabel; _currentRunId = p.currentRunId;
+        _runOpen = p.runOpen; _tweakGeneration = p.tweakGeneration;
+        p.undoStack = null; p.redoStack = null; p.blockChildren = null;
+        p.blockLabel = null; p.liveCmd = null;
+    }
+
+    /// Phase 7 macro recorder hook. Invoked AFTER an entry lands on
+    /// the undo stack — receives the canonical argstring command
+    /// line (commandName + " " + args, or just commandName) plus the
+    /// entry's flags. The macro recorder, when active, appends the
+    /// line to its capture buffer. nullable.
+    void delegate(string commandLine, uint flags) onRecord;
+
+    // ----- state -----------------------------------------------------------
+
+    UndoState state() const { return _state; }
+    void setState(UndoState s) { _state = s; }
+
+    /// Replay a tool owner without recording a second activation row. This is
+    /// the same suspended history context used by lifecycle undo/redo.
+    void replayWithoutRecord(scope void delegate() action) {
+        auto previous = _state;
+        _state = UndoState.Suspend;
+        scope(exit) _state = previous;
+        action();
+    }
+
+    // RAII helper for "suspend during this scope, restore on exit".
+    struct Suspend {
+        private CommandHistory h;
+        private UndoState prev;
+        @disable this(this);
+        ~this() { h._state = prev; }
+    }
+    Suspend suspended() {
+        Suspend s = { h: this, prev: _state };
+        _state = UndoState.Suspend;
+        return s;
+    }
+
+    // ----- lockout ---------------------------------------------------------
+
+    /// Whether the history is currently locked out (all mutation / navigation
+    /// refused). Read-only — safe to call from the HTTP server thread for
+    /// /api/undo/status alongside state() / canUndo() / canRedo().
+    bool lockedOut() const { return _lockout; }
+
+    /// Engage or release the lockout. Direct setter for callers that pair
+    /// set(true)/set(false) themselves; prefer locked() for RAII scoping so a
+    /// lockout can never stick if an exception unwinds the scope.
+    void setLockout(bool on) { _lockout = on; }
+
+    // RAII helper mirroring Suspend: "lock out for this scope, restore on exit".
+    // Restores the PRIOR value (not unconditionally false) so nested scopes
+    // compose. Use as: `auto g = history.locked();`.
+    struct Lockout {
+        private CommandHistory h;
+        private bool prev;
+        @disable this(this);
+        ~this() { h._lockout = prev; }
+    }
+    Lockout locked() {
+        Lockout g = { h: this, prev: _lockout };
+        _lockout = true;
+        return g;
+    }
+
+    // ----- in-session runs -------------------------------------------------
+
+    /// The current run id — the value recordInSession() stamps and a
+    /// consolidate() target. Monotone; publicly readable so a tool can read
+    /// it to tag a commit (it does NOT change merely by reading).
+    ulong currentRunId() const { return _currentRunId; }
+
+    /// Whether an in-session run is currently open (between its first
+    /// recordInSession() and the consolidate() that closes it).
+    bool runOpen() const { return _runOpen; }
+
+    /// Allocate + return a fresh run id. A run boundary (hard boundary, bank
+    /// switch, tool drop) consolidates the just-ended run then bumps to a new
+    /// id so the next run's gestures are tagged distinctly.
+    ulong nextRun() { return ++_currentRunId; }
+
+    /// The current pipe-tweak generation token (P-E). Read by
+    /// replaceInSessionTail()/recordInSession() to stamp a recorded entry;
+    /// publicly readable so a caller can correlate. Does NOT change merely by
+    /// reading. See the field doc on HistoryEntry.tweakGeneration.
+    ulong currentTweakGeneration() const { return _tweakGeneration; }
+
+    /// Open a NEW pipe-tweak generation (P-E) and return it. Called at a tweak
+    /// BOUNDARY so the NEXT re-grade's entry carries a generation distinct from
+    /// the prior re-grade's — making two DISCRETE tweaks APPEND as separate
+    /// in-session undo steps (G2), while the contiguous setAttr stream of ONE
+    /// continuous interaction (which does NOT bump between its frames) stays at
+    /// one generation and REPLACEs into one step. Call sites:
+    ///   - per discrete (non-interactive) tool.pipe.attr command (app.d
+    ///     command dispatch): each HTTP/script setAttr is its own generation;
+    ///   - at the END of a continuous interaction: a forms-panel slider
+    ///     deactivate (IsItemDeactivatedAfterEdit, forms_render.d) and a
+    ///     falloff-handle drag mouse-up (xfrm_transform.d onMouseButtonUp), so
+    ///     the following tweak starts fresh.
+    /// Monotone; never decreases. Idempotent in effect — a redundant bump only
+    /// skips a generation value, never breaks the gate (a fresh generation can
+    /// never spuriously match a prior Refire tail).
+    ulong bumpTweakGeneration() { return ++_tweakGeneration; }
+
+    // Foreign-record guard (Q-a, layer A). Invoked at the top of the public
+    // record() / recordCoalescing() entry points: if an open in-session run
+    // exists, consolidate it FIRST so the foreign (non-tagged) entry lands on
+    // top of one surviving consolidated entry rather than buried inside the
+    // run. Idempotent — a no-op once the run is closed (so the internal
+    // recordCoalescing()->record() hop does not double-consolidate).
+    private void consolidateOpenRunIfForeign() {
+        if (_runOpen) consolidate(_currentRunId);
+    }
+
+    // ----- recording -------------------------------------------------------
+
+    /// Monotonic milliseconds since session start — the stamp every recorder
+    /// writes into `HistoryEntry.timestampMs`.
+    private static long nowMs() {
+        import core.time : MonoTime;
+        return MonoTime.currTime.ticks * 1000 / MonoTime.ticksPerSecond;
+    }
+
+    /// THE append: build the entry, push it, honour `maxDepth`, invalidate the
+    /// redo timeline, and (if asked) feed the macro recorder.
+    ///
+    /// Task 0705 (audit 4, D9). This body was written out FIVE times —
+    /// `record`, `recordToolLifecycle`, `recordInSession`, `refireBegin`'s
+    /// dangling-commit branch (retired by task 0708, see below), and
+    /// `replaceInSessionTailWith`'s append arm —
+    /// each under a comment of the form "identical to record() EXCEPT …".
+    /// The copies were mechanically the same and had NOT drifted in what they
+    /// stamp; what makes one home worth having is the next FIELD: `runId`
+    /// (task 0187 in-session runs) and `tweakGeneration` (P-E) each landed in
+    /// one literal and were absent from the other four, which is why an
+    /// ordinary entry carries `runId: 0` by omission rather than by decision.
+    /// Adding a sixth field is now one edit, not five.
+    ///
+    /// `fireHook` is a REQUIRED argument, deliberately without a default: the
+    /// one caller that does not feed the macro recorder
+    /// (`recordToolLifecycle`) has a 23-line comment explaining why, and that
+    /// answer should be forced out of the next caller too rather than
+    /// inherited from whichever default someone picked.
+    ///
+    /// What is NOT here: the guards. `_lockout` / `cmd is null` /
+    /// `!cmd.isUndoable` / `_state != Active` / `blockDepth > 0` /
+    /// `consolidateOpenRunIfForeign()` differ per recorder for reasons each
+    /// one documents. Hoisting them would have merged four deliberate policies
+    /// into one accidental one.
+    ///
+    /// FOUR callers, not five, since task 0708: `refireBegin`'s
+    /// dangling-commit branch was the one whose guard set nobody had
+    /// documented, and the reason turned out to be that nobody chose it. It
+    /// now commits through `record()` — the same exit `refireEnd()` takes for
+    /// the same object — so the refire cycle has ONE commit path and no guard
+    /// set of its own to keep in step.
+    private void pushEntry(Command cmd, string args, uint flags,
+                           ulong runId, ulong tweakGen, long tMs,
+                           bool fireHook) {
+        HistoryEntry e = { label: cmd.label,
+                           args:  args,
+                           commandName: cmd.name,
+                           cmd: cmd,
+                           timestampMs: tMs,
+                           flags: flags,
+                           runId: runId,
+                           tweakGeneration: tweakGen };
+        undoStack ~= e;
+        ++_generation;
+        if (undoStack.length > maxDepth)
+            undoStack = undoStack[$ - maxDepth .. $];
+        // Any new action invalidates the redo timeline.
+        redoStack.length = 0;
+        if (fireHook) fireRecordHook(cmd.name, args, flags);
+    }
+
+    /// Hand the canonical command line to the macro recorder, if one is
+    /// attached. The recorder filters by its own `active` flag — this is not
+    /// gated here, so future hooks can observe every entry unconditionally.
+    private void fireRecordHook(string commandName, string args, uint flags) {
+        if (onRecord !is null)
+            onRecord(serializeCommandLine(commandName, args), flags);
+    }
+
+    // Called by the HTTP dispatcher AFTER a successful apply(). The command
+    // must already be holding its pre-apply snapshot in instance fields.
+    void record(Command cmd) {
+        if (_lockout) return;
+        if (cmd is null) return;
+        if (!cmd.isUndoable) return;
+        if (_state != UndoState.Active) return;
+
+        // Q-a guard: a foreign (non-tagged) undoable append closes any open
+        // in-session run first, keeping a run's tagged entries a contiguous
+        // tail. Block children defer to the open block, not the stack, so they
+        // are not a foreign append in the run sense — but consolidating before
+        // routing is still correct (a run cannot be open inside a command block
+        // in practice), and keeps the single touch point simple.
+        consolidateOpenRunIfForeign();
+
+        // Inside an open command block, the command becomes a child of the
+        // block instead of its own stack entry. The composite lands as one
+        // entry at blockEnd(). Same undoable/Active gating as a normal record
+        // applied above, so non-model commands never enter the child list.
+        if (blockDepth > 0) {
+            blockChildren ~= cmd;
+            // Still feed the macro recorder per child so a captured macro
+            // mirrors the individual commands the user ran (the block is a
+            // history-grouping concept, not a scripting one).
+            fireRecordHook(cmd.name, serializeParams(cmd.params()),
+                           historyFlagsFor(cmd));
+            return;
+        }
+
+        pushEntry(cmd, serializeParams(cmd.params()), historyFlagsFor(cmd),
+                  0, 0, nowMs(), /*fireHook=*/true);
+    }
+
+    // Coalescing record (Phase 2 op-merge). Used by the PROGRAMMATIC command
+    // dispatcher (HTTP /api/command, keyboard/UI command shortcuts, scripted
+    // commands) — NOT by interactive tool commits, which call record()
+    // directly so each gesture is its own entry.
+    //
+    // If the freshly-applied `cmd` reports compareOp(top) == Compatible against
+    // the command currently on top of the undo stack, the two are merged in
+    // place: the existing top entry adopts `cmd`'s post-state while keeping its
+    // own pre-state, so the run collapses to ONE undo step. Otherwise this
+    // falls through to record() for a normal append.
+    //
+    // Honors the SAME guards record() honors: dropped while not Active
+    // (Suspend), and routed into the open command block while blockDepth > 0
+    // (coalescing is bypassed inside a block — the block IS the grouping).
+    void recordCoalescing(Command cmd) {
+        if (_lockout) return;
+        if (cmd is null) return;
+        if (!cmd.isUndoable) return;
+        if (_state != UndoState.Active) return;
+        // Q-a guard: close any open in-session run before a foreign coalescing
+        // append (same rationale as record()). Done here too — the coalescing
+        // merge path below can return early without reaching the inner
+        // record() hop, so the guard must run at this entry point as well.
+        consolidateOpenRunIfForeign();
+        // Inside an open command block, defer to record()'s block-child path
+        // (no in-place coalesce — the block already collapses its children).
+        if (blockDepth > 0) { record(cmd); return; }
+
+        // One-shot coalesce barrier (set by the active-layer-switch hook):
+        // refuse to merge into the current top, append a fresh entry instead.
+        if (_coalesceBarrier) {
+            _coalesceBarrier = false;
+            record(cmd);
+            return;
+        }
+
+        // Try to merge into the current top entry. The merge is type-erased:
+        // compareOp() decides COMPATIBLE, then the top command's mergeFrom()
+        // folds `cmd`'s post-state in place (each coalescing command type —
+        // MeshVertexEdit, MeshSelectionEdit — implements its own downcast).
+        if (undoStack.length > 0) {
+            auto top = &undoStack[$ - 1];
+            if (cmd.compareOp(top.cmd) == CompareResult.Compatible) {
+                // The dispatcher already applied `cmd`, so the mesh holds the
+                // merged post-state — do NOT re-apply. Fold the newer post-state
+                // into the kept-older top entry via the type-erased hook.
+                if (top.cmd.mergeFrom(cmd)) {
+                    // Refresh the top entry's args/label from the (now merged)
+                    // top command so /api/history reflects the latest values.
+                    top.args  = serializeParams(top.cmd.params());
+                    top.label = top.cmd.label;
+                    ++_generation;
+
+                    // MANDATORY invariant 1: a merge diverges the mesh from any
+                    // redo entry, so the redo timeline MUST be cleared.
+                    redoStack.length = 0;
+
+                    // Fire the macro hook exactly as record() does, so a
+                    // running macro still observes coalesced edits.
+                    // NOTE the receiver: the line describes the MERGED-INTO
+                    // command (`top.cmd`), not the one just applied — this is
+                    // the one hook site whose argument is not the caller's own
+                    // `cmd`, and it is deliberate (the macro should replay the
+                    // coalesced result, not each swallowed step).
+                    fireRecordHook(top.cmd.name, top.args,
+                                   historyFlagsFor(top.cmd));
+                    return;
+                }
+            }
+        }
+
+        // No compatible top entry → normal append (record() clears redo +
+        // fires onRecord).
+        record(cmd);
+    }
+
+    /// Arm a one-shot coalesce barrier: the NEXT recordCoalescing() will append
+    /// a fresh entry rather than merge into the current top, then disarm. Called
+    /// by the active-layer-switch hook so a selection/delta edit immediately
+    /// after a layer switch starts a new history entry on the new layer.
+    void breakCoalescing() { _coalesceBarrier = true; }
+
+    /// Record a tool-lifecycle entry (ToolActivationCommand). Unlike record(),
+    /// this does NOT call consolidateOpenRunIfForeign (the run is already closed
+    /// at the emit point — consolidate() ran inside deactivate()). Appends to
+    /// undoStack, clears redo. Respects _state != Active (so re-entry during a
+    /// Suspend-wrapped revert/apply is silently dropped).
+    void recordToolLifecycle(Command cmd) {
+        if (_lockout) return;
+        if (cmd is null) return;
+        if (_state != UndoState.Active) return;
+        // `args == ""` (the command carries no wire args) and `fireHook=false`
+        // (see the note below) are this recorder's two deliberate divergences
+        // from `record()`; the third — no `isUndoable` gate, lifecycle entries
+        // being undoable by construction — is the guard above.
+        pushEntry(cmd, "", historyFlagsFor(cmd), 0, 0, nowMs(),
+                  /*fireHook=*/false);
+
+        // NO macro hook here — and that is DELIBERATE (task 0678 D9-a,
+        // reverted after measuring what the hook actually produced).
+        //
+        // The audit flagged this sibling for not calling `onRecord`, and the
+        // premise was that a recorded macro therefore "replays with the tool
+        // left armed". Both halves are false, measured on a live server:
+        //
+        //   * A macro never contained the ARMING line either. The recorder is
+        //     fed only from `onRecord`, and `record()` returns on
+        //     `!cmd.isUndoable` BEFORE firing it; `ToolSetCommand` carries
+        //     CmdFlags.SideEffect, so `tool.set <id> on` never reaches a macro.
+        //     There is no arming step for a drop step to balance.
+        //   * The line a drop would emit is actively harmful. `tool.set <id>
+        //     off` IGNORES the id and deactivates whatever is active
+        //     (commands/tool/set.d), so replaying a macro recorded from an
+        //     ordinary session would drop the user's armed tool — committing
+        //     or discarding an open edit that has nothing to do with the macro.
+        //
+        // Recording tool lifecycle in macros needs the SYMMETRIC pair (arm and
+        // drop, both id-addressed), not this one line. Until then the silence
+        // is correct. The other two divergences from record() are deliberate
+        // too: no isUndoable gate (lifecycle entries are undoable by
+        // construction) and args=="" (the command carries no wire args).
+    }
+
+    /// Record `cmd` as ONE in-session entry of the run identified by `runId`.
+    /// Identical to record() in every guard + side-effect (lockout / null /
+    /// undoable / Active gating, maxDepth trim, macro hook) EXCEPT:
+    ///   - the entry is stamped HistoryFlags.InSession + runId, and
+    ///   - it sets _runOpen so the foreign-record guard knows a run is live.
+    /// Like record()/recordCoalescing() it CLEARS the redo stack (N1): a fresh
+    /// in-session gesture invalidates the redo timeline exactly as a committed
+    /// record does, so an in-session redo can never re-apply a stale entry.
+    ///
+    /// Does NOT call the foreign-record guard — an in-session entry is, by
+    /// definition, NOT a foreign append (it extends the open run).
+    void recordInSession(Command cmd, ulong runId) {
+        if (_lockout) return;
+        if (cmd is null) return;
+        if (!cmd.isUndoable) return;
+        if (_state != UndoState.Active) return;
+
+        // Inside an open command block, an in-session gesture is not a designed
+        // scenario (gizmo runs do not open blocks); defer to record()'s
+        // block-child path so behaviour matches a plain record there.
+        if (blockDepth > 0) { record(cmd); return; }
+
+        // The run is now open until consolidate(runId) closes it. Set BEFORE
+        // the append and not after it: the append fires the macro hook, and
+        // the hook used to run with `_runOpen` already true (it was set
+        // between the redo-clear and the callback). Keeping that ordering
+        // means a re-entrant hook still sees the same history state it did.
+        _runOpen = true;
+
+        // P-E: stamp the live tweak generation. Load-bearing only when this
+        // entry is later a Refire tail (see replaceInSessionTail). A plain
+        // gesture entry carries it harmlessly.
+        pushEntry(cmd, serializeParams(cmd.params()),
+                  historyFlagsFor(cmd) | HistoryFlags.InSession,
+                  runId, _tweakGeneration, nowMs(), /*fireHook=*/true);
+    }
+
+    /// Record `cmd` as an in-session RE-GRADE (a falloff re-fire) of the open
+    /// run, tagged InSession + Refire + runId. This is the ONE primitive the
+    /// re-fire path routes through (the caller no longer makes the
+    /// REPLACE-vs-APPEND decision itself — this primitive owns it, keyed on the
+    /// trustworthy Refire bit). It keeps N consecutive re-grades at ONE undo
+    /// step while never dropping a plain gesture entry. It is the narrow
+    /// stack-mutation seam a tool routes through instead of reaching into the
+    /// stack itself — command_history stays the single owner of stack mutation
+    /// (mirrors the consolidate() ownership boundary).
+    ///
+    /// REPLACE-vs-APPEND, keyed on the Refire bit (NOT on whether ANY re-grade
+    /// happened this run):
+    ///   - If the undo-stack tail is (InSession && Refire && runId == runId) —
+    ///     i.e. the tail is THIS run's prior RE-GRADE entry — DROP it (length
+    ///     -= 1, NOT onto the redo stack: a superseded re-grade is not a
+    ///     navigable step), then append the new one. The net stack length is
+    ///     unchanged: N consecutive tweaks stay ONE undo step.
+    ///   - Otherwise (empty stack; or the tail is a plain GESTURE entry
+    ///     (InSession but NOT Refire); or it belongs to a different run; or it is
+    ///     untagged/foreign) it DEGRADES TO APPEND — recordInSession then sets
+    ///     the Refire bit. This is the load-bearing safety property: when a
+    ///     SECOND gesture lands after a first tweak (stack tail = the gesture,
+    ///     not a re-grade), a following tweak APPENDS rather than dropping the
+    ///     gesture, so the gesture's geometry contribution is never lost from
+    ///     the consolidated drop entry.
+    ///
+    /// Both arms tag the recorded entry with the Refire bit (so the NEXT
+    /// re-grade sees a Refire tail and replaces it). recordInSession clears the
+    /// redo stack (N1), re-sets _runOpen, and fires onRecord as usual.
+    ///
+    /// The caller owns the BEFORE[] of `cmd` (it anchors before[] to the
+    /// once-per-re-fire-window post-gesture snapshot, NOT to the dropped entry's
+    /// before[], so a widening support reverts cleanly). This primitive only
+    /// owns the stack rewrite + the Refire tag.
+    ///
+    /// Main-thread only (all recorders are; recordInSession asserts the same).
+    void replaceInSessionTail(Command cmd, ulong runId) {
+        if (cmd is null) return;
+        // Drop the matching in-session tail ONLY when it is this run's prior
+        // RE-GRADE entry (InSession && Refire && runId) AND it belongs to the
+        // SAME continuous tweak interaction (P-E: tail.tweakGeneration ==
+        // _tweakGeneration). A plain gesture entry (InSession but NOT Refire) is
+        // NEVER dropped — that is the fix for the multi-gesture-run hazard (g1 ->
+        // tweak1 -> g2 -> tweak2 must NOT erase g2). A non-matching tail (a
+        // gesture, a different run, foreign — OR a Refire of a DIFFERENT
+        // generation, i.e. a DISCRETE prior tweak) degrades to a plain append
+        // below.
+        //
+        // P-E GATE: the generation token distinguishes continuous from discrete.
+        // Within ONE held interaction (a slider scrub / a falloff-handle drag)
+        // the setAttr stream does NOT bump the generation, so consecutive
+        // re-grades share it and REPLACE (N pixel increments = ONE undo step).
+        // Between two DISCRETE tweaks (each its own tool.pipe.attr command, each
+        // bumping the generation) the tail's generation differs from the new
+        // entry's, so this APPENDS — each discrete tweak is its own in-session
+        // step (reference fact G2). A caller that never bumps (default
+        // generation 0 throughout — the replaceInSessionTail unit tests) keeps
+        // pure REPLACE, the historical Refire-keyed behaviour.
+        bool dropTail = false;
+        if (undoStack.length > 0) {
+            auto tail = undoStack[$ - 1];
+            dropTail = (tail.flags & HistoryFlags.InSession) != 0
+                    && (tail.flags & HistoryFlags.Refire)   != 0
+                    && tail.runId == runId
+                    && tail.tweakGeneration == _tweakGeneration;
+        }
+
+        // TASK 2240 — same defect shape as 2130's four sites: this used to be
+        // `undoStack.length -= 1;` HERE, unconditionally, immediately before
+        // the append inside recordInSession() below — pop-by-shrink then
+        // push, on `~=`. The bare "explicit stack pointer" rewrite used at
+        // the other four sites does not transplant here: the append is
+        // pushEntry's SHARED `undoStack ~= e` (record()/recordCoalescing()/
+        // box.d/transform.d all reach it too), and it carries its own
+        // maxDepth eviction trim that is ORDER-SENSITIVE against the shrink.
+        // Simply swapping the order (append first, shrink after) changes
+        // behaviour at exactly `undoStack.length == maxDepth`: growing to
+        // maxDepth+1 fires the FRONT-eviction trim, which the ORIGINAL
+        // shrink-first ordering never does for a replace (drop one, add one
+        // stays at maxDepth, so `length > maxDepth` never holds) — a reorder
+        // would silently evict one extra old undo entry at the depth cap.
+        // That is a real behaviour change, not a memory-shape one, and this
+        // task changes allocation shape ONLY.
+        //
+        // A REPLACE never changes the stack's length at all (drop one, add
+        // one, net zero), so it is written as ONE in-place OVERWRITE of the
+        // tail slot instead: no shrink, no append, no reallocation, and the
+        // maxDepth trim is correctly never reached — matching the original
+        // ordering's cap behaviour exactly. The guard replica below mirrors
+        // recordInSession()'s own guards (this file's recorders already
+        // duplicate their guard sets rather than share them — see the note
+        // above pushEntry) purely to decide whether the append it performs
+        // would actually land; when it would not (lockout / not undoable /
+        // suspended / inside a command block), replaceInSessionTail falls
+        // back to the ORIGINAL two-step (a lone shrink that nothing
+        // subsequently appends onto, since recordInSession hits the same
+        // guard and returns without touching undoStack).
+        if (dropTail && !_lockout && cmd.isUndoable
+            && _state == UndoState.Active && blockDepth == 0) {
+            // Set BEFORE the hook fires, same ordering recordInSession()
+            // documents: a re-entrant hook must see _runOpen already true.
+            _runOpen = true;
+            immutable string argsStr = serializeParams(cmd.params());
+            immutable uint baseFlags = historyFlagsFor(cmd) | HistoryFlags.InSession;
+            HistoryEntry e = { label: cmd.label,
+                               args:  argsStr,
+                               commandName: cmd.name,
+                               cmd: cmd,
+                               timestampMs: nowMs(),
+                               flags: baseFlags,
+                               runId: runId,
+                               tweakGeneration: _tweakGeneration };
+            undoStack[$ - 1] = e;
+            ++_generation;
+            redoStack.length = 0;
+            fireRecordHook(cmd.name, argsStr, baseFlags);
+            undoStack[$ - 1].flags |= HistoryFlags.Refire;
+            return;
+        }
+
+        if (dropTail) {
+            undoStack.length -= 1;
+            ++_generation;
+        }
+        // Append the replacement as a fresh tagged in-session entry, then stamp
+        // the Refire bit so the NEXT re-grade recognises it as a re-grade tail.
+        // recordInSession clears the redo stack (N1) and re-sets _runOpen.
+        recordInSession(cmd, runId);
+        if (undoStack.length > 0)
+            undoStack[$ - 1].flags |= HistoryFlags.Refire;
+    }
+
+    /// Consolidate one in-session RUN: collapse its CONTIGUOUS tail of entries
+    /// tagged (InSession + runId) into ONE merged entry, in place at the
+    /// position of the FIRST gathered entry. Clears _runOpen.
+    ///
+    /// Merge semantics (design doc Q1, MERGE-OF-ENTRIES):
+    ///   - indices = sorted union of the gathered entries' indices,
+    ///   - before[vid] = the EARLIEST gathered entry's before for vid
+    ///     (first-touch-wins → run-start state),
+    ///   - after[vid]  = the LATEST gathered entry's after for vid,
+    ///   - hooks = first gathered entry's revert-hook + last's apply-hook,
+    /// all built by MeshVertexEdit.mergeRun() (which owns the module-private
+    /// payload + GPU/cache pointers). Consolidation does NOT mutate geometry —
+    /// the mesh already holds the run-end state; this only rewrites the stack.
+    ///
+    /// Defense-in-depth (Q-a): even though contiguity holds BY CONSTRUCTION (a
+    /// foreign record consolidates the run first, so nothing interleaves), the
+    /// gather walks from the stack tail and STOPS at the first entry that is not
+    /// (InSession && runId == runId). A future invariant violation thus
+    /// degrades to a graceful partial merge rather than a corrupt one.
+    ///
+    /// Edge cases (all safe no-ops): an empty stack, no matching tail (run never
+    /// opened or already consolidated), or a single gathered entry — in each the
+    /// stack is left untouched apart from clearing _runOpen. Cap-50 interplay
+    /// (Q1 risk 6): if the run-start entry already fell off maxDepth, the gather
+    /// merges only the SURVIVING tail, so before[] anchors to the earliest
+    /// surviving gesture — graceful degradation, not a crash.
+    ///
+    /// Redo-split safety (the in-session-undo-then-boundary case). undo() POPS
+    /// an entry off undoStack ONTO redoStack — it does NOT keep a cursor with
+    /// entries straddling a single stack. So if the user steps in-session
+    /// Ctrl+Z over some of a run's gestures and THEN a boundary fires, the
+    /// undone gestures live entirely on redoStack and only the still-applied
+    /// gestures remain as a contiguous undoStack tail. consolidate() gathers
+    /// ONLY that undo tail; it never merges across the undo/redo split. The
+    /// merge preserves continuity: merged.after = the LAST gathered (undo-tail)
+    /// gesture's after = exactly the `before` state of the first still-pending
+    /// redo entry, so a later redo() re-applies that entry coherently on top of
+    /// the consolidated entry. Stale tagged redo entries are therefore never
+    /// re-applied against a wrong baseline; and any NEW gesture clears the redo
+    /// stack via recordInSession()/record() (N1) before it could matter. No
+    /// explicit redo-stack scrub is needed here.
+    void consolidate(ulong runId) {
+        scope(exit) _runOpen = false;
+        if (undoStack.length == 0) return;
+
+        // Gather the contiguous matching-runId InSession tail (oldest→newest).
+        size_t end = undoStack.length;       // one past the last gathered
+        size_t start = end;
+        while (start > 0) {
+            auto e = undoStack[start - 1];
+            if (!(e.flags & HistoryFlags.InSession) || e.runId != runId)
+                break;
+            --start;
+        }
+        size_t n = end - start;
+        if (n == 0) return;                   // no matching tail — no-op.
+
+        // Arm 1 — MeshVertexEdit (the original, untouched path). Downcast the
+        // gathered commands; any non-vertex-edit anywhere in the run makes
+        // this arm decline (`allVertexEdits = false`) rather than aborting
+        // the whole function — task 0614 Phase 4 adds a second arm below that
+        // gets a turn when this one declines. Behaviour for an all-
+        // MeshVertexEdit run is byte-identical to before that second arm
+        // existed.
+        import vibe3d.editing.commands.editor.commands.mesh.vertex_edit : MeshVertexEdit;
+        {
+            MeshVertexEdit[] gathered;
+            gathered.reserve(n);
+            bool allVertexEdits = true;
+            foreach (i; start .. end) {
+                auto mve = cast(MeshVertexEdit) undoStack[i].cmd;
+                if (mve is null) { allVertexEdits = false; break; }
+                gathered ~= mve;
+            }
+            if (allVertexEdits) {
+                // Single-entry run: nothing to merge, but the run HAS ended,
+                // so the lone gesture entry IS the surviving consolidated
+                // form. Strip its InSession tag + runId in place so it
+                // presents as an ordinary surviving entry: /api/history no
+                // longer reports a closed run's entry as inSession, and a
+                // per-gesture-count consumer (test / panel) sees exactly the
+                // OPEN run's tagged steps. Navigation is unaffected (the
+                // entry's command + before/after are untouched).
+                if (n == 1) {
+                    undoStack[start].flags &=
+                        ~cast(uint)(HistoryFlags.InSession | HistoryFlags.Refire);
+                    undoStack[start].runId  = 0;
+                    return;
+                }
+
+                auto merged = MeshVertexEdit.mergeRun(gathered);
+                merged.markSession(commonSessionToken(undoStack, start, end));
+
+                // Replace the gathered entries with ONE entry at the first's
+                // position. The merged entry is an ordinary (non-in-session)
+                // surviving entry — the run has ended. Preserve the first
+                // entry's label/timestamp shape via a fresh entry built from
+                // the merged command.
+                auto first = undoStack[start];
+                HistoryEntry mergedEntry = {
+                    label:       merged.label,
+                    args:        serializeParams(merged.params()),
+                    commandName: merged.name,
+                    cmd:         merged,
+                    timestampMs: first.timestampMs,
+                    flags:       historyFlagsFor(merged),
+                    runId:       0,
+                };
+
+                undoStack = undoStack[0 .. start] ~ mergedEntry ~ undoStack[end .. $];
+                return;
+            }
+        }
+
+        // Arm 2 — RunMergeable (task 0614 Phase 4, doc/item_mode_transform_
+        // plan.md §Undo). Tried only after Arm 1 declined. `first` is the
+        // run's EARLIEST gathered entry — it owns the run-start `before` and
+        // is asked to absorb the rest (`later`, oldest -> newest) via
+        // `mergeRunTail`. A `null` return (declined merge) or a first entry
+        // that is not `RunMergeable` (e.g. box's `BoxLiveEditCommand` ladder,
+        // which is neither `MeshVertexEdit` nor `RunMergeable`) falls all the
+        // way through to the unchanged final no-op below — R14: box's
+        // multi-entry run is left on the stack exactly as Arm 1 always left
+        // it, untouched, InSession flags and all.
+        //
+        // Deliberately NOT hoisting the n==1 tag-strip above the type
+        // dispatch: that would change behaviour for the box ladder (out of
+        // scope), which must keep a lone non-mergeable entry tagged
+        // InSession forever, matching the pre-Phase-4 code path exactly.
+        auto rmFirst = cast(RunMergeable) undoStack[start].cmd;
+        if (rmFirst !is null) {
+            if (n == 1) {
+                undoStack[start].flags &=
+                    ~cast(uint)(HistoryFlags.InSession | HistoryFlags.Refire);
+                undoStack[start].runId  = 0;
+                return;
+            }
+
+            Command[] later;
+            later.reserve(n - 1);
+            foreach (i; start + 1 .. end) later ~= undoStack[i].cmd;
+
+            auto merged = rmFirst.mergeRunTail(later);
+            if (merged is null) return;   // declined — leave the stack untouched.
+            merged.markSession(commonSessionToken(undoStack, start, end));
+
+            auto first = undoStack[start];
+            HistoryEntry mergedEntry = {
+                label:       merged.label,
+                args:        serializeParams(merged.params()),
+                commandName: merged.name,
+                cmd:         merged,
+                timestampMs: first.timestampMs,
+                flags:       historyFlagsFor(merged),
+                runId:       0,
+            };
+
+            undoStack = undoStack[0 .. start] ~ mergedEntry ~ undoStack[end .. $];
+        }
+        // else: neither arm recognizes the run's type — leave the stack as-is
+        // (exactly Arm 1's pre-Phase-4 "unexpected type — leave as-is" no-op).
+    }
+
+    /// Retain each completed gesture as a visible History row when closing a
+    /// run. The declared navigation policy decides whether an outside Undo
+    /// traverses the whole run or only its latest step. Only a contiguous
+    /// in-session tail is eligible, as with consolidate().
+    size_t closeRunVisible(ulong runId, string ownerId,
+                           RunCloseMode mode = RunCloseMode.groupUndo,
+                           RunCloseScope closeScope = RunCloseScope.run,
+                           ulong ownedToken = 0) {
+        scope(exit) _runOpen = false;
+        if (ownerId.length == 0 || mode == RunCloseMode.consolidate) return 0;
+        if (closeScope == RunCloseScope.session) {
+            if (ownedToken == 0) return 0;
+            size_t start = undoStack.length;
+            while (start > 0) {
+                const entry = undoStack[start - 1];
+                if (entry.cmd.sessionToken() != ownedToken ||
+                    (entry.flags & (HistoryFlags.ToolLifecycle | HistoryFlags.ClosedRun)) ||
+                    entry.closedNavigationGroupId != 0 || entry.closedOwnerId.length != 0)
+                    break;
+                --start;
+            }
+            if (start == undoStack.length) return 0;
+            const group = ++_lastClosedNavigationGroupId;
+            foreach (i; start .. undoStack.length) {
+                auto entry = &undoStack[i];
+                entry.flags &= ~cast(uint)(HistoryFlags.InSession | HistoryFlags.Refire);
+                entry.flags |= HistoryFlags.ClosedRun;
+                if (mode == RunCloseMode.groupRedo) entry.flags |= HistoryFlags.ClosedGroupRedo;
+                if (mode == RunCloseMode.stepUndo) entry.flags |= HistoryFlags.ClosedStep;
+                entry.closedOwnerId = ownerId.idup;
+                entry.closedScope = closeScope;
+                entry.closedNavigationGroupId = group;
+            }
+            return undoStack.length - start;
+        }
+        // Stepwise sessions can cross run boundaries (a click that relocates
+        // the pivot closes the previous geometry run). Their completed rows
+        // still belong to the same tool session and must all remain visible
+        // for one-step outside navigation.
+        if (mode == RunCloseMode.stepUndo && undoStack.length &&
+            (undoStack[$ - 1].flags & HistoryFlags.InSession) &&
+            undoStack[$ - 1].cmd.sessionToken() != 0) {
+            const token = undoStack[$ - 1].cmd.sessionToken();
+            size_t start = undoStack.length;
+            while (start > 0 &&
+                   undoStack[start - 1].cmd.sessionToken() == token &&
+                   !(undoStack[start - 1].flags & HistoryFlags.ToolLifecycle))
+                --start;
+            foreach (i; start .. undoStack.length) {
+                undoStack[i].flags &=
+                    ~cast(uint)(HistoryFlags.InSession | HistoryFlags.Refire);
+                undoStack[i].flags |= HistoryFlags.ClosedRun | HistoryFlags.ClosedStep;
+                undoStack[i].closedOwnerId = ownerId.idup;
+            }
+            return undoStack.length - start;
+        }
+        size_t start = undoStack.length;
+        while (start > 0 &&
+               (undoStack[start - 1].flags & HistoryFlags.InSession) &&
+               undoStack[start - 1].runId == runId) --start;
+        foreach (i; start .. undoStack.length) {
+            undoStack[i].flags &=
+                ~cast(uint)(HistoryFlags.InSession | HistoryFlags.Refire);
+            undoStack[i].flags |= HistoryFlags.ClosedRun;
+            if (mode == RunCloseMode.groupRedo)
+                undoStack[i].flags |= HistoryFlags.ClosedGroupRedo;
+            if (mode == RunCloseMode.stepUndo)
+                undoStack[i].flags |= HistoryFlags.ClosedStep;
+            undoStack[i].closedOwnerId = ownerId.idup;
+        }
+        return undoStack.length - start;
+    }
+
+    /// Retire an owned run without merging its completed commands. Geometry
+    /// and regrade windows stay producer-owned (8560 wave amendment).
+    size_t retireRunSteps(ulong runId, ulong token) {
+        scope(exit) _runOpen = false;
+        if (token == 0) return 0;
+        size_t start = undoStack.length;
+        while (start > 0) {
+            const entry = undoStack[start - 1];
+            if (entry.runId != runId || entry.cmd.sessionToken() != token ||
+                !(entry.flags & HistoryFlags.InSession) ||
+                (entry.flags & (HistoryFlags.ToolLifecycle | HistoryFlags.ClosedRun)) ||
+                entry.closedNavigationGroupId != 0) break;
+            --start;
+        }
+        foreach (i; start .. undoStack.length)
+            undoStack[i].flags &= ~cast(uint)(HistoryFlags.InSession | HistoryFlags.Refire);
+        return undoStack.length - start;
+    }
+
+    /// Make the first completed recorded step a redo re-arm anchor before its
+    /// live Undo removes it. The caller supplies the active session token.
+    bool markRecordedFirstStep(ulong token, string ownerId) {
+        if (token == 0 || ownerId.length == 0 || undoStack.length == 0 ||
+            undoStack[$ - 1].cmd.sessionToken() != token ||
+            (undoStack[$ - 1].flags & HistoryFlags.ToolLifecycle)) return false;
+        auto e = &undoStack[$ - 1];
+        e.flags &= ~cast(uint)(HistoryFlags.InSession | HistoryFlags.Refire);
+        e.flags |= HistoryFlags.ClosedRun | HistoryFlags.ClosedStep;
+        e.closedOwnerId = ownerId.idup;
+        return true;
+    }
+
+    /// Replace the current matching in-session tail with `cmd` as a normal
+    /// history entry. Used by live tools whose final committed command is not a
+    /// merge of the transient in-session command type.
+    void replaceInSessionTailWith(ulong runId, Command cmd) {
+        scope(exit) _runOpen = false;
+        if (_lockout) return;
+        if (cmd is null) return;
+        if (!cmd.isUndoable) return;
+        if (_state != UndoState.Active) return;
+        if (blockDepth > 0) { record(cmd); return; }
+
+        size_t end = undoStack.length;
+        size_t start = end;
+        while (start > 0) {
+            auto e = undoStack[start - 1];
+            if (!(e.flags & HistoryFlags.InSession) || e.runId != runId)
+                break;
+            --start;
+        }
+
+        long tMs = (start < end) ? undoStack[start].timestampMs : nowMs();
+        uint flags = historyFlagsFor(cmd);
+        string args = serializeParams(cmd.params());
+
+        if (start < end) {
+            // The SPLICE arm — the one recorder that does not append. It swaps
+            // a run's contiguous tail (>= 1 entries) for exactly one, so the
+            // stack can only shrink and `maxDepth` cannot be exceeded; that is
+            // why the trim `pushEntry` does is absent here rather than missing.
+            HistoryEntry e = { label: cmd.label,
+                               args: args,
+                               commandName: cmd.name,
+                               cmd: cmd,
+                               timestampMs: tMs,
+                               flags: flags,
+                               runId: 0 };
+            undoStack = undoStack[0 .. start] ~ [e] ~ undoStack[end .. $];
+            ++_generation;
+            redoStack.length = 0;
+            fireRecordHook(cmd.name, args, flags);
+        } else {
+            pushEntry(cmd, args, flags, 0, 0, tMs, /*fireHook=*/true);
+        }
+    }
+
+    // ----- navigation ------------------------------------------------------
+
+    bool canUndo() const { return undoStack.length > 0; }
+    bool canRedo() const { return redoStack.length > 0; }
+
+    /// Kill the redo timeline WITHOUT recording anything — the same "Any new
+    /// action invalidates the redo timeline" rule record() applies
+    /// (`redoStack.length = 0` there), exported for new actions that write
+    /// PAST the history: a standing-preview tool's arm/re-arm/scrub writes
+    /// mutate the real mesh directly (mutate/revert preview, no history
+    /// entry), yet they are new actions all the same — reference-captured
+    /// semantics (task 0429): a redo pressed while such a preview is up must
+    /// find an empty stack and be a dead no-op.
+    ///
+    /// Guards mirror the record() family (record()/recordCoalescing()):
+    /// refused under lockout, and refused while `_state != Active`. The state
+    /// guard is what protects a stack step against re-entrant erasure: BOTH
+    /// directions apply/revert under Suspend — undo()'s wraps (ToolLifecycle
+    /// hard-step, Case A model revert, Case B UI fallback) and, crucially for
+    /// THIS method, redo()'s wraps (ToolLifecycle head re-apply, LIFO record
+    /// re-apply) — so even an exotic preview
+    /// rebuild triggered from inside a step cannot erase the redo entry that
+    /// step just created.
+    ///
+    /// Deliberately narrow: does NOT touch undoStack/_runOpen, does NOT fire
+    /// onRecord, and does not check blockDepth (the invalidation is correct
+    /// whenever a write diverged from the redo entries, block open or not).
+    void invalidateRedo() {
+        if (_lockout) return;
+        if (_state != UndoState.Active) return;
+        redoStack.length = 0;
+    }
+
+    /// Keep only the `keep` redo entries nearest the head (the next redo
+    /// first) and drop the rest — `invalidateRedo` with a cut point, under the
+    /// same two guards. The tool session's law-3 cut (topology-redo S5): an
+    /// undo that ends the post mode drops the redo from the operation's first
+    /// refire row on. `keep` past the length changes nothing.
+    void truncateRedo(size_t keep) {
+        if (_lockout) return;
+        if (_state != UndoState.Active) return;
+        if (keep < redoStack.length) redoStack.length = keep;
+    }
+
+    // Scan undoStack from the tail toward the head for the nearest undoable
+    // entry. UI, Model and lifecycle records are all steps. Returns the index
+    // into undoStack, or undoStack.length if no step is found.
+    //
+    // The scan stops (returns "not found") when it hits an entry carrying
+    // HistoryFlags.UndoBoundary: a boundary entry (scene.reset / file.new)
+    // delimits the current editing session. A plain geometry undo must not
+    // reach across it to revert work from a prior session.
+    private size_t nearestModelIndexFromTail() const {
+        if (undoStack.length == 0) return 0;
+        size_t i = undoStack.length;
+        while (i > 0) {
+            --i;
+            uint f = undoStack[i].flags;
+            // Hard stop: boundary entries are not stepped to by a model undo.
+            if (f & HistoryFlags.UndoBoundary)
+                return undoStack.length; // sentinel: treat as "no model entry"
+            if (f & HistoryFlags.Undoable)
+                return i;
+        }
+        return undoStack.length; // sentinel: no step found
+    }
+
+    // Count Model and UI entries currently on the undo stack (within the
+    // current session boundary). Boundary entries (UndoBoundary) are not
+    // counted — they are outside the current session. Used by
+    // /api/undo/status to give tests fine-grained depth assertions.
+    void undoDepthCounts(out size_t modelCount, out size_t uiCount) const {
+        modelCount = 0;
+        uiCount    = 0;
+        foreach_reverse (ref e; undoStack) {
+            // Stop counting at a session boundary (same scope as the scan).
+            if (e.flags & HistoryFlags.UndoBoundary) break;
+            if (!(e.flags & HistoryFlags.Undoable)) continue;
+            if (e.flags & (HistoryFlags.ToolLifecycle | HistoryFlags.PressMarker)) continue; // excluded from payload counts
+            if (e.flags & HistoryFlags.UiUndo) ++uiCount;
+            else                                ++modelCount;
+        }
+    }
+
+    /// Whether the next strict-LIFO undo step is a Model-class record.
+    bool canUndoModel() const {
+        if (undoStack.length == 0) return false;
+        const uint tailFlags = undoStack[$ - 1].flags;
+        return (tailFlags & HistoryFlags.Undoable) != 0
+            && (tailFlags & HistoryFlags.UiUndo) == 0
+            && (tailFlags & (HistoryFlags.ToolLifecycle | HistoryFlags.PressMarker)) == 0;
+    }
+
+    /// Whether the next strict-LIFO undo step is a UI-class record.
+    bool canUndoUi() const {
+        if (undoStack.length == 0) return false;
+        const uint tailFlags = undoStack[$ - 1].flags;
+        return (tailFlags & HistoryFlags.Undoable) != 0
+            && (tailFlags & HistoryFlags.UiUndo) != 0;
+    }
+
+    bool undo() {
+        // Task 1906 stage 3 (review round 2, R2-1): an undo/redo is a
+        // command-level operation and delivers ONCE, exactly as `Command.apply`
+        // does for the forward run. `Command.revert()` is a plain virtual with
+        // no batch of its own, and a delta replay restores a selection one
+        // element at a time (`mesh_edit_delta.finalize` -> `selectEdge`), so
+        // without this batch the undo of a 3 000-edge remove delivered 3 003
+        // times where the forward command delivered once (measured). Nested
+        // batches coalesce, so a revert that opens its own is unaffected.
+        { import vibe3d.mesh.core.mesh : beginDeliveryBatchGlobal, endDeliveryBatchGlobal;
+          beginDeliveryBatchGlobal(); }
+        scope(exit) { import vibe3d.mesh.core.mesh : endDeliveryBatchGlobal; endDeliveryBatchGlobal(); }
+        if (_lockout) return false;
+        if (undoStack.length == 0) return false;
+        bool generationDone;
+        scope(exit) if (!generationDone) ++_generation;
+        import vibe3d.editing.commands.runtime.history_lifecycle_contract : ToolArmLifecyclePolicy;
+        import vibe3d.editing.commands.editor.commands.mesh.session_edit : MeshSessionEdit;
+        import vibe3d.editing.contracts.tool_policy_values : DropUndoExtent, DropRedoPopulation, DropUndoResidualPopulation;
+        auto lifecycle = cast(ToolArmLifecyclePolicy) undoStack[$ - 1].cmd;
+        const dropping = lifecycle !is null && lifecycle.dropRow();
+        const markerUndo = (undoStack[$ - 1].flags & HistoryFlags.PressMarker) != 0;
+        size_t selected = 1;
+        if (dropping && lifecycle.previousToken() != 0) {
+            const policy = lifecycle.dropUndoPolicy();
+            size_t lo = undoStack.length - 1;
+            if (policy.extent == DropUndoExtent.wholeSession) {
+                while (lo && !(undoStack[lo - 1].flags & HistoryFlags.ToolLifecycle)
+                       && undoStack[lo - 1].cmd.sessionToken() == lifecycle.previousToken()) --lo;
+                selected = undoStack.length - lo;
+            } else if (policy.extent == DropUndoExtent.newestPressBlock) {
+                while (lo && !(undoStack[lo - 1].flags & HistoryFlags.ToolLifecycle)
+                       && undoStack[lo - 1].cmd.sessionToken() == lifecycle.previousToken()
+                       && (undoStack[lo - 1].flags & HistoryFlags.JoinsBelow)) --lo;
+                if (lo && !(undoStack[lo - 1].flags & HistoryFlags.ToolLifecycle)
+                       && undoStack[lo - 1].cmd.sessionToken() == lifecycle.previousToken()) {
+                    auto press = cast(const MeshSessionEdit) undoStack[lo - 1].cmd;
+                    if (press !is null && press.isTopologyStep() && press.stepOpenedByPress())
+                        selected = undoStack.length - (lo - 1);
+                }
+            }
+        }
+        // Freeze scalar identity before rearming; no original press is retained
+        // by the fresh carrier. Only a fully reverted selected block earns it.
+        const markerResidual = selected > 1 &&
+            lifecycle.dropUndoPolicy().residual == DropUndoResidualPopulation.pressMarker;
+        const pressToken = markerResidual ? undoStack[$ - selected].cmd.sessionToken() : 0;
+        const pressName = markerResidual ? undoStack[$ - selected].commandName : "";
+        const pressTimestamp = markerResidual ? undoStack[$ - selected].timestampMs : 0;
+        size_t reverted;
+        {
+            // Rearming can change session state, so selection above is frozen first.
+            auto prev = _state;
+            _state = UndoState.Suspend;
+            scope(exit) _state = prev;
+            if (dropping && lifecycle.dropUndoPolicy().redo == DropRedoPopulation.editRows)
+                redoStack.length = 0;
+            foreach (i; 0 .. selected) {
+                auto entry = undoStack[$ - 1];
+                undoStack.length -= 1;
+                if (!entry.cmd.revert()) {
+                    if (i == 0) return false;
+                    break;
+                }
+                ++reverted;
+                auto armPolicy = cast(ToolArmLifecyclePolicy) entry.cmd;
+                if (dropping) {
+                    const population = lifecycle.dropUndoPolicy().redo;
+                    if (population == DropRedoPopulation.selectedSuffix ||
+                        (population == DropRedoPopulation.editRows && i != 0))
+                        redoStack = [entry] ~ redoStack;
+                } else if (markerUndo) {}
+                else if (armPolicy !is null && !armPolicy.carriesRedoAfterUndo())
+                    redoStack.length = 0;
+                else
+                    redoStack = [entry] ~ redoStack;
+            }
+            if (dropping && lifecycle.dropUndoPolicy().redo == DropRedoPopulation.discard)
+                redoStack.length = 0;
+            if (markerResidual && reverted == selected) {
+                auto marker = new DropPressMarkerCommand(pressToken, pressName);
+                undoStack ~= HistoryEntry(marker.label, "", marker.name, marker,
+                    pressTimestamp, HistoryFlags.Succeeded | HistoryFlags.Undoable | HistoryFlags.PressMarker);
+            }
+            ++_generation;
+            generationDone = true;
+        }
+        if (dropping) lifecycle.completeDropUndo();
+
+        ++_undoEpoch;  // bump exactly once per successful undo
+        g_perf.count(Cat.undoApply, 1);  // task 0200 F-I7 (no-op in default build)
+        return true;
+    }
+
+    bool redo() {
+        // Task 1906 stage 3 (review round 2, R2-1): an undo/redo is a
+        // command-level operation and delivers ONCE, exactly as `Command.apply`
+        // does for the forward run. `Command.revert()` is a plain virtual with
+        // no batch of its own, and a delta replay restores a selection one
+        // element at a time (`mesh_edit_delta.finalize` -> `selectEdge`), so
+        // without this batch the undo of a 3 000-edge remove delivered 3 003
+        // times where the forward command delivered once (measured). Nested
+        // batches coalesce, so a revert that opens its own is unaffected.
+        { import vibe3d.mesh.core.mesh : beginDeliveryBatchGlobal, endDeliveryBatchGlobal;
+          beginDeliveryBatchGlobal(); }
+        scope(exit) { import vibe3d.mesh.core.mesh : endDeliveryBatchGlobal; endDeliveryBatchGlobal(); }
+        if (_lockout) return false;
+        if (redoStack.length == 0) return false;
+
+        // Undo moves one record to the redo head (a drop row's undo moves its
+        // session's rows instead); redo applies and transfers the head alone.
+        auto entry = redoStack[0];
+
+        auto prev = _state;
+        _state = UndoState.Suspend;
+        scope(exit) _state = prev;
+
+        if (!entry.cmd.apply()) return false;
+
+        redoStack = redoStack[1 .. $];
+        undoStack ~= entry;
+        ++_generation;
+
+        return true;
+    }
+
+    /// Set fold bits (`JoinsBelow`, `PreNavOpen`, `FoldBase` — nothing
+    /// else) on the undo-stack entry holding `expect`, by IDENTITY (wave plan
+    /// 8640 S7a; the tool session's fold, the only caller). Returns whether it
+    /// found it.
+    bool markEntryFold(const Command expect, uint bits) nothrow @nogc {
+        enum uint foldBits = HistoryFlags.JoinsBelow | HistoryFlags.PreNavOpen
+            | HistoryFlags.FoldBase;
+        assert((bits & ~foldBits) == 0, "markEntryFold: not a fold bit");
+        if (expect is null) return false;
+        foreach_reverse (ref e; undoStack)
+            if (e.cmd is expect) { e.flags |= bits; return true; }
+        return false;
+    }
+
+    /// Tag a record on the undo stack with the tool session that wrote it
+    /// (slice M4) — by IDENTITY, the entry the session's close observed, so a
+    /// stale close can never tag some other record. Returns whether it did.
+    bool markEntrySession(const Command expect, ulong token) nothrow @nogc {
+        if (token == 0 || expect is null) return false;
+        if (blockDepth > 0)
+            foreach_reverse (child; blockChildren)
+                if (child is expect) { child.markSession(token); return true; }
+        foreach_reverse (ref e; undoStack)
+            if (e.cmd is expect) { e.cmd.markSession(token); return true; }
+        return false;
+    }
+
+    // ----- inspection (Edit menu, /api/history) ---------------------------
+
+    // Composed format: "Label  args" (two spaces) for non-empty args,
+    // or just "Label" when args is empty. Used by the UI history panel.
+    string[] undoLabels() const {
+        string[] out_;
+        out_.reserve(undoStack.length);
+        foreach (e; undoStack)
+            out_ ~= e.args.length > 0 ? (e.label ~ "  " ~ e.args) : e.label;
+        return out_;
+    }
+
+    string[] redoLabels() const {
+        string[] out_;
+        out_.reserve(redoStack.length);
+        foreach (e; redoStack)
+            out_ ~= e.args.length > 0 ? (e.label ~ "  " ~ e.args) : e.label;
+        return out_;
+    }
+
+    // Structured access — used by /api/history JSON serializer.
+    const(HistoryEntry)[] undoEntries() const { return undoStack; }
+    const(HistoryEntry)[] redoEntries() const { return redoStack; }
+
+    /// Returns the canonical argstring line for undoStack[index]:
+    /// `commandName + " " + args` if args is non-empty, else `commandName`.
+    /// Returns "" when index is out of range.
+    /// Used by /api/history/replay to re-execute past commands through the
+    /// same dispatch path as /api/command without modifying the original entry.
+    string undoEntryCommandLine(size_t index) const {
+        if (index >= undoStack.length) return "";
+        auto e = undoStack[index];
+        // ToolLifecycle entries (tool.activate) are not registered as command
+        // factories and cannot be replayed via uiCommandDelegate. Return ""
+        // so both history.saveAsScript and the panel replay button skip them.
+        if (e.flags & (HistoryFlags.ToolLifecycle | HistoryFlags.PressMarker)) return "";
+        return serializeCommandLine(e.commandName, e.args);
+    }
+
+    void clear() {
+        // Empties BOTH stacks deliberately: leaving redoStack populated would
+        // let jumpTo()'s maxTarget (= undoStack.length + redoStack.length) point
+        // into an orphaned redo timeline with no matching undo entries. Both
+        // must go together so the jump range stays well-formed after a clear.
+        undoStack.length = 0;
+        redoStack.length = 0;
+        ++_generation;
+    }
+
+    /// Multi-step history jump (Phase 2 of the history-panel design
+    /// doc). `target` is the DESIRED length of `undoStack` after the
+    /// jump — i.e. how many
+    /// entries should be "applied" once the operation finishes.
+    /// Valid range: [0, undoStack.length + redoStack.length].
+    ///
+    ///   target < undoStack.length → call undo() (undoStack.length - target) times.
+    ///   target > undoStack.length → call redo() (target - undoStack.length) times.
+    ///   target == undoStack.length → no-op.
+    ///
+    /// If any undo() / redo() returns false (revert failure), the
+    /// jump stops at that point and the method returns false. The
+    /// caller sees a partially-walked stack — exactly what a user
+    /// would see if they single-stepped manually past a broken
+    /// entry. Out-of-range `target` is clamped silently.
+    bool jumpTo(size_t target) {
+        size_t maxTarget = undoStack.length + redoStack.length;
+        if (target > maxTarget) target = maxTarget;
+        while (undoStack.length > target) {
+            if (!undo()) return false;
+        }
+        while (undoStack.length < target) {
+            if (!redo()) return false;
+        }
+        return true;
+    }
+
+    /// Whether the next undo would step a ToolLifecycle entry (re-activate tool).
+    bool canUndoLifecycle() const {
+        return undoStack.length > 0
+            && (undoStack[$ - 1].flags & HistoryFlags.ToolLifecycle) != 0;
+    }
+
+    size_t toolLifecycleCount() const {
+        size_t n = 0;
+        foreach_reverse (ref e; undoStack) {
+            if (e.flags & HistoryFlags.UndoBoundary) break;
+            if (e.flags & HistoryFlags.ToolLifecycle) ++n;
+        }
+        return n;
+    }
+
+    /// Entries surfaced by /api/history. Every strict-LIFO step is visible;
+    /// ToolLifecycle rows are named history rows, not hidden bookkeeping.
+    const(HistoryEntry)[] undoEntriesVisible() const {
+        return undoStack;
+    }
+    const(HistoryEntry)[] redoEntriesVisible() const {
+        return redoStack;
+    }
+
+    /// The surfaced list and the raw strict-LIFO stack now share one index
+    /// space, so a panel/API cursor target maps directly to jumpTo().
+    bool jumpToVisible(size_t target) {
+        return jumpTo(target);
+    }
+
+    // ----- refire ----------------------------------------------------------
+    // refireBegin / fire / refireEnd model an interactive edit cycle:
+    //   begin, fire, fire, fire, ..., end.
+    // Each fire reverts the previous one and applies the new (so the mesh
+    // walks "from pre-cycle state → newest params" without accumulation).
+    // refireEnd pushes the latest live command onto the undo stack as one
+    // entry. Outside a refire block, callers should use record() for the
+    // post-mutation Record-flavor or apply()+record() for the standard path.
+
+    bool refireActive() const { return refireOpen; }
+
+    void refireBegin() {
+        if (_lockout) return;
+        // Defensive: if a prior refire block was left dangling (e.g. tool
+        // crashed mid-drag), commit it first so we don't lose the entry.
+        //
+        // Through `record()`, deliberately — task 0708. This arm used to
+        // append straight to the stack and applied NEITHER the
+        // `!cmd.isUndoable` gate NOR the `_state != Active` gate that every
+        // other recorder in this class applies, while `refireEnd()` — which
+        // commits the SAME object — states in its own comment that
+        // "record()'s flag-and-state checks (isUndoable, _state) apply". One
+        // command and one block had two exits with two different answers, and
+        // nothing anywhere said the difference was meant.
+        //
+        // The objection to closing it was that a defensive path exists
+        // precisely so a dangling entry is not lost, so gating it could lose
+        // one silently. Measured, the gates lose nothing that is the user's
+        // work: for an undoable command in the Active state — every real
+        // dangling drag — `record()` builds a byte-identical entry (same
+        // args, same flags, same macro-recorder hook, `runId`/`tweakGeneration`
+        // zero either way). The only entries it now drops are the two no
+        // recorder here would have kept: a command that declares itself
+        // NON-UNDOABLE, which `refireEnd()` already dropped on the normal
+        // exit, and a commit issued from a SUSPENDED context, which is the one
+        // context whose entire purpose is that its mutations never reach the
+        // user's stack.
+        //
+        // Two behaviours travel with the routing, both toward agreement with
+        // the normal exit rather than away from it: an open in-session run is
+        // consolidated first (`consolidateOpenRunIfForeign`), and an open
+        // command block adopts the entry as a child instead of letting a
+        // standalone entry appear beside the block. `refireEnd()` has done
+        // both since it was written.
+        if (refireOpen && liveCmd !is null)
+            record(liveCmd);
+        refireOpen = true;
+        liveCmd    = null;
+    }
+
+    // Apply cmd. If a live command from a previous fire() is present, its
+    // revert() runs first so the mesh walks back to the pre-block state
+    // before the new command lays down its mutation. Sub-commands fired
+    // during apply()/revert() are suspended so they don't pollute history.
+    bool fire(Command cmd) {
+        if (_lockout) return false;
+        if (cmd is null) return false;
+        // Task 1906 stage 3 (review round 3): the third entry point that runs a
+        // `revert()` outside `Command.apply`'s batch — a re-fire reverts the live
+        // command and applies the new one, and the revert's per-element selection
+        // restore delivered 3 005 times for a 3 000-edge remove where the first
+        // fire delivered once (measured). One re-fire step is ONE delivery, the
+        // same batch `undo()`/`redo()` hold; nested batches coalesce.
+        { import vibe3d.mesh.core.mesh : beginDeliveryBatchGlobal; beginDeliveryBatchGlobal(); }
+        scope(exit) { import vibe3d.mesh.core.mesh : endDeliveryBatchGlobal; endDeliveryBatchGlobal(); }
+        if (!refireOpen) {
+            // Caller forgot refireBegin(); treat as a plain apply+record.
+            if (!cmd.apply()) return false;
+            record(cmd);
+            return true;
+        }
+        auto prev = _state;
+        _state = UndoState.Suspend;
+        scope(exit) _state = prev;
+
+        if (liveCmd !is null) {
+            if (!liveCmd.revert()) return false;
+        }
+        if (!cmd.apply()) {
+            liveCmd = null;
+            return false;
+        }
+        liveCmd = cmd;
+        return true;
+    }
+
+    // Closes the refire block. The latest live command (if any) lands on
+    // the undo stack as ONE entry. record()'s flag-and-state checks
+    // (isUndoable, _state) apply: a non-undoable live command is dropped.
+    void refireEnd() {
+        if (_lockout) return;
+        if (!refireOpen) return;
+        Command final_ = liveCmd;
+        refireOpen = false;
+        liveCmd    = null;
+        if (final_ !is null) record(final_);
+    }
+
+    // ----- command blocks --------------------------------------------------
+    // blockBegin / blockEnd group N commands run between them into ONE undo
+    // entry (a CompositeCommand). Each command's apply() is invoked by the
+    // caller as usual; the caller then passes it to record(), which — while a
+    // block is open — appends it to the block's child list instead of pushing
+    // a standalone entry. blockEnd() records the composite as the single
+    // grouped entry.
+    //
+    // Nesting flattens: a blockBegin inside a blockBegin shares ONE flat child
+    // list and ONE label (the outermost). blockEnd matches the innermost open
+    // block (decrements the depth); only the outermost blockEnd commits.
+    //
+    // Interaction with refire (deliberately kept simple & safe): blocks and
+    // refire are independent grouping primitives and are NOT designed to be
+    // interleaved. fire() is unaware of blocks, so a refire cycle run inside a
+    // block would push its committed entry through record() at refireEnd() and
+    // thus be folded in as ONE child of the block (the block stays the single
+    // user-visible entry — no regression to refire's own coalescing). Callers
+    // should not open a block in the middle of a live refire drag; doing so is
+    // undefined and not exercised by any consumer.
+
+    bool blockActive() const { return blockDepth > 0; }
+
+    /// Open a command block. `label` names the resulting composite entry; for
+    /// nested calls only the outermost label is used.
+    void blockBegin(string label) {
+        if (_lockout) return;
+        if (blockDepth == 0) {
+            blockChildren.length = 0;
+            blockLabel = label;
+        }
+        blockDepth++;
+    }
+
+    /// Close the innermost open block. On the outermost close (depth → 0),
+    /// wrap the collected children in a CompositeCommand and record it as ONE
+    /// entry. An empty block (no children collected) records nothing.
+    /// Calling blockEnd() with no open block is a harmless no-op.
+    void blockEnd() {
+        if (_lockout) return;
+        if (blockDepth == 0) return;
+        blockDepth--;
+        if (blockDepth > 0) return;   // inner end of a nested block — defer.
+
+        Command[] kids = blockChildren;
+        string lbl     = blockLabel;
+        blockChildren.length = 0;
+        blockLabel = "";
+
+        if (kids.length == 0) return; // empty block → drop, no entry.
+
+        // Single-child blocks could be unwrapped, but wrapping keeps the
+        // entry's label = the block label (the user named the group) and the
+        // behaviour uniform. Wrap unconditionally.
+        auto composite = new CompositeCommand(kids, lbl);
+        ulong token = kids[0].sessionToken();
+        foreach (child; kids)
+            if (child.sessionToken() != token) { token = 0; break; }
+        composite.markSession(token);
+        record(composite);
+    }
+
+    version(unittest)
+    void pushEntryForTest(Command cmd, uint extraFlags = 0) {
+        uint flags = historyFlagsFor(cmd) | extraFlags;
+        HistoryEntry e = { label: cmd.name, args: "", commandName: cmd.name,
+                           cmd: cmd, timestampMs: 0, flags: flags };
+        undoStack ~= e;
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Phase 0 unit tests: undoEpoch is bumped exactly once per successful undo.
+// No GL context needed — uses a trivial revert()=true stub command.
+// ---------------------------------------------------------------------------
+version (unittest) {
+    private final class _EpochTestCmd : Command {
+        import vibe3d.mesh.core.mesh    : Mesh;
+        import vibe3d.viewport.camera.view    : View;
+        import vibe3d.editing.contracts.editmode : EditMode;
+        private Mesh  _mesh;
+        private View  _view = new View(0, 0, 1, 1);
+        this() { super(&_mesh, _view, EditMode.Vertices); }
+        override string   name()  const { return "test.epoch"; }
+        override string   label() const { return "EpochTest"; }
+        override CmdFlags cmdFlags() const { return CmdFlags.Model; }
+        protected override bool applyImpl()  { return true; }
+    }
+
+    private final class _ThrowingParamsCmd : Command {
+        import vibe3d.mesh.core.mesh : Mesh; import vibe3d.viewport.camera.view : View; import vibe3d.editing.contracts.editmode : EditMode;
+        private Mesh mesh_; private View view_ = new View(0, 0, 1, 1);
+        int paramCalls;
+        this() { super(&mesh_, view_, EditMode.Vertices); }
+        override string name() const { return "test.lifecycle"; }
+        override string label() const { return "Lifecycle"; }
+        override CmdFlags cmdFlags() const { return CmdFlags.ToolLifecycle; }
+        override Param[] params() { ++paramCalls; throw new Exception("params called"); }
+        protected override bool applyImpl() { return true; }
+    }
+
+    // Stub command for history-order unit tests.
+    // Tracks how many times apply()/revert() were called — used to verify
+    // records are stepped in the expected order.
+    private final class _TrackedCmd : Command {
+        import vibe3d.mesh.core.mesh     : Mesh;
+        import vibe3d.viewport.camera.view     : View;
+        import vibe3d.editing.contracts.editmode : EditMode;
+        private Mesh  _mesh;
+        private View  _view = new View(0, 0, 1, 1);
+        CmdFlags _flags;
+        int applyCalls  = 0;
+        int revertCalls = 0;
+        this(CmdFlags f) {
+            super(&_mesh, _view, EditMode.Vertices);
+            _flags = f;
+        }
+        override string   name()     const { return "test.tracked"; }
+        override string   label()    const { return "Tracked"; }
+        override CmdFlags cmdFlags() const { return _flags; }
+        protected override bool applyImpl()  {
+            ++applyCalls;
+            noteUndoRecorded();   // task 2500 — this double COUNTS its reverts
+            return true;
+        }
+        protected override void revertImpl() { ++revertCalls; }
+    }
+
+    // Convenience: record a Model-class entry.
+    private void recModel(_TrackedCmd cmd, CommandHistory h) {
+        cmd.apply(); h.record(cmd);
+    }
+    // Convenience: record a UiState-class entry.
+    private void recUi(_TrackedCmd cmd, CommandHistory h) {
+        cmd.apply(); h.record(cmd);
+    }
+}
+
+
+
+
+
+// ---------------------------------------------------------------------------
+// Task 0614 Phase 4 — consolidate()'s RunMergeable arm (doc/
+// item_mode_transform_plan.md §Undo). Three unittests, mirroring the plan's
+// "Tests that fail today" list verbatim:
+//   1. a RunMergeable run of 2 merges to 1 (FAILS before this phase's change
+//      — the MeshVertexEdit arm used to abort on the first non-vertex-edit
+//      downcast, above the n==1 tag-strip, stranding BOTH entries tagged).
+//   2. `replaceInSessionTailWith` CANNOT merge repeated calls in one run —
+//      pins the mechanism the first draft of this task wrongly relied on, so
+//      nobody re-proposes it (command_history.d's own tail-scan requires an
+//      InSession bit `replaceInSessionTailWith` never sets — see its body).
+//   3. a non-RunMergeable, non-MeshVertexEdit run (box's shape) is left
+//      completely untouched by BOTH arms — R14's byte-identical guarantee.
+// ---------------------------------------------------------------------------
+version (unittest) {
+    // Minimal RunMergeable double. `mergeRunTail` keeps THIS entry's `before`
+    // and adopts the LAST later command's `after` — the same law
+    // MeshVertexEdit.mergeRun / LayerXformEdit.mergeRunTail use.
+    private final class _RunMergeableTestCmd : Command, RunMergeable {
+        import vibe3d.mesh.core.mesh    : Mesh;
+        import vibe3d.viewport.camera.view    : View;
+        import vibe3d.editing.contracts.editmode : EditMode;
+        private Mesh _mesh;
+        private View _view = new View(0, 0, 1, 1);
+        int before;
+        int after;
+        this(int before_, int after_) {
+            super(&_mesh, _view, EditMode.Vertices);
+            before = before_; after = after_;
+        }
+        override string   name()  const { return "test.runMergeable"; }
+        override string   label() const { return "RunMergeableTest"; }
+        override CmdFlags cmdFlags() const { return CmdFlags.Model; }
+        protected override bool applyImpl()  { return true; }
+
+        Command mergeRunTail(Command[] later) {
+            if (later.length == 0) return null;
+            auto last = cast(_RunMergeableTestCmd) later[$ - 1];
+            if (last is null) return null;
+            return new _RunMergeableTestCmd(this.before, last.after);
+        }
+    }
+
+    // A command that is neither MeshVertexEdit nor RunMergeable — stands in
+    // for box's BoxLiveEditCommand ladder shape (R14).
+    private final class _PlainTestCmd : Command {
+        import vibe3d.mesh.core.mesh    : Mesh;
+        import vibe3d.viewport.camera.view    : View;
+        import vibe3d.editing.contracts.editmode : EditMode;
+        private Mesh _mesh;
+        private View _view = new View(0, 0, 1, 1);
+        this() { super(&_mesh, _view, EditMode.Vertices); }
+        override string   name()  const { return "test.plain"; }
+        override string   label() const { return "PlainTest"; }
+        override CmdFlags cmdFlags() const { return CmdFlags.Model; }
+        protected override bool applyImpl()  { return true; }
+    }
+
+    private final class _DecliningRunMergeCmd : Command, RunMergeable {
+        import vibe3d.mesh.core.mesh : Mesh; import vibe3d.viewport.camera.view : View; import vibe3d.editing.contracts.editmode : EditMode;
+        private Mesh mesh_; private View view_ = new View(0, 0, 1, 1);
+        bool throws_;
+        this(bool throws = false) { super(&mesh_, view_, EditMode.Vertices); throws_ = throws; }
+        override string name() const { return "test.decliningRunMerge"; }
+        override string label() const { return "DecliningRunMerge"; }
+        override CmdFlags cmdFlags() const { return CmdFlags.Model; }
+        protected override bool applyImpl() { return true; }
+        Command mergeRunTail(Command[] later) {
+            if (throws_) throw new Exception("prepared merge fault");
+            return null;
+        }
+    }
+}
+
+unittest { // P1.0b.3b real detached consolidation matrix.
+    import vibe3d.editing.commands.editor.commands.mesh.vertex_edit : MeshVertexEdit;
+    import vibe3d.mesh.core.mesh : Mesh; import vibe3d.viewport.camera.view : View; import vibe3d.editing.contracts.editmode : EditMode;
+    import vibe3d.util.math.math : Vec3;
+
+    // Single and multi MeshVertexEdit use the production merge primitive.
+    foreach (count; [1, 2]) {
+        auto h = new CommandHistory(); auto run = h.nextRun();
+        Mesh mesh; auto view = new View(0, 0, 1, 1);
+        foreach (i; 0 .. count) {
+            auto edit = new MeshVertexEdit(&mesh, view, EditMode.Vertices);
+            edit.setEdit([0u], [Vec3(cast(float)i,0,0)],
+                         [Vec3(cast(float)i+1,0,0)], "mve");
+            h.recordInSession(edit, run);
+        }
+        auto batch = h.beginPrepared();
+        auto result = h.prepareConsolidate(batch, run);
+        assert(result.accepted && result.undoDepth == 1 && !result.runOpen);
+        assert(h.undoStack.length == count); // zero-live prepare.
+        auto valid = h.validatesPreparedToken(batch); assert(valid.valid); h.installPreparedToken(valid);
+        assert(h.undoStack.length == 1 &&
+               !(h.undoStack[0].flags & HistoryFlags.InSession));
+    }
+
+    // RunMergeable single strips; multi merges; null and neither preserve tail.
+    auto single = new CommandHistory(); auto singleRun = single.nextRun();
+    single.recordInSession(new _RunMergeableTestCmd(0, 1), singleRun);
+    auto singleBatch = single.beginPrepared();
+    single.prepareConsolidate(singleBatch, singleRun);
+    auto singleValid = single.validatesPreparedToken(singleBatch); assert(singleValid.valid); single.installPreparedToken(singleValid);
+    assert(!(single.undoStack[0].flags & HistoryFlags.InSession));
+
+    auto multi = new CommandHistory(); auto multiRun = multi.nextRun();
+    multi.recordInSession(new _RunMergeableTestCmd(0, 1), multiRun);
+    multi.recordInSession(new _RunMergeableTestCmd(1, 3), multiRun);
+    auto multiBatch = multi.beginPrepared();
+    assert(multi.prepareConsolidate(multiBatch, multiRun).undoDepth == 1);
+    auto multiValid = multi.validatesPreparedToken(multiBatch); assert(multiValid.valid); multi.installPreparedToken(multiValid);
+    assert((cast(_RunMergeableTestCmd) multi.undoStack[0].cmd).after == 3);
+
+    foreach (first; [cast(Command)new _DecliningRunMergeCmd(),
+                     cast(Command)new _PlainTestCmd()]) {
+        auto h = new CommandHistory(); auto run = h.nextRun();
+        h.recordInSession(first, run); h.recordInSession(new _PlainTestCmd(), run);
+        auto batch = h.beginPrepared();
+        assert(h.prepareConsolidate(batch, run).undoDepth == 2);
+        auto valid = h.validatesPreparedToken(batch); assert(valid.valid); h.installPreparedToken(valid);
+        assert(h.undoStack.length == 2 &&
+               (h.undoStack[0].flags & HistoryFlags.InSession));
+    }
+
+    // Mixed MVE/non-MVE tail declines both arms byte-for-byte.
+    auto mixed = new CommandHistory(); auto mixedRun = mixed.nextRun();
+    Mesh mixedMesh; auto mixedView = new View(0, 0, 1, 1);
+    auto mixedEdit = new MeshVertexEdit(&mixedMesh, mixedView, EditMode.Vertices);
+    mixedEdit.setEdit([0u], [Vec3(0,0,0)], [Vec3(1,0,0)], "mixed");
+    mixed.recordInSession(mixedEdit, mixedRun);
+    mixed.recordInSession(new _PlainTestCmd(), mixedRun);
+    auto mixedBatch = mixed.beginPrepared();
+    assert(mixed.prepareConsolidate(mixedBatch, mixedRun).undoDepth == 2);
+    auto mixedValid = mixed.validatesPreparedToken(mixedBatch); assert(mixedValid.valid); mixed.installPreparedToken(mixedValid);
+    assert(mixed.undoStack.length == 2);
+
+    // A throwing virtual leaves every live history field untouched.
+    auto fault = new CommandHistory(); auto faultRun = fault.nextRun();
+    fault.recordInSession(new _DecliningRunMergeCmd(true), faultRun);
+    fault.recordInSession(new _PlainTestCmd(), faultRun);
+    auto faultBatch = fault.beginPrepared();
+    try {
+        fault.prepareConsolidate(faultBatch, faultRun);
+        assert(false, "injected virtual must throw");
+    } catch (Exception e) {
+        assert(e.msg == "prepared merge fault");
+    }
+    assert(fault.undoStack.length == 2 && fault.runOpen);
+    fault.discardPreparedToken(faultBatch);
+}
+
+unittest { // RunMergeable arm: a run of 2 collapses to ONE surviving entry.
+    auto h = new CommandHistory();
+    auto run = h.nextRun();
+
+    auto c1 = new _RunMergeableTestCmd(0, 1);
+    h.recordInSession(c1, run);
+    auto c2 = new _RunMergeableTestCmd(1, 2);
+    h.recordInSession(c2, run);
+    assert(h.undoStack.length == 2, "setup: two tagged in-session entries");
+
+    h.consolidate(run);
+
+    assert(h.undoStack.length == 1,
+           "RunMergeable run of 2 must consolidate to ONE surviving entry");
+    auto merged = cast(_RunMergeableTestCmd) h.undoStack[0].cmd;
+    assert(merged !is null, "surviving entry must be the merged RunMergeable command");
+    assert(merged.before == 0, "merged entry must keep the RUN-START before (first-touch-wins)");
+    assert(merged.after  == 2, "merged entry must adopt the LATEST after");
+    assert((h.undoStack[0].flags & HistoryFlags.InSession) == 0,
+           "the surviving entry must NOT be flagged InSession — the run has closed");
+    assert(h.undoStack[0].runId == 0, "the surviving entry's runId must be cleared");
+}
+
+unittest { // Pin: replaceInSessionTailWith cannot merge repeated calls in one run.
+    // command_history.d:920's replaceInSessionTailWith stamps its output
+    // entry with `runId: 0` and NO HistoryFlags.InSession bit (see its body
+    // below), so its OWN tail scan — which requires exactly that bit AND a
+    // matching runId — never finds a prior call's output on a second call in
+    // the SAME run. Two calls therefore APPEND rather than merge: 2 entries,
+    // not 1. This is why Phase 4 does NOT reuse this primitive for the item
+    // undo path (doc/item_mode_transform_plan.md, "Do NOT reuse
+    // replaceInSessionTailWith either").
+    auto h = new CommandHistory();
+    auto run = h.nextRun();
+
+    auto c1 = new _RunMergeableTestCmd(0, 1);
+    h.recordInSession(c1, run);
+
+    auto c2 = new _RunMergeableTestCmd(1, 2);
+    h.replaceInSessionTailWith(run, c2);
+    auto c3 = new _RunMergeableTestCmd(2, 3);
+    h.replaceInSessionTailWith(run, c3);
+
+    assert(h.undoStack.length == 2,
+           "replaceInSessionTailWith cannot merge repeated calls within one run "
+         ~ "(command_history.d:920-934) — this pins the rejected mechanism");
+}
+
+unittest { // R14: a non-RunMergeable, non-MeshVertexEdit run is left byte-identical.
+    auto h = new CommandHistory();
+    auto run = h.nextRun();
+
+    auto c1 = new _PlainTestCmd();
+    h.recordInSession(c1, run);
+    auto c2 = new _PlainTestCmd();
+    h.recordInSession(c2, run);
+    assert(h.undoStack.length == 2, "setup: two tagged in-session entries");
+
+    h.consolidate(run);
+
+    assert(h.undoStack.length == 2,
+           "neither arm recognizes this type — the stack must be left untouched (R14)");
+    assert((h.undoStack[0].flags & HistoryFlags.InSession) != 0,
+           "R14: consolidate must NOT strip InSession from an unrecognized-type run, "
+         ~ "even though it strips it for a lone RunMergeable/MeshVertexEdit entry");
+    assert((h.undoStack[1].flags & HistoryFlags.InSession) != 0);
+}
+
+unittest { // NIT (0614 review) — a run MIXING a RunMergeable command with a
+    // foreign type: BOTH arms decline, so the run is left byte-identical,
+    // every entry still tagged InSession — FOREVER (nothing ever revisits a
+    // closed run to retry consolidation). Not hypothetical: an in-session
+    // vertex edit (MeshVertexEdit) and an in-session item edit
+    // (LayerXformEdit, itself RunMergeable) CAN land in the SAME tagged run
+    // if a user switches SelType mid-activation without crossing a run
+    // boundary — item-select does not drop the active tool (see
+    // test_item_gizmo_frame.d's own "the armed tool is NOT dropped"
+    // fixtures). Reproduced here with the existing test doubles rather than
+    // the real command types: the failure shape is generic to "first entry
+    // is RunMergeable, a later entry is a different concrete type" and
+    // needs neither the real item nor the real vertex machinery.
+    //
+    // KNOWN LIMITATION, pinned rather than fixed here (out of scope for this
+    // pass) — flagged so a future change to either arm's decline condition
+    // is noticed instead of silently altering this behaviour.
+    auto h = new CommandHistory();
+    auto run = h.nextRun();
+
+    auto c1 = new _RunMergeableTestCmd(0, 1);   // RunMergeable
+    h.recordInSession(c1, run);
+    auto c2 = new _PlainTestCmd();               // neither MeshVertexEdit nor
+                                                   // the same RunMergeable type
+    h.recordInSession(c2, run);
+    assert(h.undoStack.length == 2, "setup: two tagged in-session entries");
+
+    h.consolidate(run);
+
+    assert(h.undoStack.length == 2,
+           "a mixed-type run must be left untouched by both arms — Arm 1 "
+         ~ "declines (not all MeshVertexEdit), Arm 2 declines (mergeRunTail "
+         ~ "cannot cast the foreign later entry)");
+    assert((h.undoStack[0].flags & HistoryFlags.InSession) != 0
+        && (h.undoStack[1].flags & HistoryFlags.InSession) != 0,
+           "both entries stay tagged InSession — the known limitation this "
+         ~ "test pins");
+}
+
+unittest { // invalidateRedo (task 0429): kills redo; refused under Suspend/lockout
+    auto h = new CommandHistory();
+    auto a = new _EpochTestCmd();
+    auto b = new _EpochTestCmd();
+    a.apply(); h.record(a);
+    b.apply(); h.record(b);
+    assert(h.undo());
+    assert(h.canRedo(), "setup: redo available after an undo");
+    assert(h.undoStack.length == 1, "setup: one entry left below the cursor");
+
+    // Suspend guard — the state undo()/redo() hold around a stack step's
+    // apply/revert: a re-entrant invalidation DURING the step must not erase
+    // the redo entry the step just created.
+    h.setState(UndoState.Suspend);
+    h.invalidateRedo();
+    assert(h.canRedo(), "invalidateRedo under Suspend must be a no-op");
+    h.setState(UndoState.Active);
+
+    // Lockout guard (record-family pattern).
+    h.setLockout(true);
+    h.invalidateRedo();
+    assert(h.canRedo(), "invalidateRedo under lockout must be a no-op");
+    h.setLockout(false);
+
+    // Active: exactly the redo timeline dies — undoStack and epoch are
+    // untouched — and the call is idempotent on an already-empty redo stack.
+    auto epochBefore = h.undoEpoch;
+    h.invalidateRedo();
+    assert(!h.canRedo(), "invalidateRedo must clear the redo stack");
+    assert(h.undoStack.length == 1, "invalidateRedo must not touch the undo stack");
+    assert(h.undoEpoch == epochBefore, "invalidateRedo must not bump the epoch");
+    h.invalidateRedo();
+    assert(!h.canRedo(), "idempotent on empty redo");
+
+    // truncateRedo (topology-redo S5): the same two guards, each beside a
+    // local positive control — an Active cut of a two-entry redo stack to 1
+    // keeps exactly the head; `keep` past the length changes nothing.
+    auto c = new _EpochTestCmd();
+    c.apply(); h.record(c);
+    assert(h.undo() && h.undo(), "setup: two entries back on the redo stack");
+    assert(h.redoStack.length == 2 && h.redoStack[0].cmd is a,
+           "setup: the redo head is the first entry undone last");
+    h.setState(UndoState.Suspend);
+    h.truncateRedo(1);
+    assert(h.redoStack.length == 2, "truncateRedo under Suspend must be a no-op");
+    h.setState(UndoState.Active);
+    h.setLockout(true);
+    h.truncateRedo(1);
+    assert(h.redoStack.length == 2, "truncateRedo under lockout must be a no-op");
+    h.setLockout(false);
+    h.truncateRedo(5);
+    assert(h.redoStack.length == 2, "truncateRedo past the length must change nothing");
+    h.truncateRedo(1);
+    assert(h.redoStack.length == 1 && h.redoStack[0].cmd is a,
+           "an Active truncateRedo(1) must keep the head alone");
+    assert(h.undoStack.length == 0, "truncateRedo must not touch the undo stack");
+}
+
+// ---------------------------------------------------------------------------
+// Mixed-class history stepping unit tests.
+// All use _TrackedCmd stubs — no GL context needed.
+// ---------------------------------------------------------------------------
+
+// B1 analogue: pure-UI stack → undo falls back to the UI head.
+// Stack: [UI-A, UI-B] → undo → reverts UI-B → stack: [UI-A].
+unittest {
+    auto h = new CommandHistory();
+
+    auto uiA = new _TrackedCmd(CmdFlags.UiState);
+    auto uiB = new _TrackedCmd(CmdFlags.UiState);
+    recUi(uiA, h);
+    recUi(uiB, h);
+    assert(h.undoStack.length == 2, "B1 setup: expected 2 entries");
+
+    size_t mc, uc;
+    h.undoDepthCounts(mc, uc);
+    assert(mc == 0 && uc == 2, "B1: 0 model, 2 UI before undo");
+
+    // undo → B1 fallback: revert UI-B.
+    assert(h.undo(), "B1: undo should succeed");
+    assert(uiB.revertCalls == 1, "B1: UI-B must be revert()'d once");
+    assert(uiA.revertCalls == 0, "B1: UI-A must NOT be revert()'d");
+    assert(h.undoStack.length == 1,  "B1: undoStack should have 1 entry");
+    assert(h.redoStack.length == 1,  "B1: redoStack should have 1 entry");
+    assert(h.undoEpoch == 1, "B1: epoch bumped");
+}
+
+// Mixed stack: [UI-A, Model-mA, UI-B, Model-mB] steps in strict LIFO order.
+unittest {
+    auto h = new CommandHistory();
+
+    auto uiA  = new _TrackedCmd(CmdFlags.UiState);
+    auto modA = new _TrackedCmd(CmdFlags.Model);
+    auto uiB  = new _TrackedCmd(CmdFlags.UiState);
+    auto modB = new _TrackedCmd(CmdFlags.Model);
+    recUi(uiA, h);
+    recModel(modA, h);
+    recUi(uiB, h);
+    recModel(modB, h);
+    assert(h.undoStack.length == 4, "B2 setup: expected 4 entries");
+
+    size_t mc, uc;
+    h.undoDepthCounts(mc, uc);
+    assert(mc == 2 && uc == 2, "B2: 2 model, 2 UI");
+
+    // undo₁: the Model tail is the first LIFO step.
+    assert(h.undo(), "B2 undo₁ should succeed");
+    assert(modB.revertCalls == 1, "B2 undo₁: modB revert()'d");
+    assert(uiB.revertCalls  == 0, "B2 undo₁: uiB not reached yet");
+    assert(uiA.revertCalls  == 0, "B2 undo₁: uiA NOT revert()'d");
+    assert(modA.revertCalls == 0, "B2 undo₁: modA NOT revert()'d");
+    // undoStack: [uiA, modA, uiB], redoStack: [modB]
+    assert(h.undoStack.length == 3, "B2 undo₁: undoStack has 3");
+    assert(h.redoStack.length == 1, "B2 undo₁: redoStack has 1");
+
+    // undo₂: the interleaved UI record is its own step.
+    assert(h.undo(), "B2 undo₂ should succeed");
+    assert(uiB.revertCalls  == 1, "B2 undo₂: uiB revert()'d");
+    assert(modA.revertCalls == 0, "B2 undo₂: modA not reached yet");
+    assert(uiA.revertCalls  == 0, "B2 undo₂: uiA NOT revert()'d");
+    assert(h.undoStack.length == 2, "B2 undo₂: undoStack has 2");
+    assert(h.redoStack.length == 2, "B2 undo₂: redoStack has 2");
+    assert(h.undoEpoch == 2, "B2: epoch == 2 after two undos");
+
+    // undo₃: only now does the older Model record revert.
+    assert(h.undo(), "B2 undo₃ should succeed");
+    assert(modA.revertCalls == 1, "B2 undo₃: modA revert()'d");
+    assert(uiA.revertCalls  == 0, "B2 undo₃: uiA not reached yet");
+    assert(h.undoStack.length == 1, "B2 undo₃: undoStack has 1");
+    assert(h.redoStack.length == 3, "B2 undo₃: redoStack has 3");
+    assert(h.undoEpoch == 3, "B2: epoch == 3 after three undos");
+}
+
+// F4 form: [Edit, Select, Arm]. All three classes step in strict LIFO order.
+unittest {
+    auto h = new CommandHistory();
+    auto edit = new _TrackedCmd(CmdFlags.Model);
+    auto select = new _TrackedCmd(CmdFlags.UiState);
+    auto arm = new _TrackedCmd(CmdFlags.ToolLifecycle);
+    foreach (cmd; [edit, select, arm]) {
+        assert(cmd.apply(), "F4 setup apply should succeed");
+        cmd.applyCalls = 0;
+        h.pushEntryForTest(cmd);
+    }
+    assert(h.undoStack.length == 3 && h.redoStack.length == 0,
+        "F4 setup: expected undo=3 redo=0");
+    assert(h.undoEntriesVisible().length == 3,
+        "F4 surface: lifecycle tail must be a visible named history row");
+    assert(!h.canUndoModel() && !h.canUndoUi() && h.canUndoLifecycle(),
+        "F4 surface: Arm tail must predict lifecycle, not Model or UI");
+
+    assert(h.undo(), "F4 undo₁ should revert Arm");
+    assert(select.revertCalls == 0 && edit.revertCalls == 0 && arm.revertCalls == 1,
+        "F4 undo₁ order must be Arm");
+    assert(h.undoStack.length == 2 && h.redoStack.length == 1,
+        "F4 undo₁: expected undo=2 redo=1");
+    assert(h.undoEntriesVisible().length == 2
+        && h.redoEntriesVisible().length == 1,
+        "F4 surface: undo/redo lists must expose the transferred Arm row");
+    assert(!h.canUndoModel() && h.canUndoUi() && !h.canUndoLifecycle(),
+        "F4 surface: Select tail must predict UI only");
+
+    assert(h.undo(), "F4 undo₂ should revert Select");
+    assert(select.revertCalls == 1 && edit.revertCalls == 0 && arm.revertCalls == 1,
+        "F4 undo₂ order must be Select");
+    assert(h.undoStack.length == 1 && h.redoStack.length == 2,
+        "F4 undo₂: expected undo=1 redo=2");
+    assert(h.canUndoModel() && !h.canUndoUi() && !h.canUndoLifecycle(),
+        "F4 surface: Edit tail must predict Model only");
+
+    assert(h.undo(), "F4 undo₃ should revert Edit");
+    assert(select.revertCalls == 1 && edit.revertCalls == 1 && arm.revertCalls == 1,
+        "F4 undo₃ order must be Edit");
+    assert(h.undoStack.length == 0 && h.redoStack.length == 3,
+        "F4 undo₃: expected undo=0 redo=3");
+}
+
+// CHRONOLOGY: [UI-A, Model-mA, UI-B, Model-mB] → undo×ALL → redo×ALL.
+// After the full round-trip the undo stack must have the SAME 4 entries in the
+// SAME order, with one revert/apply per record and one call per LIFO step.
+unittest {
+    auto h = new CommandHistory();
+
+    auto uiA  = new _TrackedCmd(CmdFlags.UiState);
+    auto modA = new _TrackedCmd(CmdFlags.Model);
+    auto uiB  = new _TrackedCmd(CmdFlags.UiState);
+    auto modB = new _TrackedCmd(CmdFlags.Model);
+    recUi(uiA, h);
+    recModel(modA, h);
+    recUi(uiB, h);
+    recModel(modB, h);
+
+    // Snapshot the initial stack order by cmd identity.
+    Command[] initialOrder;
+    foreach (ref e; h.undoStack) initialOrder ~= e.cmd;
+
+    // Undo all the way down.
+    size_t undoSteps;
+    while (h.canUndo()) { assert(h.undo()); ++undoSteps; }
+
+    // Stack: empty; redo has all 4.
+    assert(h.undoStack.length == 0, "CHRON: undoStack empty after full undo");
+    assert(h.redoStack.length == 4, "CHRON: redoStack has 4 after full undo");
+    assert(undoSteps == 4, "CHRON: full undo must take 4 LIFO steps");
+
+    assert(uiA.revertCalls == 1, "CHRON: uiA revert()'d once");
+    assert(uiB.revertCalls == 1, "CHRON: uiB revert()'d once");
+    assert(modA.revertCalls == 1, "CHRON: modA revert()'d once");
+    assert(modB.revertCalls == 1, "CHRON: modB revert()'d once");
+
+    // Reset apply counters so we can count redo-apply calls.
+    uiA.applyCalls = 0; modA.applyCalls = 0;
+    uiB.applyCalls = 0; modB.applyCalls = 0;
+
+    // Redo all the way back up.
+    size_t redoSteps;
+    while (h.canRedo()) { assert(h.redo()); ++redoSteps; }
+
+    // Stack restored to 4 entries; redo empty.
+    assert(h.undoStack.length == 4, "CHRON: undoStack restored to 4 after full redo");
+    assert(h.redoStack.length == 0, "CHRON: redoStack empty after full redo");
+    assert(redoSteps == 4, "CHRON: full redo must take 4 LIFO steps");
+
+    // Verify original chronological order is preserved.
+    foreach (i, ref e; h.undoStack) {
+        import std.conv : to;
+        assert(e.cmd is initialOrder[i],
+            "CHRON: entry " ~ i.to!string ~ " is wrong cmd after round-trip");
+    }
+
+    // Every record is re-applied by its own redo step.
+    assert(modA.applyCalls == 1, "CHRON redo: modA apply()'d once");
+    assert(modB.applyCalls == 1, "CHRON redo: modB apply()'d once");
+    assert(uiA.applyCalls  == 1, "CHRON redo: uiA apply()'d once");
+    assert(uiB.applyCalls  == 1, "CHRON redo: uiB apply()'d once");
+}
+
+version(unittest) {
+    // Hand-built stack matching the §Derived trace (two gestures A then B):
+    // [SelA(UiUndo), geomA(Model), DeactA(ToolLifecycle),
+    //  SelB(UiUndo), geomB(Model), DeactB(ToolLifecycle)]
+    // The completed strict-LIFO walk reverses that recorded order exactly:
+    // DeactB, geomB, SelB, DeactA, geomA, SelA.
+    unittest {
+        import std.stdio : writeln;
+
+        auto h = new CommandHistory();
+
+        static class StubModel : Command {
+            import vibe3d.mesh.core.mesh     : Mesh;
+            import vibe3d.viewport.camera.view     : View;
+            import vibe3d.editing.contracts.editmode : EditMode;
+            bool reverted = false;
+            bool applied  = false;
+            private Mesh  _mesh;
+            private View  _view = new View(0, 0, 1, 1);
+            this() {
+                super(&_mesh, _view, EditMode.Vertices);
+                // TASK 2500 — these doubles are pushed with
+                // `pushEntryForTest`, which never calls `apply()`, so the flag
+                // is raised where their (trivial) undo image exists: at
+                // construction.
+                noteUndoRecorded();
+            }
+            override string name() const { return "stub.model"; }
+            override CmdFlags cmdFlags() const { return CmdFlags.Model; }
+            protected override bool applyImpl()  { applied = true;  return true; }
+            protected override void revertImpl() { reverted = true; }
+        }
+        static class StubUi : Command {
+            import vibe3d.mesh.core.mesh     : Mesh;
+            import vibe3d.viewport.camera.view     : View;
+            import vibe3d.editing.contracts.editmode : EditMode;
+            bool reverted = false;
+            private Mesh  _mesh;
+            private View  _view = new View(0, 0, 1, 1);
+            this() {
+                super(&_mesh, _view, EditMode.Vertices);
+                // TASK 2500 — these doubles are pushed with
+                // `pushEntryForTest`, which never calls `apply()`, so the flag
+                // is raised where their (trivial) undo image exists: at
+                // construction.
+                noteUndoRecorded();
+            }
+            override string name() const { return "stub.ui"; }
+            override CmdFlags cmdFlags() const { return CmdFlags.UiState; }
+            protected override bool applyImpl()  { return true; }
+            protected override void revertImpl() { reverted = true; }
+        }
+        static class StubLifecycle : Command {
+            import vibe3d.mesh.core.mesh     : Mesh;
+            import vibe3d.viewport.camera.view     : View;
+            import vibe3d.editing.contracts.editmode : EditMode;
+            bool reverted = false;
+            bool applied  = false;
+            private Mesh  _mesh;
+            private View  _view = new View(0, 0, 1, 1);
+            this() {
+                super(&_mesh, _view, EditMode.Vertices);
+                // TASK 2500 — these doubles are pushed with
+                // `pushEntryForTest`, which never calls `apply()`, so the flag
+                // is raised where their (trivial) undo image exists: at
+                // construction.
+                noteUndoRecorded();
+            }
+            override string name() const { return "tool.activate"; }
+            override CmdFlags cmdFlags() const { return CmdFlags.ToolLifecycle; }
+            protected override bool applyImpl()  { applied = true;  return true; }
+            protected override void revertImpl() { reverted = true; }
+        }
+
+        auto selA   = new StubUi();
+        auto geomA  = new StubModel();
+        auto deactA = new StubLifecycle();
+        auto selB   = new StubUi();
+        auto geomB  = new StubModel();
+        auto deactB = new StubLifecycle();
+
+        h.pushEntryForTest(selA);
+        h.pushEntryForTest(geomA);
+        h.pushEntryForTest(deactA);
+        h.pushEntryForTest(selB);
+        h.pushEntryForTest(geomB);
+        h.pushEntryForTest(deactB);
+
+        assert(h.undoStack.length == 6);
+
+        // Strict LIFO: reverse the six recorded entries one at a time.
+        bool u1 = h.undo();
+        assert(u1, "undo₁ should succeed");
+        assert(deactB.reverted, "undo₁ should revert DeactB");
+        assert(!geomB.reverted && !selB.reverted,
+            "undo₁ should stop after DeactB");
+
+        bool u2 = h.undo();
+        assert(u2, "undo₂ should succeed");
+        assert(geomB.reverted, "undo₂ should revert geomB");
+        assert(!selB.reverted && !deactA.reverted,
+            "undo₂ should stop after geomB");
+
+        bool u3 = h.undo();
+        assert(u3, "undo₃ should succeed");
+        assert(selB.reverted, "undo₃ should revert SelB");
+        assert(!deactA.reverted && !geomA.reverted,
+            "undo₃ should stop after SelB");
+
+        bool u4 = h.undo();
+        assert(u4, "undo₄ should succeed");
+        assert(deactA.reverted, "undo₄ should revert DeactA");
+        assert(!geomA.reverted && !selA.reverted,
+            "undo₄ should stop after DeactA");
+
+        bool u5 = h.undo();
+        assert(u5, "undo₅ should succeed");
+        assert(geomA.reverted, "undo₅ should revert geomA");
+        assert(!selA.reverted, "undo₅ should stop before SelA");
+
+        bool u6 = h.undo();
+        assert(u6, "undo₆ should succeed");
+        assert(selA.reverted, "undo₆ should revert SelA");
+        assert(h.undoStack.length == 0, "undo₆ should empty the stack");
+
+        writeln("command_history lifecycle unittest: PASS");
+    }
+}

@@ -49,7 +49,7 @@ import vibe3d.mesh.core.mesh : Mesh, MeshMap, MapDomain, kUvMapName, MeshEditBat
 // being the door for the ops namespace (audit 0678 M9). (task 1903 Stage F1)
 import vibe3d.mesh.ops.mesh_ops.loop_slice : insertEdgeLoops, insertEdgeLoopsMulti,
                              kLoopSliceEditScope;
-import math : Vec3;
+import vibe3d.util.math.math : Vec3;
 
 // Task 1903 Stage F1: `insertEdgeLoops` / `insertEdgeLoopsMulti` are free
 // functions over `ref MeshEditBatch` now, so a bare `Mesh` receiver is a

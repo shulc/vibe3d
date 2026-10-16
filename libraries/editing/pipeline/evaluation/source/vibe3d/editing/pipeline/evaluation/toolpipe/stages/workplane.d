@@ -1,0 +1,431 @@
+module vibe3d.editing.pipeline.evaluation.toolpipe.stages.workplane;
+
+import std.math : sin, cos, PI, abs;
+import std.conv : to;
+import std.format : format;
+
+import vibe3d.util.math.math : Vec3;
+import vibe3d.util.spatial.spatial : Viewport;
+import vibe3d.editing.pipeline.runtime.toolpipe.stage    : Stage, TaskCode, ordWork;
+// pipeline imports moved to packet-only — Phase 6 cleanup
+import vibe3d.editing.pipeline.contracts.toolpipe.packets  : WorkplanePacket;
+import vibe3d.editing.pipeline.contracts.operator          : Operator, Task, VectorStack, PacketKind;
+import vibe3d.util.spatial.workplane_basis : pickMostFacingPlane;
+import vibe3d.editing.pipeline.evaluation.toolpipe.state_paths        : setStatePath;
+
+// ---------------------------------------------------------------------------
+// WorkplaneStage — construction-plane state.
+//
+// Phase 7.1 of doc/phase7_plan.md. Sits at ordinal 0x30 —
+// the first stage in the pipe — so subsequent stages (Snap,
+// ActionCenter, …) build on a known plane frame.
+//
+// State (the `workplane.edit` API):
+//   - `isAuto`   : when true, the plane snaps to the camera-most-facing
+//                  world plane via pickMostFacingPlane on every evaluate.
+//   - `center`   : translation of the plane origin from the world origin.
+//                  `workplane.edit cenX/Y/Z`.
+//   - `rotation` : Euler angles in DEGREES, B = R_z * R_x * R_y (Y
+//                  first, then X, then Z — the measured order, task 7120,
+//                  measured_laws §10/§23). `workplane.edit rotX/Y/Z`.
+//                  rotation = (0,0,0) ↔ XZ plane, normal = +Y.
+//
+// Commands `workplane.reset`, `workplane.edit`, `workplane.rotate`,
+// `workplane.offset`, `workplane.alignToSelection` mutate this state
+// — see source/commands/workplane/.
+//
+// HTTP setAttr keys (used by the generic tool.pipe.attr machinery):
+//   `auto`        : "true" / "false"
+//   `cenX/Y/Z`    : float (world units)
+//   `rotX/Y/Z`    : float (degrees)
+//   `mode`        : convenience preset — "auto" / "worldX" / "worldY"
+//                   / "worldZ" — translates to (auto, rotation) values.
+// ---------------------------------------------------------------------------
+class WorkplaneStage : Stage, Operator {
+    // Phase 1 of doc/operator_refactor_plan.md.
+    private WorkplanePacket _publishedPacket;
+
+    Task task() const { return Task.Work; }
+    PacketKind[] requiredPackets() const { return [PacketKind.Subject]; }
+
+    bool evaluate(ref VectorStack vts) {
+        if (!pipeEnabled) return false;
+        import vibe3d.editing.pipeline.contracts.toolpipe.packets : SubjectPacket;
+        if (isAuto) {
+            // WORK is the first slot — `subject.viewport` carries the
+            // active camera frame. Older Phase-0 SubjectPackets that
+            // forget to set viewport degrade to identity (auto-mode
+            // still publishes, just with whatever camera state the
+            // unset Viewport carries — same as the legacy
+            // evaluate(ToolState) path before Phase 6).
+            Viewport vp;
+            if (auto subj = vts.get!SubjectPacket()) vp = subj.viewport;
+            auto bp = pickMostFacingPlane(vp);
+            _publishedPacket.normal = bp.normal;
+            _publishedPacket.axis1  = bp.axis1;
+            _publishedPacket.axis2  = bp.axis2;
+            _publishedPacket.center = Vec3(0, 0, 0);
+            _publishedPacket.isAuto = true;
+        } else {
+            Vec3 n, a1, a2;
+            rotateBasis(rotation, n, a1, a2);
+            _publishedPacket.normal = n;
+            _publishedPacket.axis1  = a1;
+            _publishedPacket.axis2  = a2;
+            _publishedPacket.center = center;
+            _publishedPacket.isAuto = false;
+        }
+        vts.put(&_publishedPacket);
+        return true;
+    }
+
+    bool isAuto    = true;
+    Vec3 center    = Vec3(0, 0, 0);
+    Vec3 rotation  = Vec3(0, 0, 0);   // degrees, B = Rz * Rx * Ry
+
+    this() {
+        publishState(false);
+    }
+
+    /// Task 7139 (gap 187): called synchronously whenever the EFFECTIVE frame
+    /// changes — every mutator and reset publishes through `publishState`, so
+    /// a `workplane.edit`/align is seen by the next click in the same tick.
+    /// `userEdit` is false for the constructor and the lifecycle `reset()`
+    /// (scene reset, stage replacement); the viewport moves its focus only on
+    /// a user edit. The app binds it to `ViewportManager.applyPlaneFrame`.
+    void delegate(in WorkplanePacket before, in WorkplanePacket after,
+                  bool userEdit) onEffectiveFrameChanged;
+
+    override TaskCode taskCode() const pure nothrow @nogc @safe { return TaskCode.Work; }
+    override string   id()       const                          { return "workplane"; }
+    override ubyte    ordinal()  const pure nothrow @nogc @safe { return ordWork; }
+
+    override bool setAttrImpl(string name, string value) {
+        bool ok = applySetAttr(name, value);
+        if (ok) publishState();
+        return ok;
+    }
+
+    // Authoritative settable-attr universe (task 0678 P4). This stage has no
+    // params()/fullParams(), so the base knownAttrs() derivation returned
+    // null — and the forms-engine startup-strict validator (forms.d) throws
+    // on ANY attr of a stage whose universe is empty, so the first form bound
+    // to "workplane" would fail at boot. Mirrors applySetAttr's switch (the
+    // header's "HTTP setAttr keys" table); pinned by unittest below.
+    override string[] knownAttrs() {
+        return ["auto", "cenX", "cenY", "cenZ", "rotX", "rotY", "rotZ", "mode"];
+    }
+
+    override string[2][] listAttrs() const {
+        Vec3 ey, ex, ez;
+        rotateBasis(rotation, ey, ex, ez);
+        return [
+            ["auto",  isAuto ? "true" : "false"],
+            ["cenX",  format("%g", center.x)],
+            ["cenY",  format("%g", center.y)],
+            ["cenZ",  format("%g", center.z)],
+            ["rotX",  format("%g", rotation.x)],
+            ["rotY",  format("%g", rotation.y)],
+            ["rotZ",  format("%g", rotation.z)],
+            ["mode",  modeLabel()],
+            // Read-only: the basis a PINNED plane publishes (task 7119), so
+            // a witness reads an aligned plane (whose `rotation` is stale)
+            // and the Euler composition itself, not the typed angles. Auto
+            // mode's camera pick is not reflected. Not in knownAttrs.
+            ["axisXx", format("%.9g", ex.x)], ["axisXy", format("%.9g", ex.y)], ["axisXz", format("%.9g", ex.z)],
+            ["normalX", format("%.9g", ey.x)], ["normalY", format("%.9g", ey.y)], ["normalZ", format("%.9g", ey.z)],
+            ["axisZx", format("%.9g", ez.x)], ["axisZy", format("%.9g", ez.y)], ["axisZz", format("%.9g", ez.z)],
+        ];
+    }
+
+    /// Reset to default behaviour — auto-snap, world origin, no rotation.
+    /// Backs the `workplane.reset` command and the generic
+    /// SceneReset/`/api/reset` pipeline-cleanup loop (via Stage.reset()).
+    /// Task 0791 — the WORK slot ends a held transform operation, and it does
+    /// NOT split into activation and attribute the way falloff does: measured
+    /// on the reference, fitting the plane to the selection, offsetting it and
+    /// resetting it all end the operation with the same bracket. So every
+    /// attribute write here arms the slot.
+    public override bool attrArmsSlot(string name) const { return true; }
+
+    /// The work plane is scene state: a new scene starts at the default plane
+    /// (fixtures/constraint_boot.json, newscene-workplane-snap).
+    override bool storedInScene() const { return true; }
+
+    override void reset() {
+        clearState();
+        publishState(false);
+    }
+
+    /// The `workplane.reset` command's reset: the same state as `reset()`,
+    /// published as a USER edit so the view transition runs (C4-oc, task 7139).
+    void resetByUser() {
+        clearState();
+        publishState(true);
+    }
+
+    private void clearState() {
+        isAuto   = true;
+        center   = Vec3(0, 0, 0);
+        rotation = Vec3(0, 0, 0);
+        directBasisActive = false;
+    }
+
+    /// Set absolute center / rotation. Pass NaN for any component to
+    /// leave it unchanged (so partial argstrings like `workplane.edit
+    /// rotZ:90` work cleanly). Switches isAuto off — any explicit edit
+    /// pins the plane.
+    void edit(float cx, float cy, float cz, float rx, float ry, float rz) {
+        import std.math : isNaN;
+        if (!isNaN(cx)) center.x   = cx;
+        if (!isNaN(cy)) center.y   = cy;
+        if (!isNaN(cz)) center.z   = cz;
+        bool rotChanged = false;
+        if (!isNaN(rx)) { rotation.x = rx; rotChanged = true; }
+        if (!isNaN(ry)) { rotation.y = ry; rotChanged = true; }
+        if (!isNaN(rz)) { rotation.z = rz; rotChanged = true; }
+        if (rotChanged) isAuto = false;
+        publishState();
+    }
+
+    /// Add `angle` (degrees) around world axis `axisIdx` (0=X, 1=Y, 2=Z)
+    /// to the current rotation. Backs `workplane.rotate`.
+    void rotateBy(int axisIdx, float angleDeg) {
+        // Task 0791 — a user-intent mutator with no internal caller, so it
+        // counts itself. `reset()` deliberately does NOT: it is also the
+        // stage's lifecycle hook (scene reset, tool switch), and counting a
+        // lifecycle event as a user arming is the trap this task keeps finding.
+        // The `workplane.reset` COMMAND counts instead.
+        noteSlotArmed();
+        if (axisIdx < 0 || axisIdx > 2) return;
+        final switch (axisIdx) {
+            case 0: rotation.x += angleDeg; break;
+            case 1: rotation.y += angleDeg; break;
+            case 2: rotation.z += angleDeg; break;
+        }
+        isAuto = false;
+        publishState();
+    }
+
+    /// Add `dist` (world units) to the center along axis `axisIdx`.
+    /// Backs `workplane.offset`.
+    void offsetBy(int axisIdx, float dist) {
+        // Task 0791 — a user-intent mutator with no internal caller, so it
+        // counts itself. `reset()` deliberately does NOT: it is also the
+        // stage's lifecycle hook (scene reset, tool switch), and counting a
+        // lifecycle event as a user arming is the trap this task keeps finding.
+        // The `workplane.reset` COMMAND counts instead.
+        noteSlotArmed();
+        if (axisIdx < 0 || axisIdx > 2) return;
+        final switch (axisIdx) {
+            case 0: center.x += dist; break;
+            case 1: center.y += dist; break;
+            case 2: center.z += dist; break;
+        }
+        publishState();
+    }
+
+    /// Read the current orientation as (normal, axis1, axis2) without
+    /// running a full pipeline.evaluate(). Honours directBasis when set.
+    /// Independent of `isAuto` — callers that want the auto-snapped basis
+    /// should run pipeline.evaluate() with a live ToolState instead.
+    void currentBasis(out Vec3 normal, out Vec3 axis1, out Vec3 axis2) const {
+        rotateBasis(rotation, normal, axis1, axis2);
+    }
+
+    /// Headless frame query — no viewport, no pipeline.evaluate(). This is
+    /// the single stage-owned answer `primitivePlacementFrame` (tools/
+    /// create_common.d) builds on: non-auto returns the live stored basis +
+    /// center; auto returns the `WorkplanePacket.init` default (world XZ,
+    /// origin 0) since the camera-facing pick has no meaning without a
+    /// live viewport (there is no "headless auto camera"). Do NOT use this
+    /// for the interactive camera-facing auto pick — that only exists via
+    /// `evaluate()` with a live SubjectPacket.viewport.
+    WorkplanePacket currentState() const {
+        if (isAuto) return WorkplanePacket.init;
+        WorkplanePacket p;
+        rotateBasis(rotation, p.normal, p.axis1, p.axis2);
+        p.center = center;
+        p.isAuto = false;
+        return p;
+    }
+
+    /// Local-workplane → world transform, column-major / OpenGL convention.
+    /// Columns: [axis1, normal, axis2, center]. Local Y is the workplane
+    /// normal (so a primitive built in the local XZ plane lies ON the
+    /// workplane after applying this matrix).
+    ///
+    /// In auto-mode the center isn't published in the stage state until
+    /// pipeline.evaluate runs, so direct callers get center=(0,0,0); use
+    /// the WorkplaneFrame returned by `pickWorkplaneFrame` (in tools/create_
+    /// common.d) when the auto basis matters.
+    float[16] transform() const {
+        Vec3 n, a1, a2;
+        rotateBasis(rotation, n, a1, a2);
+        return [
+            a1.x, a1.y, a1.z, 0,
+            n.x,  n.y,  n.z,  0,
+            a2.x, a2.y, a2.z, 0,
+            center.x, center.y, center.z, 1,
+        ];
+    }
+
+    /// World → local-workplane. Inverse of transform(). Cheap: relies on
+    /// the basis being orthonormal (rotational part transposes; translation
+    /// is -Rᵀ·center).
+    float[16] inverse() const {
+        Vec3 n, a1, a2;
+        rotateBasis(rotation, n, a1, a2);
+        // Rᵀ has axis1/normal/axis2 as ROWS (originally columns); its
+        // columns become (a1.x,n.x,a2.x), etc.
+        float tx = -(a1.x * center.x + a1.y * center.y + a1.z * center.z);
+        float ty = -(n.x  * center.x + n.y  * center.y + n.z  * center.z);
+        float tz = -(a2.x * center.x + a2.y * center.y + a2.z * center.z);
+        return [
+            a1.x, n.x,  a2.x, 0,
+            a1.y, n.y,  a2.y, 0,
+            a1.z, n.z,  a2.z, 0,
+            tx,   ty,   tz,   1,
+        ];
+    }
+
+    /// Set the basis directly (used by `workplane.alignToSelection` to
+    /// apply a computed orientation without going through Euler decompo
+    /// — Euler decomposition for arbitrary frames is gimbal-prone).
+    /// Stored rotation is left untouched; evaluate() falls back to the
+    /// directBasis path when `directBasisActive` is true.
+    void setBasis(Vec3 normal, Vec3 axis1, Vec3 axis2, Vec3 newCenter) {
+        noteSlotArmed();   // task 0791 — same class as rotateBy/offsetBy
+        directNormal = normal;
+        directAxis1  = axis1;
+        directAxis2  = axis2;
+        center       = newCenter;
+        directBasisActive = true;
+        isAuto = false;
+        publishState();
+    }
+
+private:
+    bool directBasisActive = false;
+    Vec3 directNormal;
+    Vec3 directAxis1;
+    Vec3 directAxis2;
+
+    // Publish current state under the `workplane/` prefix so popup
+    // checkmarks (see source/popup_state.d) can reflect it. Called
+    // from constructor + every mutator.
+    void publishState(bool userEdit = true) {
+        setStatePath("workplane/auto", isAuto ? "true" : "false");
+        setStatePath("workplane/mode", modeLabel());
+        WorkplanePacket now = currentState();
+        if (now == published_) return;
+        WorkplanePacket before = published_;
+        published_ = now;
+        if (onEffectiveFrameChanged !is null)
+            onEffectiveFrameChanged(before, now, userEdit);
+    }
+
+    // The effective frame last handed to `onEffectiveFrameChanged` (task 7139).
+    WorkplanePacket published_;
+
+    bool applySetAttr(string name, string value) {
+        switch (name) {
+            case "auto":
+                if      (value == "true"  || value == "1") { isAuto = true;  return true; }
+                else if (value == "false" || value == "0") { isAuto = false; return true; }
+                return false;
+            case "cenX":  return parseFloat(value, center.x);
+            case "cenY":  return parseFloat(value, center.y);
+            case "cenZ":  return parseFloat(value, center.z);
+            case "rotX":  { if (!parseFloat(value, rotation.x)) return false;
+                          isAuto = false; return true; }
+            case "rotY":  { if (!parseFloat(value, rotation.y)) return false;
+                          isAuto = false; return true; }
+            case "rotZ":  { if (!parseFloat(value, rotation.z)) return false;
+                          isAuto = false; return true; }
+            case "mode":
+                // Convenience presets — translate enum-style values into
+                // (isAuto, rotation) pairs. `worldY` is the default flat
+                // XZ plane; `worldX` / `worldZ` are 90° rotations of it.
+                switch (value) {
+                    case "auto":
+                        isAuto = true;
+                        rotation = Vec3(0, 0, 0);
+                        center   = Vec3(0, 0, 0);
+                        directBasisActive = false;
+                        return true;
+                    case "worldY":
+                        isAuto = false;
+                        rotation = Vec3(0, 0, 0);
+                        directBasisActive = false;
+                        return true;
+                    case "worldX":
+                        isAuto = false;
+                        rotation = Vec3(0, 0, -90.0f);
+                        directBasisActive = false;
+                        return true;
+                    case "worldZ":
+                        isAuto = false;
+                        rotation = Vec3(90.0f, 0, 0);
+                        directBasisActive = false;
+                        return true;
+                    default: return false;
+                }
+            default: return false;
+        }
+    }
+
+    string modeLabel() const {
+        if (isAuto) return "auto";
+        // alignToSelection / any caller of setBasis stamps a custom basis;
+        // the legacy `rotation` field is stale in that mode, so don't
+        // report a worldX/Y/Z preset here (would light up the wrong popup
+        // checkmark).
+        if (directBasisActive) return "aligned";
+        if (rotation == Vec3(0, 0, 0)) return "worldY";
+        if (rotation == Vec3(0, 0, -90.0f)) return "worldX";
+        if (rotation == Vec3(90.0f, 0, 0)) return "worldZ";
+        return "custom";
+    }
+
+    // The ONE place a stored rotation becomes a basis: B = Rz * Rx * Ry
+    // (degrees) applied to the world axes, returned as (normal = B*Y,
+    // axis1 = B*X, axis2 = B*Z). Order measured, task 7120 (§10/§23).
+    void rotateBasis(Vec3 rotDeg, out Vec3 normal, out Vec3 axis1, out Vec3 axis2) const {
+        if (directBasisActive) {
+            normal = directNormal;
+            axis1  = directAxis1;
+            axis2  = directAxis2;
+            return;
+        }
+        float rx = cast(float)(rotDeg.x * PI / 180.0);
+        float ry = cast(float)(rotDeg.y * PI / 180.0);
+        float rz = cast(float)(rotDeg.z * PI / 180.0);
+        Vec3 ex = rotateZXY(Vec3(1, 0, 0), rx, ry, rz);
+        Vec3 ey = rotateZXY(Vec3(0, 1, 0), rx, ry, rz);
+        Vec3 ez = rotateZXY(Vec3(0, 0, 1), rx, ry, rz);
+        normal = ey;
+        axis1  = ex;
+        axis2  = ez;
+    }
+
+    // Rz * Rx * Ry * v: the Y rotation first, then X, then Z.
+    static Vec3 rotateZXY(Vec3 v, float rx, float ry, float rz) {
+        // Y-rotation
+        float cy1 = cos(ry), sy1 = sin(ry);
+        Vec3 a = Vec3(cy1 * v.x + sy1 * v.z, v.y, -sy1 * v.x + cy1 * v.z);
+        // X-rotation
+        float cx0 = cos(rx), sx0 = sin(rx);
+        Vec3 b = Vec3(a.x, cx0 * a.y - sx0 * a.z, sx0 * a.y + cx0 * a.z);
+        // Z-rotation
+        float cz1 = cos(rz), sz1 = sin(rz);
+        Vec3 c = Vec3(cz1 * b.x - sz1 * b.y, sz1 * b.x + cz1 * b.y, b.z);
+        return c;
+    }
+
+    // Task 3020 — delegates to the ONE wire-token gate in params.d.
+    static bool parseFloat(string s, ref float dst) {
+        import vibe3d.editing.params.params : assignWireFloat;
+        return assignWireFloat(s, dst);
+    }
+}

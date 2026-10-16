@@ -1,0 +1,1002 @@
+module vibe3d.editing.pipeline.evaluation.toolpipe.stages.snap;
+
+import vibe3d.editing.selection.query.toolpipe.guide : SnapQueryPolicy, SnapPurpose, SnapGuideScope;
+import std.format    : format;
+import std.conv      : to;
+import std.string    : split, strip;
+import std.algorithm : canFind;
+
+import vibe3d.editing.pipeline.runtime.toolpipe.stage    : Stage, TaskCode, ordSnap;
+// pipeline imports moved to packet-only — Phase 6 cleanup
+import vibe3d.editing.pipeline.contracts.toolpipe.packets  : SnapPacket, SnapConfig, SnapHitPacket, SnapType, SnapMode;
+import vibe3d.editing.selection.query.toolpipe.guide    : SnapGuide, GuideDrawState;
+import vibe3d.editing.pipeline.contracts.operator          : Operator, Task, VectorStack, PacketKind;
+import vibe3d.editing.pipeline.evaluation.toolpipe.state_paths       : setStatePath, installPreparedStatePath;
+import vibe3d.editing.params.params            : Param, IntEnumEntry;
+
+// ---------------------------------------------------------------------------
+// The snap TYPE table — one row per candidate class, single-sourced.
+//
+// Read by `params()` (one checkbox per row, in this order), by `setAttr`
+// (the per-type wire keys), and by `knownAttrs()`. Order and labels follow
+// the reference's own snap-type list, which is what a user who knows the
+// other editor will be looking for; `workplane` has no counterpart there and
+// is ours, so it sits at the end rather than pretending to a position.
+private struct SnapTypeRow {
+    SnapType bit;
+    string   attr;    // wire key: `tool.pipe.attr snap <attr> true|false`
+    string   token;   // token in the `types` CSV / `typeToggle`
+    string   label;   // UI
+}
+
+private static immutable SnapTypeRow[] snapTypeRows = [
+    SnapTypeRow(SnapType.Grid,         "typeGrid",         "grid",         "Grid"),
+    SnapTypeRow(SnapType.Vertex,       "typeVertex",       "vertex",       "Vertex"),
+    SnapTypeRow(SnapType.Edge,         "typeEdge",         "edge",         "Edge"),
+    SnapTypeRow(SnapType.EdgeCenter,   "typeEdgeCenter",   "edgeCenter",   "Edge Center"),
+    SnapTypeRow(SnapType.Polygon,      "typePolygon",      "polygon",      "Polygon"),
+    SnapTypeRow(SnapType.PolyCenter,   "typePolyCenter",   "polyCenter",   "Polygon Center"),
+    SnapTypeRow(SnapType.Pivot,        "typePivot",        "pivot",        "Pivot"),
+    SnapTypeRow(SnapType.WorldAxis,    "typeWorldAxis",    "worldAxis",    "World Axis"),
+    SnapTypeRow(SnapType.StraightLine, "typeStraightLine", "straightLine", "Straight Line"),
+    SnapTypeRow(SnapType.RightAngle,   "typeRightAngle",   "rightAngle",   "Right Angle"),
+    SnapTypeRow(SnapType.Intersection, "typeIntersection", "intersection", "Intersection"),
+    SnapTypeRow(SnapType.Box,          "typeBox",          "box",          "Box"),
+    SnapTypeRow(SnapType.Workplane,    "typeWorkplane",    "workplane",    "Workplane"),
+];
+
+private static immutable IntEnumEntry[] snapModeEntries = [
+    IntEnumEntry(cast(int)SnapMode.Global,    "global",    "Global"),
+    IntEnumEntry(cast(int)SnapMode.Component, "component", "Component"),
+    IntEnumEntry(cast(int)SnapMode.Item,      "item",      "Item"),
+];
+
+/// The ONE place the word that titles the snapping surface is written
+/// (task 0638). `displayName()` returns it — so it titles the collapsing
+/// section — and the Tool Properties tab strip in app.d reads it too, so
+/// the tab entry and the section header can never say different things and
+/// can never drift apart from what a test pins.
+///
+/// It was once load-bearing for an ImGui id collision: the panel pushed no id
+/// scope, so a row label and the title above it shared one namespace and any
+/// row labelled with this string became the same widget as the title. Task
+/// 0640 gave every section and every row a scope of its own, so that is no
+/// longer true — what the unittest at the bottom of this module still pins is
+/// legibility (one name must not stand for two controls a user has to tell
+/// apart), plus the fact that the tab entry and the section header cannot
+/// drift, which is what single-sourcing the word buys.
+enum kSnapDisplayName = "Snapping";
+
+// ---------------------------------------------------------------------------
+// SnapStage — Phase 7.3 of doc/phase7_plan.md / doc/snap_plan.md.
+// Sits at ordinal 0x40 (between WORK 0x30 and ACEN 0x60).
+//
+// Publishes a SnapPacket with the master enable flag, the
+// candidate-type bitmask and the inner / outer pixel ranges. The
+// actual snap math runs on demand in source/snap.d's `snapCursor`,
+// since snap candidates depend on the live cursor position and can't
+// be precomputed once per pipeline.evaluate.
+//
+// HTTP setAttr keys:
+//   `enabled`       : "true" / "false"
+//   `types`         : CSV — "vertex,edgeCenter,polyCenter,grid"
+//                     (recognised tokens: vertex, edge, edgeCenter,
+//                      polygon, polyCenter, grid, workplane)
+//   `innerRange`    : float, screen pixels
+//   `outerRange`    : float, screen pixels
+//   `fixedGrid`     : "true" / "false"
+//   `fixedGridSize` : float, world units
+// ---------------------------------------------------------------------------
+struct PreparedSnapPushProjection {
+    bool enabled, pushedEnabled;
+    string pushedOwner;
+}
+
+class SnapStage : Stage, Operator {
+    // Phase 1 of doc/operator_refactor_plan.md.
+    private SnapPacket _publishedPacket;
+    // The per-cursor RESULT (S2 of doc/toolpipe_architecture_plan.md).
+    // Storage lives on the stage for the same reason `_publishedPacket` does:
+    // the VectorStack holds POINTERS into the publisher, valid for the one
+    // `pipeline.evaluate` call.
+    private SnapHitPacket _hitPkt;
+    // The guide registry (S4(a) of doc/toolpipe_architecture_plan.md). Empty
+    // in this phase and in every existing code path: nothing registers.
+    private SnapGuide[] _guides;
+    // How many live consumers have asked for the per-cursor RESULT. Zero here
+    // and everywhere in this tree — see `demandHit` for what that buys.
+    private int _hitDemand;
+
+    Task task() const { return Task.Snap; }
+    PacketKind[] requiredPackets() const { return [PacketKind.Subject]; }
+
+    bool evaluate(ref VectorStack vts) {
+        // NB: SnapStage shadows Stage.enabled with its own field
+        // (default false). `this.enabled` resolves to the SnapStage one.
+        if (!this.enabled) return false;
+        import vibe3d.editing.pipeline.contracts.toolpipe.packets : WorkplanePacket, SubjectPacket;
+        import vibe3d.editing.selection.query.viewgrid : viewGridSizeFor, g_viewGrid;
+        SnapPacket pkt;
+        pkt.config = config;
+        if (auto wp = vts.get!WorkplanePacket()) {
+            pkt.workplaneCenter = wp.center;
+            pkt.workplaneNormal = wp.normal;
+            pkt.workplaneAxis1  = wp.axis1;
+            pkt.workplaneAxis2  = wp.axis2;
+        }
+        // The grid step is the VIEW's drawn grid; `snap.d` keeps
+        // its 1.0 fallback for a packet built outside this stage.
+        if (fixedGrid) {
+            pkt.gridStep = fixedGridSize;
+        } else if (auto subj = vts.get!SubjectPacket()) {
+            pkt.gridStep = viewGridSizeFor(subj.viewport, g_viewGrid);
+        }
+        _publishedPacket = pkt;
+        vts.put(&_publishedPacket);
+
+        // The ranges go to the guides before the query that will consult them,
+        // so a range changed mid-gesture reaches a guide that is already
+        // registered. Zero iterations while the registry is empty.
+        pushLimitsToGuides();
+        publishSnapHit(vts, pkt);
+        return true;
+    }
+
+    // ---- the guide registry (S4(a) of doc/toolpipe_architecture_plan.md) ---
+    //
+    // A guide is a gesture-scoped snapping CLIENT: the tool that owns the
+    // gesture registers one when the gesture starts and removes it when the
+    // gesture ends. That LIFECYCLE is MEASURED (an observed add/remove pair
+    // around a drag); the interface's method set and its `priority` return are
+    // header-derived and unmeasured — see `toolpipe.guide` for which is which.
+    //
+    // Registered guides are resolved by query purpose; query-owned admission
+    // stays independent of this registry. With no eligible guide, ranking is
+    // the historical "nearest wins".
+
+    /// Register a gesture-scoped guide, and push the current ranges into it.
+    ///
+    /// Idempotent: registering the same guide twice is a no-op rather than a
+    /// second vote in the arbitration. Ignores null.
+    void addGuide(SnapGuide g) {
+        if (g is null) return;
+        foreach (e; _guides) if (e is g) return;
+        _guides ~= g;
+        // MEASURED direction — the environment's ranges are pushed IN at
+        // registration; a guide never sources the pair for itself.
+        g.limits(innerRangePx, outerRangePx);
+    }
+
+    /// Remove a previously registered guide. Returns true if it was there.
+    bool removeGuide(SnapGuide g) {
+        foreach (i, e; _guides) {
+            if (e !is g) continue;
+            _guides = _guides[0 .. i] ~ _guides[i + 1 .. $];
+            return true;
+        }
+        return false;
+    }
+
+    /// The registered guides, in registration order — which is also the order
+    /// the arbitration settles equal priorities by.
+    SnapGuide[] guides() { return _guides; }
+
+    /// How many guides are registered (0 outside a guide-owning gesture).
+    size_t guideCount() const { return _guides.length; }
+
+    /// Install a prepared registry: a tool transition clears it.
+    void installPreparedGuides(ref SnapGuide[] next) nothrow @nogc {
+        _guides = next; next = null;
+    }
+
+    private void pushLimitsToGuides() {
+        foreach (g; _guides) g.limits(innerRangePx, outerRangePx);
+    }
+
+    // ---- the DEMAND gate on the per-cursor RESULT --------------------------
+    //
+    // MEASURED COST, and it is why this gate exists. The publication below is
+    // one full `snapCursor` per cursor-valid pipeline evaluation, and
+    // `SubjectPacket.cursorValid` is stamped on every mouse-motion event that
+    // reaches an armed tool — there is no button-down term in it. So with
+    // snapping switched on and FOUR element classes enabled (which was this
+    // stage's default when the number below was measured, tasks 0526/0531 — the
+    // default is one class now, so a default run walks roughly a quarter of
+    // this), a plain hover over a 100k-vertex mesh paid an extra element-class
+    // candidate walk per motion event: the pipeline evaluation went from
+    // 0.09 ms to 4.6 ms per
+    // event, 28 % of a 60 fps frame added to moving the mouse. The numbers and
+    // the driver are in task 0526; task 0531 re-ran them with this gate in.
+    //
+    // NOBODY READS THE PACKET. Outside this stage, its own unittests and the
+    // `PacketKind` registration in `operator.d`, `SnapHitPacket` does not
+    // appear in the tree — so 100 % of that work was speculative. The gate is
+    // therefore behaviour-neutral by construction: the only observable
+    // difference is the absence of a packet no code path consults.
+    //
+    // A COUNTER, not a bool, and the reason is in S2's own phase (b): six
+    // consumers migrate onto this packet ONE COMMIT AT A TIME, so two of them
+    // are live at once for most of that phase. A bool would let the first one
+    // to release starve the rest. An unpaired release is reported rather than
+    // wrapped, because a demand stuck ON costs time while a demand wrongly
+    // OFF is a consumer reading nothing.
+    //
+    // NOT CLEARED BY `reset()`, deliberately, and unlike the guide registry
+    // above: a guide is scoped to a GESTURE and a scene reset ends every
+    // gesture there was, but a demand is scoped to a CONSUMER, and
+    // `/api/reset` resets the scene, not the wiring. Clearing it would
+    // silently starve a consumer that is still alive and still reading —
+    // failure in the direction that changes behaviour rather than the one
+    // that only costs time.
+
+    /// Ask for the per-cursor RESULT packet to be published. Pair with
+    /// `releaseHit` for the consumer's own lifetime — for a permanent
+    /// consumer (an overlay renderer, say) that pairing is app start / app
+    /// exit, and for a gesture-scoped one it is press / release.
+    void demandHit() { ++_hitDemand; }
+
+    /// Withdraw one demand. Returns false — WITHOUT going negative — when
+    /// there was none to withdraw, which is an unpaired release in the caller.
+    bool releaseHit() {
+        if (_hitDemand <= 0) return false;
+        --_hitDemand;
+        return true;
+    }
+
+    /// Whether any consumer currently wants the result packet.
+    bool hitDemanded() const { return _hitDemand > 0; }
+
+    /// How many demands are outstanding. 0 in this tree, always.
+    int hitDemandCount() const { return _hitDemand; }
+
+    // ---- the per-cursor RESULT (S2 of doc/toolpipe_architecture_plan.md) ---
+    //
+    // The snap query is the one thing this stage never published: it shipped
+    // the CONFIG and left every consumer to run the query itself. This runs it
+    // once, here, and puts the answer on the stack the CONS stage already puts
+    // its own per-cursor result on.
+    //
+    // The gate is `subj.cursorValid`, copied from CONS (`stages/constrain.d`)
+    // rather than invented: that flag is stamped true ONLY by the main-thread
+    // mouse-event dispatch (app.d's buildToolVts) and the main-thread-bridged
+    // raycast provider. Every per-frame render-loop evaluate() and every
+    // HTTP-thread subject builder (/api/toolpipe, /api/snap, /api/constrain,
+    // /api/path) leaves it false, so the query runs once per real input event,
+    // on the main thread, never off it — which matters because the candidate
+    // grids snapCursor builds are process-global.
+    //
+    // No packet is published when the gate fails: an absent SnapHitPacket
+    // means "no cursor-valid query this evaluation", exactly as an absent
+    // ConstrainHitPacket does. A published packet with `snapped == false`
+    // means the query ran and found nothing.
+    private void publishSnapHit(ref VectorStack vts, const ref SnapPacket cfg) {
+        // DEMAND first, before the cursor gate and before the query — this is
+        // the whole of the fix for the cost measured in task 0526. A query
+        // whose answer nobody asked for is not run at all.
+        if (_hitDemand <= 0) return;
+        import vibe3d.editing.pipeline.contracts.toolpipe.packets : SubjectPacket;
+        import vibe3d.editing.selection.query.snap             : snapCursor, SnapResult,
+                                  backgroundSourceLayerIndices;
+        import vibe3d.util.math.math : Vec3;
+import vibe3d.util.spatial.spatial : projectToWindowFull;
+        import std.math         : sqrt;
+        // Task 0617 Stage 4: `subj.mesh` is the active/primary layer's mesh
+        // (the toolpipe addresses the foreground mesh transparently, per
+        // CLAUDE.md), so its ModelSpace is the SAME resolver every other
+        // cross-module picking call site uses.
+        import vibe3d.documents.model.document         : primaryModelSpace;
+
+        auto subj = vts.get!SubjectPacket();
+        if (subj is null || !subj.cursorValid) return;
+        if (subj.mesh is null || subj.viewport.width <= 0) return;
+
+        // The query seed. `snapCursor` ranks candidates by their distance from
+        // the cursor PIXEL alone — the seed is never compared against anything;
+        // it only reappears as the pass-through `worldPos` on a miss. So the
+        // stage, which has no tool and therefore no desired position, passes
+        // the origin and publishes no position at all unless something snapped
+        // (see SnapHitPacket's contract). Were the seed to acquire meaning,
+        // this line would have to become a real derivation, and the packet's
+        // "meaningful only when `snapped`" clause is what keeps that honest.
+        // This placement query uses this stage's registry through the same
+        // purpose resolver as tool-side queries (including non-live stages).
+        SnapResult sr = snapCursor(Vec3(0, 0, 0), subj.cursorX, subj.cursorY,
+                                   subj.viewport, *subj.mesh, primaryModelSpace(), cfg,
+                                   null, null, liveSnapGuides(
+                                       SnapQueryPolicy(SnapPurpose.placement, SnapGuideScope.registered), this));
+
+        SnapHitPacket hit;   // every field at its documented default
+        hit.snapped        = sr.snapped;
+        hit.highlighted    = sr.highlighted;
+        hit.targetType     = sr.targetType;
+        hit.targetIndex    = sr.targetIndex;
+        hit.targetSource   = sr.targetSource;
+        hit.constraintType = sr.constraintType;
+        // Registry provenance: retain the existing public registered-guide count.
+        hit.guideCount     = cast(int)_guides.length;
+
+        // Paired with `highlighted` exactly as `worldPos` is paired with
+        // `snapped`: on a miss the query's `highlightPos` is the pass-through
+        // seed, and this stage has no seed worth publishing.
+        if (sr.highlighted) hit.highlightPos = sr.highlightPos;
+
+        if (sr.snapped) {
+            hit.worldPos = sr.worldPos;
+            // The screen point + pixel distance are a RE-projection of the
+            // winner, not a second opinion about it: `consider` picked the
+            // winner by projecting this same world point through this same
+            // viewport, so this reproduces the winning distance bit for bit.
+            float pxs, pys, ndcZ;
+            if (projectToWindowFull(sr.worldPos, subj.viewport, pxs, pys, ndcZ)) {
+                hit.screenX = pxs;
+                hit.screenY = pys;
+                immutable float dx = pxs - cast(float)subj.cursorX;
+                immutable float dy = pys - cast(float)subj.cursorY;
+                hit.distPx = sqrt(dx * dx + dy * dy);
+            }
+        }
+
+        // `targetSource` is the snap service's source SLOT (0 = active mesh,
+        // 1..N = the (slot-1)-th background source). Resolve the background
+        // ones back to a Document-layer index the same way the CONS stage
+        // resolves its own hit, with the same fallback to the slot order when
+        // the installer supplied no mapping. Slot 0 stays -1: the active
+        // layer's index is the Document's business and snap.d does not hold it.
+        if (sr.targetSource >= 1) {
+            auto bgSrcLayer = backgroundSourceLayerIndices();
+            immutable int srcIdx = sr.targetSource - 1;
+            hit.layer = (srcIdx < cast(int)bgSrcLayer.length)
+                        ? bgSrcLayer[srcIdx] : srcIdx;
+        }
+
+        _hitPkt = hit;
+        vts.put(&_hitPkt);
+    }
+
+    // Panel-side mirror of `enabledTypes`, one slot per `snapTypeRows` entry.
+    // Written by `params()` (re-synced from the bitmask every call) and read
+    // back by `onParamChanged`. NOT state: `enabledTypes` is.
+    private bool[snapTypeRows.length] _typeMirror;
+
+    /// The stage's user-facing config — the SAME seven fields `SnapPacket`
+    /// carries, because it is literally the same struct (task 0705, P8). The
+    /// stage used to redeclare all seven with its own initialisers, and the
+    /// two sets had already drifted once (see `SnapConfig`'s own note). There
+    /// is nothing left to keep in step: `alias this` means every existing
+    /// `enabled` / `innerRangePx` reference inside this class still resolves.
+    SnapConfig config;
+    alias config this;
+
+    /// The one obstacle this split hit, and why `Stage.enabled` is now
+    /// `Stage.pipeEnabled`: an `alias this` LOSES to an inherited member of
+    /// the same name. While the base still spelled its pipe-registration flag
+    /// `enabled`, aliasing the config in would have silently redirected every
+    /// `enabled` in and around this stage to that flag — which defaults to
+    /// TRUE, i.e. a stage in the pipe reading "snapping on" with the user's
+    /// toggle off. The pin unittest at the bottom of this file is what caught
+    /// it; nothing else would have.
+
+    // ---- startup arming: the tool-activation save/restore pair -------------
+    //
+    // A tool activation may ARM the master enable for the life of that tool and
+    // hand it back untouched when the tool is dropped. That is the reference's
+    // own mechanism, and it is measured rather than inferred: its
+    // tool-activation command carries a fourth argument meaning "snap state at
+    // startup", and supplying it PUSHES the previous value under the activating
+    // preset's NAME before writing the new one. The matching pop, keyed on that
+    // same name, restores it. Dropping a tool restores the value rather than
+    // leaking it because the drop path is a re-invocation of the same
+    // activation command.
+    //
+    // OWNED HERE, NOT BY THE ARMING TOOL, and that placement is load-bearing
+    // rather than tidiness: `reset()` — the `/api/reset` / scene-reset clean
+    // slate — runs BEFORE the tool drop that same reset triggers, so a saved
+    // value living on the tool would be written back ON TOP of the clean slate
+    // and re-arm snapping across a reset. Clearing the outstanding push inside
+    // `reset()` closes that, and it can only be cleared where it is stored.
+    // (The reference stores it framework-side for its own reasons; we land in
+    // the same place from ours.)
+    //
+    // ONE SLOT, name-keyed, mirroring the reference: a push while another is
+    // outstanding re-keys the slot to the new owner, so the older owner's pop
+    // becomes a no-op and its value is forgotten. Only one tool is active at a
+    // time here and `deactivate()` always precedes the next `activate()`, so
+    // no live path nests. What the key buys is that an UNBALANCED pop — a tool
+    // that never pushed, or a pop arriving after a reset cleared the slot — is
+    // harmless instead of a silent write of a stale value.
+    private bool   _pushedEnabled;
+    private string _pushedOwner;      // null / empty == nothing outstanding
+
+    /// Save the current master enable under `owner`, then set it to `value`.
+    /// Balanced by `popEnabled(owner)`; see the block comment above.
+    void pushEnabled(string owner, bool value) {
+        if (owner.length == 0) return;
+        _pushedEnabled = enabled;
+        _pushedOwner   = owner;
+        enabled        = value;
+        publishState();
+    }
+
+    /// Restore the master enable `owner` saved. A pop whose owner does not
+    /// match the outstanding push does nothing — the reference's own name
+    /// comparison, and our guard against restoring across a reset.
+    void popEnabled(string owner) {
+        if (owner.length == 0 || _pushedOwner != owner) return;
+        enabled      = _pushedEnabled;
+        _pushedOwner = null;
+        publishState();
+    }
+
+    /// Is `owner`'s startup arming still outstanding? Test-facing only — no
+    /// product path reads it; the push/pop pair is self-balancing.
+    bool hasPushedEnabled(string owner) const {
+        return owner.length != 0 && _pushedOwner == owner;
+    }
+
+    PreparedSnapPushProjection capturePreparedPushProjection() const {
+        return PreparedSnapPushProjection(enabled, _pushedEnabled, _pushedOwner);
+    }
+    bool matchesPreparedPushProjection(in PreparedSnapPushProjection expected)
+            const nothrow @nogc {
+        return enabled == expected.enabled &&
+            _pushedEnabled == expected.pushedEnabled &&
+            _pushedOwner == expected.pushedOwner;
+    }
+    void installPreparedPushEnabled(string owner, bool value) nothrow {
+        _pushedEnabled = enabled; _pushedOwner = owner; enabled = value;
+        installPreparedStatePath("snap/enabled", enabled ? "true" : "false");
+    }
+
+    /// Nonallocating state half of `popEnabled`; the prepared owner validates
+    /// the captured push projection and the owner key before reaching here.
+    void installPreparedPopEnabled(string owner) nothrow {
+        if (owner.length == 0 || _pushedOwner != owner) return;
+        enabled = _pushedEnabled; _pushedOwner = null;
+        installPreparedStatePath("snap/enabled", enabled ? "true" : "false");
+    }
+
+    this() { publishState(); }
+
+    override TaskCode taskCode() const pure nothrow @nogc @safe { return TaskCode.Snap; }
+    override string   id()       const                          { return "snap"; }
+    override ubyte    ordinal()  const pure nothrow @nogc @safe { return ordSnap; }
+    override string   displayName() const                       { return kSnapDisplayName; }
+
+    // ------------------------------------------------------------------
+    // Tool Properties schema.
+    //
+    // This stage shipped without one. Every other pipe stage — action
+    // centre, falloff, symmetry, path, constrain — overrides `params()`,
+    // and the panel loop skips any stage whose schema is empty, so snapping
+    // had NO Tool Properties surface at all: the master toggle and the type
+    // set were reachable only from the status line, and the two pixel ranges
+    // that decide whether anything sticks were reachable only over HTTP.
+    //
+    // The rows and their order follow the reference's own snapping form
+    // (master toggle, mode, the type set, the fixed-grid pair, then the two
+    // ranges). Two honesty notes that belong in the source and not just in a
+    // task file:
+    //
+    //   * PLACEMENT IS OURS for the ranges. In the reference the inner /
+    //     outer pixel ranges are a USER PREFERENCE ("Inner Range (pixels)" /
+    //     "Outer Range (pixels)"), not a tool attribute. Putting them on a
+    //     tool-side panel is our choice, made because they are the two
+    //     numbers that decide whether a drag sticks and they had no UI at
+    //     all. The LABELS are the reference's; the location is not.
+    //   * THE VALUES 24 / 40 ARE THE SERVICE'S. They live on this stage and
+    //     nowhere else — no tool keeps a private copy — and these rows read
+    //     and write those very fields rather than a per-tool shadow.
+    //
+    // The per-type rows are backed by `_typeMirror`, re-synced from
+    // `enabledTypes` on every `params()` call (which the panel makes once a
+    // frame) and folded back by `onParamChanged`. The bitmask stays the one
+    // source of truth; the mirror is never authoritative for longer than the
+    // frame it is drawn in.
+    // ------------------------------------------------------------------
+    override Param[] params() {
+        foreach (i, ref row; snapTypeRows)
+            _typeMirror[i] = (enabledTypes & row.bit) != 0;
+
+        Param[] ps;
+        // MASTER TOGGLE. The wire name stays `enabled` — it is on the HTTP
+        // surface and in tests, and renaming it would be a breaking change
+        // for zero gain. The LABEL moved for task 0638: it used to read
+        // "Snapping", the same text as this section's own title, and back then
+        // the panel pushed no id scope anywhere, so title and row hashed to one
+        // ImGui id and the widget the user clicked was decided by draw order.
+        //
+        // THAT CONSTRAINT IS GONE (task 0640): the panel now opens an id scope
+        // per section and per row, so a repeated label is legal — it costs
+        // nothing but the reader's ability to tell two controls apart. The
+        // label stays "Enable Snapping" because it reads better under a title
+        // that already says "Snapping", not because anything would break.
+        ps ~= Param.bool_("enabled", "Enable Snapping", &enabled, false);
+        ps ~= Param.intEnum_("snapMode", "Mode", cast(int*)&snapScope,
+                             snapModeEntries, cast(int)SnapMode.Global);
+        foreach (i, ref row; snapTypeRows)
+            ps ~= Param.bool_(row.attr, row.label, &_typeMirror[i],
+                              (SnapPacket.init.enabledTypes & row.bit) != 0);
+        ps ~= Param.bool_ ("fixedGrid",     "Use Fixed Grid",       &fixedGrid,     false);
+        ps ~= Param.float_("fixedGridSize", "Grid Size",            &fixedGridSize, 1.0f);
+        ps ~= Param.float_("innerRange",    "Inner Range (pixels)", &innerRangePx,  24.0f);
+        ps ~= Param.float_("outerRange",    "Outer Range (pixels)", &outerRangePx,  40.0f);
+        return ps;
+    }
+
+    /// The panel writes straight through a Param's pointer, so a per-type row
+    /// lands in `_typeMirror` and has to be folded back into the bitmask that
+    /// every reader consults. Only the named bit is folded — reconstructing
+    /// the whole mask from the mirror would let a stale slot (one written by
+    /// HTTP since the last `params()`) overwrite a bit nobody touched.
+    override void onParamChanged(string name) {
+        foreach (i, ref row; snapTypeRows) {
+            if (row.attr != name) continue;
+            if (_typeMirror[i]) enabledTypes |=  row.bit;
+            else                enabledTypes &= ~row.bit;
+            break;
+        }
+        publishState();
+    }
+
+    /// The authoritative wire universe. `params()` cannot supply it: the
+    /// `types` CSV, `typeToggle` and `fixedGridToggle` have no Param row (they
+    /// are set-shaped and action-shaped, not value-shaped), while the per-type
+    /// rows are Params that `params()` DOES expose. Same reason ACEN and
+    /// falloff override this — see Stage.knownAttrs().
+    override string[] knownAttrs() {
+        string[] names = ["enabled", "types", "snapMode", "innerRange",
+                          "outerRange", "fixedGrid", "fixedGridSize",
+                          "fixedGridToggle", "typeToggle"];
+        foreach (ref row; snapTypeRows) names ~= row.attr;
+        return names;
+    }
+
+    /// Match every default field initialiser at declaration time —
+    /// invoked via Stage.reset() by SceneReset / `/api/reset`.
+    override void reset() {
+        // One assignment, and it CANNOT fall behind the declaration: the
+        // initialisers it restores are the struct's own (task 0705). This used
+        // to restate all seven by hand and was the third copy of the set.
+        config = SnapConfig.init;
+        // Drop the last per-cursor result too, so a scene reset cannot leave a
+        // stale hit behind the stage's pointer (mirrors the CONS stage).
+        _hitPkt       = SnapHitPacket.init;
+        // And drop the guide registry: a guide is scoped to a gesture, and a
+        // scene reset ends every gesture there was. Leaving one registered
+        // would outlive the tool that owns it — the one lifecycle error the
+        // measured add/remove pair rules out.
+        _guides       = null;
+        // And drop any outstanding startup-arming push (see `pushEnabled`).
+        // ORDER, not hygiene: a scene reset resets every stage BEFORE it drops
+        // the active tool, so an armed tool's `popEnabled` arrives AFTER this
+        // and would otherwise write its pre-reset value back over the clean
+        // slate — snapping left on across a reset, and bleeding into whatever
+        // runs next in the same process.
+        _pushedOwner   = null;
+        _pushedEnabled = false;
+        publishState();
+    }
+
+    override bool setAttrImpl(string name, string value) {
+        bool ok = applySetAttr(name, value);
+        if (ok) publishState();
+        return ok;
+    }
+
+
+
+    override string[2][] listAttrs() const {
+        return [
+            ["enabled",       enabled ? "true" : "false"],
+            ["types",         typesLabel()],
+            ["snapMode",      snapModeLabel()],
+            ["innerRange",    format("%g", innerRangePx)],
+            ["outerRange",    format("%g", outerRangePx)],
+            ["fixedGrid",     fixedGrid ? "true" : "false"],
+            ["fixedGridSize", format("%g", fixedGridSize)],
+        ];
+    }
+
+private:
+    bool applySetAttr(string name, string value) {
+        switch (name) {
+            case "enabled":
+                if      (value == "true"  || value == "1") { enabled = true;  return true; }
+                else if (value == "false" || value == "0") { enabled = false; return true; }
+                return false;
+            case "types": {
+                uint mask = 0;
+                foreach (tok; value.split(",")) {
+                    auto t = tok.strip;
+                    if      (t.length == 0)          continue;
+                    else if (t == "vertex")          mask |= SnapType.Vertex;
+                    else if (t == "edge")            mask |= SnapType.Edge;
+                    else if (t == "edgeCenter")      mask |= SnapType.EdgeCenter;
+                    else if (t == "polygon")         mask |= SnapType.Polygon;
+                    else if (t == "polyCenter")      mask |= SnapType.PolyCenter;
+                    else if (t == "grid")            mask |= SnapType.Grid;
+                    else if (t == "workplane")       mask |= SnapType.Workplane;
+                    else if (t == "pivot")           mask |= SnapType.Pivot;
+                    else if (t == "intersection")    mask |= SnapType.Intersection;
+                    else if (t == "worldAxis")       mask |= SnapType.WorldAxis;
+                    else if (t == "straightLine")    mask |= SnapType.StraightLine;
+                    else if (t == "rightAngle")      mask |= SnapType.RightAngle;
+                    else if (t == "box")             mask |= SnapType.Box;
+                    else                             return false;
+                }
+                enabledTypes = mask;
+                return true;
+            }
+            case "snapMode": {
+                if      (value == "global")    { snapScope = SnapMode.Global;    return true; }
+                else if (value == "component") { snapScope = SnapMode.Component; return true; }
+                else if (value == "item")      { snapScope = SnapMode.Item;      return true; }
+                return false;
+            }
+            case "innerRange": return parseFloat(value, innerRangePx);
+            case "outerRange": return parseFloat(value, outerRangePx);
+            case "fixedGrid":
+                if      (value == "true"  || value == "1") { fixedGrid = true;  return true; }
+                else if (value == "false" || value == "0") { fixedGrid = false; return true; }
+                return false;
+            case "fixedGridSize": return parseFloat(value, fixedGridSize);
+            case "fixedGridToggle":
+                fixedGrid = !fixedGrid;
+                return true;
+            // typeToggle <name> — flip a single type bit. Powers the
+            // Snap popup's per-type checkboxes via snap.toggleType.
+            case "typeToggle": {
+                uint bit = typeBit(value);
+                if (bit == 0) return false;
+                enabledTypes ^= bit;
+                return true;
+            }
+            // Per-type wire keys — the same rows `params()` renders as
+            // checkboxes. The panel writes them through the Param pointer, so
+            // this leg exists for the HTTP / script surface: a test that
+            // drives the panel's row must be able to drive it by name, and
+            // `knownAttrs()` promises these names anyway.
+            default: {
+                foreach (i, ref row; snapTypeRows) {
+                    if (row.attr != name) continue;
+                    if      (value == "true"  || value == "1")
+                        { enabledTypes |=  row.bit; return true; }
+                    else if (value == "false" || value == "0")
+                        { enabledTypes &= ~row.bit; return true; }
+                    return false;
+                }
+                return false;
+            }
+        }
+    }
+
+    // Token -> bit, off the one table `params()` / `setAttr` / `knownAttrs`
+    // all read, so a type added there cannot be missing here.
+    static uint typeBit(string name) {
+        foreach (ref row; snapTypeRows)
+            if (row.token == name) return row.bit;
+        return 0;
+    }
+
+    string typesLabel() const {
+        // Stable, human-readable serialisation — matches the input
+        // format of `setAttr("types", ...)` so round-trip is exact.
+        string[] tokens;
+        if (enabledTypes & SnapType.Vertex)       tokens ~= "vertex";
+        if (enabledTypes & SnapType.Edge)         tokens ~= "edge";
+        if (enabledTypes & SnapType.EdgeCenter)   tokens ~= "edgeCenter";
+        if (enabledTypes & SnapType.Polygon)      tokens ~= "polygon";
+        if (enabledTypes & SnapType.PolyCenter)   tokens ~= "polyCenter";
+        if (enabledTypes & SnapType.Grid)         tokens ~= "grid";
+        if (enabledTypes & SnapType.Workplane)    tokens ~= "workplane";
+        if (enabledTypes & SnapType.Pivot)        tokens ~= "pivot";
+        if (enabledTypes & SnapType.Intersection) tokens ~= "intersection";
+        if (enabledTypes & SnapType.WorldAxis)    tokens ~= "worldAxis";
+        if (enabledTypes & SnapType.StraightLine) tokens ~= "straightLine";
+        if (enabledTypes & SnapType.RightAngle)   tokens ~= "rightAngle";
+        if (enabledTypes & SnapType.Box)          tokens ~= "box";
+        if (tokens.length == 0) return "";
+        string s = tokens[0];
+        foreach (t; tokens[1 .. $]) s ~= "," ~ t;
+        return s;
+    }
+
+    string snapModeLabel() const {
+        final switch (snapScope) {
+            case SnapMode.Global:    return "global";
+            case SnapMode.Component: return "component";
+            case SnapMode.Item:      return "item";
+        }
+    }
+
+    void publishState() {
+        setStatePath("snap/enabled",   enabled   ? "true" : "false");
+        setStatePath("snap/types",     typesLabel());
+        setStatePath("snap/snapMode",  snapModeLabel());
+        setStatePath("snap/fixedGrid", fixedGrid ? "true" : "false");
+        // Per-type bits — drives the popup's checked-state on each
+        // type entry. Mirrors `enabledTypes & SnapType.<X>` truthiness.
+        setStatePath("snap/types/vertex",
+                     (enabledTypes & SnapType.Vertex)       ? "true" : "false");
+        setStatePath("snap/types/edge",
+                     (enabledTypes & SnapType.Edge)         ? "true" : "false");
+        setStatePath("snap/types/edgeCenter",
+                     (enabledTypes & SnapType.EdgeCenter)   ? "true" : "false");
+        setStatePath("snap/types/polygon",
+                     (enabledTypes & SnapType.Polygon)      ? "true" : "false");
+        setStatePath("snap/types/polyCenter",
+                     (enabledTypes & SnapType.PolyCenter)   ? "true" : "false");
+        setStatePath("snap/types/grid",
+                     (enabledTypes & SnapType.Grid)         ? "true" : "false");
+        setStatePath("snap/types/workplane",
+                     (enabledTypes & SnapType.Workplane)    ? "true" : "false");
+        setStatePath("snap/types/pivot",
+                     (enabledTypes & SnapType.Pivot)        ? "true" : "false");
+        setStatePath("snap/types/intersection",
+                     (enabledTypes & SnapType.Intersection) ? "true" : "false");
+        setStatePath("snap/types/worldAxis",
+                     (enabledTypes & SnapType.WorldAxis)    ? "true" : "false");
+        setStatePath("snap/types/straightLine",
+                     (enabledTypes & SnapType.StraightLine) ? "true" : "false");
+        setStatePath("snap/types/rightAngle",
+                     (enabledTypes & SnapType.RightAngle)   ? "true" : "false");
+        setStatePath("snap/types/box",
+                     (enabledTypes & SnapType.Box)          ? "true" : "false");
+    }
+
+    // Task 3020 — delegates to the ONE wire-token gate in params.d (see the
+    // section header there). Was a bare `s.to!float`, so `tool.pipe.attr snap
+    // innerRange nan` was accepted and put a NaN in a pixel radius that every
+    // later comparison then answers "no" to.
+    static bool parseFloat(string s, ref float dst) {
+        import vibe3d.editing.params.params : assignWireFloat;
+        return assignWireFloat(s, dst);
+    }
+}
+
+/// The live pipeline's SNAP stage, or null when there is none (unittests,
+/// headless) — the one finder every snap client calls, the twin
+/// of `liveSymmetryStage` / `liveConstrainStage`.
+SnapStage liveSnapStage() {
+    import vibe3d.editing.pipeline.runtime.toolpipe.pipeline : g_pipeCtx;
+    if (g_pipeCtx is null) return null;
+    return cast(SnapStage) g_pipeCtx.pipeline.findByTask(TaskCode.Snap);
+}
+
+/// The global snapping state (the snap stage's master enable); false with no
+/// pipe. A tool's own snap rows are disabled while it is off (K-A3 PF-3).
+bool snappingOn() {
+    auto st = liveSnapStage();
+    return st !is null && st.enabled;
+}
+
+/// The current drag's snap guides: the registry plus each pipe stage's own
+/// (`Stage.snapGuideSources`). ≥ 1 lets the snap key run mid-drag.
+size_t heldDragGuideCount() {
+    import vibe3d.editing.pipeline.runtime.toolpipe.pipeline : g_pipeCtx;
+    if (g_pipeCtx is null) return 0;
+    size_t n;
+    foreach (s; g_pipeCtx.pipeline.all()) n += s.snapGuideSources();
+    if (auto st = liveSnapStage()) n += st.guideCount();
+    return n;
+}
+
+/// One purpose resolver (9513): registered queries use matching live guides;
+/// query-owned queries use only their explicit admission. A stage evaluating
+/// outside the live pipe supplies its own registry owner through the same seam.
+SnapGuide[] liveSnapGuides(SnapQueryPolicy queryPolicy, SnapStage stage = null) {
+    // Query-owned admission is complete; never inspect registry membership.
+    if (queryPolicy.guideScope == SnapGuideScope.queryOwned) return null;
+    if (stage is null) stage = liveSnapStage();
+    if (stage is null) return null;
+    SnapGuide[] result;
+    foreach (g; stage.guides())
+        if ((g.purpose() & queryPolicy.purpose) != 0) result ~= g;
+    return result;
+}
+
+
+// ---------------------------------------------------------------------------
+// SNAPPING HAS A TOOL PROPERTIES SURFACE — `params()`.
+//
+// It had none. The panel's per-stage loop is literally
+//
+//     if (stage.params().length == 0) continue;
+//
+// and `SnapStage` was the one pipe stage that never overrode `params()` — the
+// loop's own comment lists "Action Center, Falloff, Snap, ..." as the sections
+// it expects, so the section was intended and simply never got a schema. The
+// consequence was not cosmetic: the master toggle and the type set lived only
+// in the status line, and `innerRangePx` / `outerRangePx` — the two numbers
+// that decide whether a drag sticks to anything at all — were reachable ONLY
+// over HTTP.
+//
+//   1. NON-EMPTY. The one condition the panel loop tests.
+//   2. COVERAGE. Every field the brief named is a row: master enable, scope
+//      mode, the whole type set, the two pixel ranges, the fixed-grid pair.
+//   3. THE ROWS ARE THE STAGE'S OWN FIELDS. A panel row that wrote a private
+//      copy of a range would be the very defect the campaign spent a task
+//      naming (`constraint.d`'s duplicated 24/40). Checked by writing through
+//      the Param pointer and reading the field.
+//   4. DEFAULTS ARE THE MEASURED ONES. 24 / 40, and they are the SERVICE's.
+//   5. TYPE MIRROR ROUND-TRIP. `enabledTypes` stays the single source of
+//      truth: `params()` syncs the mirror from it, `onParamChanged` folds one
+//      bit back, and nothing else is disturbed.
+//   6. WIRE PARITY. Every per-type row is also a `setAttr` key, and
+//      `knownAttrs()` names every key `setAttr` accepts — so a panel row and
+//      a script can drive the same control by the same name.
+// ---------------------------------------------------------------------------
+unittest {
+    import std.algorithm : canFind, map;
+    import std.array     : array;
+
+    auto st = new SnapStage();
+
+    // --- 1. NON-EMPTY -------------------------------------------------------
+    assert(st.params().length != 0,
+        "the Tool Properties per-stage loop skips any stage whose params() is "
+        ~ "empty, and SnapStage was that stage — snapping had no panel at all");
+
+    auto names = st.params().map!(p => p.name).array;
+
+    // --- 2. COVERAGE --------------------------------------------------------
+    foreach (n; ["enabled", "snapMode", "fixedGrid", "fixedGridSize",
+                 "innerRange", "outerRange"])
+        assert(names.canFind(n),
+            "the panel must expose `" ~ n ~ "`: the master enable, the scope "
+            ~ "mode, the fixed-grid pair and the two ranges are the whole of "
+            ~ "what this stage already has and already measured");
+    foreach (ref row; snapTypeRows)
+        assert(names.canFind(row.attr),
+            "every snap TYPE must be a row (`" ~ row.attr ~ "` missing) — the "
+            ~ "type set decides which candidates exist, and it was reachable "
+            ~ "only from the status line");
+
+    // --- 3 + 4. THE ROWS ARE THE STAGE'S FIELDS, at the measured defaults ---
+    foreach (ref p; st.params()) {
+        if (p.name == "innerRange") {
+            assert(p.fptr is &st.innerRangePx,
+                "the Inner Range row must write the SNAP SERVICE's own field. "
+                ~ "A private per-tool copy of this number is the defect the "
+                ~ "campaign already named once; the panel must not add a "
+                ~ "second one");
+            assert(*p.fptr == 24.0f && p.default_.f == 24.0f,
+                "24 px is the measured acceptance and it belongs to the "
+                ~ "service — the row reads it rather than restating it");
+        }
+        if (p.name == "outerRange") {
+            assert(p.fptr is &st.outerRangePx, "same for the Outer Range row");
+            assert(*p.fptr == 40.0f && p.default_.f == 40.0f,
+                "40 px is the measured gather range");
+        }
+        if (p.name == "enabled")
+            assert(p.bptr is &st.enabled,
+                "the master toggle must be the stage's own `enabled`, the one "
+                ~ "`evaluate` gates on — not a second boolean the panel keeps");
+    }
+
+    // --- 5. TYPE MIRROR ROUND-TRIP ------------------------------------------
+    // Turning a type OFF from the panel must clear exactly its bit and leave
+    // every other type alone.
+    //
+    // The fixture sets its OWN multi-bit mask rather than borrowing whatever
+    // the factory default happens to be. Two reasons, and the second is why
+    // this is not merely tidiness: the default is Vertex alone, so a test
+    // riding on it would have no OTHER bits for "exactly one bit moved" to
+    // protect and that assertion would pass vacuously. Owning the mask keeps
+    // the round-trip claim at full strength and decouples it from a default
+    // it does not test.
+    {
+        st.enabledTypes = SnapType.Vertex | SnapType.EdgeCenter
+                        | SnapType.PolyCenter | SnapType.Grid;
+        immutable uint before = st.enabledTypes;
+        assert((before & SnapType.PolyCenter) != 0, "fixture: PolyCenter is on");
+        assert((before & ~cast(uint)SnapType.PolyCenter) != 0,
+            "fixture: at least one OTHER bit must be set, or the 'exactly one "
+            ~ "bit moved' assertion below has nothing to protect");
+
+        Param* row;
+        foreach (ref p; st.params()) if (p.name == "typePolyCenter") row = &p;
+        assert(row !is null && row.bptr !is null);
+        assert(*row.bptr,
+            "params() must SYNC the mirror from the bitmask on every call — a "
+            ~ "row that showed a stale value would let the next click write "
+            ~ "back a bit the user never saw");
+
+        *row.bptr = false;                   // what the checkbox does
+        st.onParamChanged("typePolyCenter");
+        assert((st.enabledTypes & SnapType.PolyCenter) == 0,
+            "...and onParamChanged must fold the row back into `enabledTypes`, "
+            ~ "which stays the one thing every reader consults");
+        assert((st.enabledTypes | SnapType.PolyCenter) == before,
+            "exactly one bit moved: folding must not rebuild the whole mask "
+            ~ "from a mirror that may hold slots written since the last sync");
+
+        // ...and back on again, through the same path.
+        foreach (ref p; st.params()) if (p.name == "typePolyCenter") row = &p;
+        assert(!*row.bptr, "the re-sync must show the cleared bit");
+        *row.bptr = true;
+        st.onParamChanged("typePolyCenter");
+        assert(st.enabledTypes == before, "round-trip is exact");
+    }
+
+    // --- 5b. THE STALE MIRROR, ACTUALLY MADE STALE --------------------------
+    // The "exactly one bit moved" assertion above names the defect it guards:
+    // folding must not rebuild the whole mask "from a mirror that may hold
+    // slots written since the last sync". But nothing above ever makes a slot
+    // stale — `params()` re-syncs the mirror from the bitmask on entry, so at
+    // every point above the mirror already agrees with the mask and a
+    // rebuild-the-world implementation computes the same answer and passes.
+    // That assertion is therefore vacuous on its own; this block is what makes
+    // the claim bite.
+    //
+    // The staleness is not hypothetical. `setAttr("types", ...)` — the HTTP /
+    // script path — assigns `enabledTypes` directly and never touches
+    // `_typeMirror`. So a script write followed by a panel click is a real
+    // sequence in which the mirror holds values from before the write.
+    {
+        // Capture the checkbox's write target from a params() call made BEFORE
+        // the script write, and deliberately do NOT call params() again: a
+        // re-sync would repair the mirror and destroy the very staleness under
+        // test. The pointer stays valid across calls because it addresses the
+        // stage's own `_typeMirror` slot, not the returned array.
+        bool* pcMirror;
+        foreach (ref p; st.params())
+            if (p.name == "typePolyCenter") pcMirror = p.bptr;
+        assert(pcMirror !is null, "fixture: the PolyCenter row must exist");
+
+        // The script write. `edge` is a bit the mirror has never seen set;
+        // Grid / EdgeCenter are bits the mirror still believes are set.
+        assert(st.setAttr("types", "vertex,edge,polyCenter"),
+            "fixture: the script path must accept this type list");
+        assert(st.enabledTypes ==
+               (SnapType.Vertex | SnapType.Edge | SnapType.PolyCenter),
+            "fixture: the script write lands whole");
+
+        // Now the panel click, on the stale mirror.
+        *pcMirror = false;
+        st.onParamChanged("typePolyCenter");
+
+        assert(st.enabledTypes == (SnapType.Vertex | SnapType.Edge),
+            "a panel click must clear ONLY the bit it names, folding into the "
+            ~ "mask as it stands NOW. Rebuilding the mask from the mirror "
+            ~ "would resurrect Grid and EdgeCenter (which the stale mirror "
+            ~ "still shows set) and would drop Edge (which the script set and "
+            ~ "the mirror has never seen) — silently undoing a script write "
+            ~ "because the user touched an unrelated checkbox");
+    }
+
+    // --- 6. WIRE PARITY -----------------------------------------------------
+    {
+        auto known = st.knownAttrs();
+        foreach (n; ["enabled", "types", "snapMode", "innerRange", "outerRange",
+                     "fixedGrid", "fixedGridSize", "fixedGridToggle",
+                     "typeToggle"])
+            assert(known.canFind(n),
+                "knownAttrs() is the forms validator's universe and must name "
+                ~ "every key setAttr accepts — `" ~ n ~ "` is missing");
+
+        foreach (ref row; snapTypeRows) {
+            assert(known.canFind(row.attr),
+                "a per-type row that params() renders but knownAttrs() does "
+                ~ "not name is a control the panel can drive and a script "
+                ~ "cannot");
+            assert(st.setAttr(row.attr, "false"),
+                "`" ~ row.attr ~ "` must be settable by name");
+            assert((st.enabledTypes & row.bit) == 0);
+            assert(st.setAttr(row.attr, "true"));
+            assert((st.enabledTypes & row.bit) != 0);
+            assert(!st.setAttr(row.attr, "maybe"),
+                "a non-boolean value is refused rather than silently taken");
+        }
+        assert(!st.setAttr("typeNoSuchThing", "true"),
+            "an unknown per-type key must still be refused — the new default "
+            ~ "leg in applySetAttr must not swallow every name");
+    }
+
+    // A fresh stage's schema must not have disturbed the config it reports.
+    st.reset();
+    assert(st.config == SnapConfig.init,
+        "reading params() / folding a row must leave `reset()` restoring the "
+        ~ "same defaults it always did");
+}

@@ -1,0 +1,122 @@
+module vibe3d.editing.tools.interactive.prepared_topology_pen_activation_source_cells;
+
+import vibe3d.editing.tools.interactive.prepared_topology_pen_activation;
+import core.atomic : atomicOp;
+import vibe3d.editing.tools.interactive.tool : ToolFlag;
+import vibe3d.editing.pipeline.runtime.toolpipe.pipeline : ToolPipeContext, g_pipeCtx;
+import vibe3d.editing.pipeline.runtime.toolpipe.stage : TaskCode;
+import vibe3d.editing.pipeline.evaluation.toolpipe.stages.snap : SnapStage, PreparedSnapPushProjection;
+import vibe3d.editing.pipeline.evaluation.toolpipe.stages.constrain : ConstrainStage,
+    PreparedConstrainCompositionProjection;
+import vibe3d.editing.tools.interactive.tools.edit.topology_pen.tool : TopologyPenTool,
+    PreparedTopologyPenActivationImage;
+
+unittest {
+    import vibe3d.editing.commands.runtime.command_history : CommandHistory;
+    import vibe3d.editing.pipeline.evaluation.toolpipe.state_paths : getStatePath;
+    import vibe3d.editing.tools.interactive.prepared_record_context : PreparedRecordContext;
+    import vibe3d.editing.contracts.prepared_tool_effect : PreparedActivateKind;
+    import vibe3d.editing.commands.runtime.record_observer_hub : RecordObserverHub;
+    import vibe3d.editing.pipeline.contracts.toolpipe.packets : ConstrainGeom;
+
+    auto savedPipe = g_pipeCtx; scope(exit) g_pipeCtx = savedPipe;
+    auto pipe = new ToolPipeContext();
+    auto snap = new SnapStage(); auto cons = new ConstrainStage();
+    pipe.pipeline.add(snap); pipe.pipeline.add(cons); g_pipeCtx = pipe;
+    snap.pushEnabled("prior", true);
+    cons.enabled = false; cons.geom = ConstrainGeom.Screen;
+    auto tool = new TopologyPenTool(); tool.seedPreparedActivationForTest();
+    auto context = new PreparedRecordContext(new CommandHistory(),
+        new RecordObserverHub());
+    auto effect = tool.prepareActivate(context);
+    assert(effect.accepted && effect.kind == PreparedActivateKind.TopologyPen);
+    assert(context.validate()); context.install(); context.install();
+    assert(tool.preparedActivationInstalledForTest() && snap.enabled &&
+        snap.hasPushedEnabled("mesh.topoPen") && cons.enabled &&
+        cons.geom == ConstrainGeom.Point &&
+        getStatePath("snap/enabled") == "true" &&
+        getStatePath("constrain/enabled") == "true" &&
+        getStatePath("constrain/geometry") == "point" &&
+        context.installTraceForTest() == [39,8]);
+    snap.popEnabled("mesh.topoPen");
+    assert(snap.enabled, "pen push must preserve the overwritten prior enabled value");
+
+    auto lockedPipe = new ToolPipeContext();
+    auto lockedSnap = new SnapStage(); auto locked = new ConstrainStage();
+    lockedPipe.pipeline.add(lockedSnap); lockedPipe.pipeline.add(locked);
+    locked.enabled = false; locked.geom = ConstrainGeom.Vector;
+    locked.userLocked = true; g_pipeCtx = lockedPipe;
+    auto lockedTool = new TopologyPenTool();
+    auto lockedContext = new PreparedRecordContext(new CommandHistory(),
+        new RecordObserverHub());
+    assert(lockedTool.prepareActivate(lockedContext).accepted &&
+        lockedContext.validate()); lockedContext.install();
+    assert(lockedSnap.enabled && lockedSnap.hasPushedEnabled("mesh.topoPen") &&
+        !locked.enabled && locked.geom == ConstrainGeom.Vector && locked.userLocked);
+
+    // The Drag Weld preset's flag: the snap arms, the constraint stays as it was.
+    auto weldPipe = new ToolPipeContext();
+    auto weldSnap = new SnapStage(); auto weldCons = new ConstrainStage();
+    weldPipe.pipeline.add(weldSnap); weldPipe.pipeline.add(weldCons);
+    weldCons.enabled = false; weldCons.geom = ConstrainGeom.Screen; g_pipeCtx = weldPipe;
+    auto weldTool = new TopologyPenTool();
+    weldTool.presetFlags = ToolFlag.NoBackgroundConstraint;
+    auto weldContext = new PreparedRecordContext(new CommandHistory(),
+        new RecordObserverHub());
+    assert(weldTool.prepareActivate(weldContext).accepted && weldContext.validate());
+    weldContext.install();
+    assert(weldSnap.enabled && weldSnap.hasPushedEnabled("mesh.topoPen"),
+        "a no-background-constraint preset must still arm the snap state");
+    assert(!weldCons.enabled && weldCons.geom == ConstrainGeom.Screen,
+        "a no-background-constraint preset must not compose the constraint");
+
+    g_pipeCtx = null;
+    auto noPipeTool = new TopologyPenTool(); noPipeTool.seedPreparedActivationForTest();
+    auto noPipeContext = new PreparedRecordContext(new CommandHistory(),
+        new RecordObserverHub());
+    assert(noPipeTool.prepareActivate(noPipeContext).accepted &&
+        noPipeContext.validate()); noPipeContext.install();
+    assert(noPipeTool.preparedActivationInstalledForTest());
+
+    g_pipeCtx = pipe; tool.seedPreparedActivationForTest();
+    auto localChanged = new PreparedRecordContext(new CommandHistory(),
+        new RecordObserverHub());
+    assert(tool.prepareActivate(localChanged).accepted);
+    tool.mutatePreparedActivationForTest();
+    assert(!localChanged.validate()); localChanged.discard();
+
+    tool.seedPreparedActivationForTest();
+    auto stageChanged = new PreparedRecordContext(new CommandHistory(),
+        new RecordObserverHub());
+    assert(tool.prepareActivate(stageChanged).accepted);
+    snap.pushEnabled("mutated", false);
+    assert(!stageChanged.validate()); stageChanged.discard();
+
+    snap.popEnabled("mutated"); tool.seedPreparedActivationForTest();
+    auto replaced = new PreparedRecordContext(new CommandHistory(),
+        new RecordObserverHub());
+    assert(tool.prepareActivate(replaced).accepted);
+    pipe.pipeline.add(new SnapStage());
+    assert(!replaced.validate()); replaced.discard();
+
+    auto freshSnap = cast(SnapStage)pipe.pipeline.findByTask(TaskCode.Snap);
+    assert(freshSnap !is null); tool.seedPreparedActivationForTest();
+    auto fault = new PreparedRecordContext(new CommandHistory(),
+        new RecordObserverHub()); bool threw;
+    PreparedRecordContext.failAfterResourceBeginForTest(true);
+    try tool.prepareActivate(fault); catch (Exception) threw = true;
+    PreparedRecordContext.failAfterResourceBeginForTest(false);
+    assert(threw && !fault.validate());
+    auto retry = new PreparedRecordContext(new CommandHistory(),
+        new RecordObserverHub());
+    assert(tool.prepareActivate(retry).accepted && retry.validate()); retry.discard();
+
+    auto corrupt = PreparedTopologyPenActivationOwner.prepare(tool);
+    assert(corrupt.begin()); corrupt.corruptPreparedForTest();
+    assert(!corrupt.validate()); corrupt.abort(); assert(corrupt.payloadEmpty());
+    auto once = PreparedTopologyPenActivationOwner.prepare(tool);
+    assert(once.begin() && once.validate()); once.install();
+    assert(once.payloadEmpty() && !once.begin());
+    assert(!tool.prepareActivate(null).accepted &&
+        PreparedTopologyPenActivationOwner.prepare(null) is null);
+}

@@ -1,0 +1,474 @@
+module vibe3d.editing.tools.interactive.tools.deform.magnet;
+import vibe3d.viewport.display_policy.display_state : DrawPlan;
+import vibe3d.editing.tools.interactive.prepared_record_context : PreparedRecordContext, PreparedToolDoorClient,
+    PreparedPrivateStateToolDoorClient;
+import vibe3d.editing.tools.interactive.prepared_record_context : PreparedToolParamDoorClient,
+    PreparedNamedGpuParamDoorClient;
+import vibe3d.editing.tools.interactive.prepared_private_state : PreparedPrivateStateOwner;
+import vibe3d.editing.contracts.prepared_tool_effect : PreparedSessionActivateEffect, PreparedActivateKind;
+import vibe3d.editing.contracts.prepared_tool_effect : PreparedDeactivateEffect, PreparedDeactivateKind;
+import vibe3d.editing.contracts.prepared_tool_effect : PreparedMagnetParamEffect, PreparedMagnetParamKind;
+import vibe3d.editing.tools.interactive.prepared_param_update : PreparedParamUpdateOwner,
+    PreparedParamUpdateProducer, PreparedStateParamImage;
+import vibe3d.editing.commands.runtime.command_history : PreparedHistoryKind;
+
+import bindbc.sdl;
+import vibe3d.editing.pipeline.contracts.operator : VectorStack;
+
+import vibe3d.editing.tools.interactive.tool;
+import vibe3d.mesh.core.mesh;
+import vibe3d.viewport.gpu.mesh_gpu : GpuMesh;
+import vibe3d.util.math.math;
+import vibe3d.util.spatial.spatial : AimViewport, Viewport, aimSpace, screenPointToLocalRay;
+import vibe3d.editing.contracts.editmode : EditMode;
+import vibe3d.editing.params.params : Param;
+import vibe3d.viewport.gpu.shader : Shader;
+import vibe3d.editing.commands.runtime.command_history : CommandHistory;
+import vibe3d.editing.commands.editor.commands.mesh.vertex_edit : MeshVertexEdit;
+import vibe3d.mesh.snapshot.snapshot : MeshSnapshot;
+import vibe3d.editing.tools.state.tools.common.session_mesh_key : SessionMeshKey;
+import vibe3d.viewport.gpu.display_sync : refreshDisplay;
+import vibe3d.editing.tools.interactive.deform_magnet : applyMagnet;
+import vibe3d.editing.pipeline.contracts.toolpipe.packets : FalloffPacket;
+import vibe3d.editing.pipeline.runtime.falloff : elementAnchoredAt;
+import vibe3d.editing.selection.query.hover_state : hoverAtPress;
+import vibe3d.mesh.change.change_bus : MeshEditScope;
+import vibe3d.documents.model.document : primaryModelSpace, Layer;
+import vibe3d.viewport.gpu.mesh_gpu : GpuUploadOwner;
+import core.stdc.string : memcmp;
+
+import std.math : sqrt;
+import vibe3d.util.profiling.perf_probe : g_perf, Cat;
+
+struct MagnetParamProjection {
+    bool active, dragging, built, sessionMatches;
+    int pickedVi;
+    Vec3 center, target;
+    float strength, dist;
+    const(uint)[] touchedIdx;
+    const(Vec3)[] touchedPrev;
+    bool opEquals(const MagnetParamProjection other) const nothrow @nogc {
+        bool sameBytes(T)(ref const T a, ref const T b) nothrow @nogc {
+            return memcmp(&a, &b, T.sizeof) == 0;
+        }
+        bool sameSliceBytes(T)(const(T)[] a, const(T)[] b) nothrow @nogc {
+            return a.length == b.length && (a.length == 0 ||
+                memcmp(a.ptr, b.ptr, a.length * T.sizeof) == 0);
+        }
+        return active == other.active && dragging == other.dragging &&
+            built == other.built && pickedVi == other.pickedVi &&
+            sameBytes(center, other.center) && sameBytes(target, other.target) &&
+            sameBytes(strength, other.strength) && sameBytes(dist, other.dist) &&
+            sameSliceBytes(touchedIdx, other.touchedIdx) &&
+            sameSliceBytes(touchedPrev, other.touchedPrev) &&
+            sessionMatches == other.sessionMatches;
+    }
+}
+
+alias PreparedMagnetParamImage = PreparedStateParamImage!(MagnetParamProjection, PreparedMagnetParamKind);
+
+/// Convergent attraction deformer tool (`xfrm.pointAttract`).
+///
+/// Workflow:
+///   1. Hover over a vertex — it highlights (ToolFlag.HoverVertices enables GPU pick).
+///   2. LMB-drag from the highlighted vertex: the vertex is the ANCHOR
+///      (anchorRing → weight=1, always lands on the projected cursor position).
+///      All other vertices within `dist` world units are pulled toward the same
+///      target with a Smooth-curve falloff.  Strength ramps 0→1 over
+///      STRENGTH_PX pixels of drag distance.
+///   3. Release: commits a MeshVertexEdit undo entry.  Multiple gestures each
+///      get their own independent entry.
+///
+/// Headless surface: `mesh.magnet` command.
+class MagnetTool : Tool, PreparedToolDoorClient, PreparedToolParamDoorClient {
+    // A recording command through the UI door closes the live edit first —
+    // `Tool.commitOperation`'s in-place default — and the tool stays armed
+    // (slice M2; the C1-h-sel-fam law, captured for Edge Extend and Polygon
+    // Bevel and inferred for the rest of the in-place family, R20 gap g5).
+    override ToolSessionPolicy sessionPolicy() const nothrow @nogc {
+        static immutable ToolSessionPolicy policy = {
+            activationRow: true, commandClose: CommandClose.uiDoor,
+            sessionSteps: true, historyRecordedSteps: true };
+        return policy;
+    }
+
+    mixin PreparedNamedGpuParamDoorClient;
+    mixin PreparedPrivateStateToolDoorClient!(Layer,
+        PreparedPrivateStateOwner.magnetSession);
+private:
+    Mesh* delegate() meshSrc_;
+    @property Mesh* mesh() const { return meshSrc_(); }
+    GpuMesh*         gpu;
+    EditMode*        editMode;
+
+
+
+    // Gesture state.
+    bool         active;
+    bool         dragging;
+    bool         built;
+    int          pickedVi  = -1;   // which vertex was grabbed
+    // LAYER-LOCAL, both of them. `center_` is a raw `mesh.vertices[]` read
+    // (this comment used to say "world position" — task 0619; it was wrong,
+    // and it is the exact comment-lies-about-a-space shape that task hunts).
+    // `target_` must match it: `applyMagnet` writes LOCAL vertex coordinates.
+    // The falloff anchor is lifted to world at use (the weight is world-space).
+    Vec3         center_;          // anchor vertex position at grab time (LOCAL)
+    Vec3         target_;          // cursor on the camera-facing plane (LOCAL)
+    float        strength_ = 0.0f;
+    int          dragStartX, dragStartY;
+
+    // Public tool parameter.
+    float        dist_     = 1.0f;
+
+    // The falloff stage's packet, read at the press. The arm installs this
+    // tool's sphere there as its own Element falloff, so one slot holds it or
+    // the falloff picked after the arm, last writer wins (capture K-F1, task
+    // 9491); an Element falloff anchors at the drawn grabbed vertex, radius
+    // `dist`.
+    FalloffPacket falloff_;
+
+    MeshSnapshot before;
+    // The WORLD-space viewport `draw()` was handed (task 0619 rename): this
+    // tool's aiming kind is **RayPlane** (§1.2), which builds its ray from
+    // the UN-composed viewport and then moves it into local space — it must
+    // never be handed a composed/aim viewport.
+    Viewport     vpWorld_;
+
+    // Per-gesture undo payload (populated by applyMagnet via rebuildPreview).
+    uint[] touchedIdx_;
+    /// The identity of the mesh `touchedIdx_` indexes — see `SessionMeshKey`.
+    /// `commitEdit()` reads `mesh.vertices[touchedIdx_[k]]` to build the undo
+    /// AFTER-image, and `built` alone is gesture state: measured 2026-08-28, a
+    /// vertex haul left mid-drag (LMB still down) followed by
+    /// `POST /api/reset?empty=true` kills the process with
+    /// `ArrayIndexError@source/tools/deform/magnet.d(298)`. The mouse-UP path
+    /// clears `built`, so the reachable window is a tool-drop mid-drag — which
+    /// is exactly what a document change performs.
+    SessionMeshKey sessionKey_;
+    Vec3[] touchedPrev_;
+
+    /// Pixel drag distance that maps to strength = 1.0.
+    enum float STRENGTH_PX = 150.0f;
+
+public:
+    this(Mesh* delegate() meshSrc, GpuMesh* gpu, EditMode* editMode) {
+        this.meshSrc_  = meshSrc;
+        this.gpu       = gpu;
+        this.editMode  = editMode;
+    }
+
+    override string name() const { return "Magnet"; }
+
+    /// The pipe block the arm installs, as a preset's: this tool's sphere is
+    /// the falloff slot's own Element falloff (one slot, last writer wins).
+    static string[string][string] presetPipe() {
+        return ["falloff": ["type": "element", "shape": "smooth"]];
+    }
+
+    /// Require vertex hover so `g_hoveredVertex` is updated while the tool
+    /// is active (app.d: pickVertices runs when wantsHoverForType(Vertices)).
+    override ToolFlag flags() const { return ToolFlag.HoverVertices; }
+
+    /// Switching to this tool also switches the edit mode to Vertices.
+    override EditMode[] supportedModes() const { return [EditMode.Vertices]; }
+
+    override Param[] params() {
+        return [
+            Param.float_("dist", "Dist", &dist_, 1.0f),
+        ];
+    }
+
+    override void activate() {
+        active    = true;
+        built     = false;
+        dragging  = false;
+        pickedVi  = -1;
+        before    = MeshSnapshot.capture(*mesh);
+    }
+    final MeshSnapshot prepareActivationBaseline() { return MeshSnapshot.capture(*mesh); }
+    final void installPreparedActivation(ref MeshSnapshot image) nothrow @nogc {
+        active = true; built = false; dragging = false; pickedVi = -1;
+        image.moveInto(before);
+    }
+    final PreparedSessionActivateEffect prepareActivate(PreparedRecordContext context,
+            PreparedPrivateStateOwner owner) {
+        bool accepted = context !is null && owner !is null && owner.owns(this) &&
+            context.preparePrivateState(owner) && context.markNoHistoryInstall();
+        if (!accepted && context !is null) context.discard();
+        return PreparedSessionActivateEffect(preparedToolStateOwner,
+            PreparedActivateKind.Magnet, accepted);
+    }
+    version(unittest) void seedPreparedActivationForTest() nothrow @nogc {
+        active = false; built = dragging = true; pickedVi = 17;
+    }
+    version(unittest) bool preparedActivationInstalledForTest() const nothrow @nogc {
+        return active && !built && !dragging && pickedVi == -1 && before.filled;
+    }
+    version(unittest) void seedPreparedParamForTest(ref Mesh source,
+            bool dragBuilt = true) {
+        active = true; dragging = dragBuilt; built = dragBuilt; pickedVi = 0;
+        center_ = source.vertices[0]; target_ = center_ + Vec3(1, 0, 0);
+        strength_ = 1.0f; dist_ = 100.0f;
+        import vibe3d.editing.pipeline.runtime.falloff : magnetElementPacket;
+        falloff_ = magnetElementPacket(center_, dist_, pickedVi);
+        before = MeshSnapshot.capture(source);
+        touchedIdx_ = null; touchedPrev_ = null; sessionKey_.stamp(source);
+    }
+    version(unittest) void mutatePreparedParamForTest(float value) nothrow @nogc {
+        dist_ = value;
+    }
+    version(unittest) bool preparedParamStateForTest(bool installed)
+            const nothrow @nogc {
+        return built && (installed ? touchedIdx_.length > 0 :
+            touchedIdx_.length == 0);
+    }
+    final bool ownsPreparedLayer(Layer layer) const {
+        return layer !is null && &layer.meshRef() is mesh;
+    }
+
+    override void deactivate() {
+        if (active) {
+            if (built)
+                commitEdit();
+            // When built=false the mesh is already in the baseline state
+            // (rebuildPreview always restores `before` before deforming).
+        }
+        active    = false;
+        built     = false;
+        dragging  = false;
+        pickedVi  = -1;
+    }
+
+    override bool isDragging() const { return dragging; }
+
+    override bool hasUncommittedEdit() const { return active && built; }
+
+    override void cancelUncommittedEdit() {
+        if (built && before.filled)
+            before.restore(*mesh);
+        built    = false;
+        dragging = false;
+        pickedVi = -1;
+        refreshCaches();
+    }
+
+    override void resyncSession() {
+        if (!active) return;
+        if (built && before.filled)
+            before.restore(*mesh);
+        built    = false;
+        dragging = false;
+        pickedVi = -1;
+        before   = MeshSnapshot.capture(*mesh);
+        refreshCaches();
+    }
+
+    // Framework "apply and continue" (task 0461, Shift+click): commit the live
+    // edit as its own undo entry, keeping the tool active; the driver follows
+    // with resyncSession() to re-arm in place. Mirrors deactivate()'s commit
+    // guard minus the teardown.
+    override bool commitUncommittedEdit() {
+        if (!hasUncommittedEdit()) return false;
+        commitEdit();
+        return true;
+    }
+
+    override void onParamChanged(string pname) {
+        // dist changed while dragging — rebuild with new radius.
+        if (pname == "dist" && dragging && built) rebuildPreview();
+    }
+    private MagnetParamProjection paramProjection(ref const Mesh live) const nothrow @nogc {
+        return MagnetParamProjection(active, dragging, built, sessionKey_.matches(live),
+            pickedVi, center_, target_, strength_, dist_, touchedIdx_, touchedPrev_);
+    }
+    final PreparedMagnetParamImage buildPreparedParamUpdate(string, ref const Mesh live) {
+        auto projection = paramProjection(live);
+        projection.touchedIdx = touchedIdx_.dup;
+        projection.touchedPrev = touchedPrev_.dup;
+        return PreparedMagnetParamImage.prepare(projection, live);
+    }
+    final bool preparedParamUpdateMatches(in PreparedMagnetParamImage image,
+            ref const Mesh live) const nothrow @nogc {
+        return image.matches(paramProjection(live), live);
+    }
+    final void installPreparedParamUpdate(ref PreparedMagnetParamImage image)
+            nothrow @nogc {
+        image.clear();
+    }
+    mixin PreparedParamUpdateProducer!(PreparedParamUpdateOwner!(MagnetTool,
+        PreparedMagnetParamImage, PreparedMagnetParamKind), PreparedMagnetParamEffect);
+    override void evaluate() {}
+
+    // -----------------------------------------------------------------------
+    // Mouse handling
+    // -----------------------------------------------------------------------
+    override bool onMouseButtonDown(ref const SDL_MouseButtonEvent e, ref VectorStack vts) {
+        if (!active) return false;
+        if (e.button != SDL_BUTTON_LEFT) return false;
+        SDL_Keymod mods = SDL_GetModState();
+        if (mods & KMOD_ALT) return false;
+
+        int hv = hoverAtPress().vertex;
+        if (hv < 0 || cast(size_t)hv >= mesh.vertices.length) return false;
+
+        // Commit any prior in-flight gesture (edge case: two downs without up).
+        if (built) { commitEdit(); built = false; }
+
+        pickedVi   = hv;
+        center_    = mesh.vertices[hv];
+        target_    = center_;
+        strength_  = 0.0f;
+        dragStartX = e.x;
+        dragStartY = e.y;
+        before     = MeshSnapshot.capture(*mesh);
+        dragging   = true;
+        built      = false;
+        auto picked = vts.get!FalloffPacket();
+        falloff_ = picked !is null ? *picked : FalloffPacket.init;
+        return true;
+    }
+
+    override bool onMouseButtonUp(ref const SDL_MouseButtonEvent e, ref VectorStack vts) {
+        if (!active || !dragging) return false;
+        if (e.button != SDL_BUTTON_LEFT) return false;
+        if (built) commitEdit();
+        dragging  = false;
+        pickedVi  = -1;
+        built     = false;
+        return true;
+    }
+
+    override bool onMouseMotion(ref const SDL_MouseMotionEvent e, ref VectorStack vts) {
+        if (!active || !dragging || pickedVi < 0) return false;
+
+        // Project cursor onto the camera-facing plane through `center_`.
+        //
+        // AIMING KIND: **RayPlane** (task 0619 §1.2). The whole test runs in
+        // the LAYER'S LOCAL space, because `target_` is written into local
+        // vertex coordinates by `applyMagnet` (and `center_` is a raw
+        // `mesh.vertices[]` read, i.e. already local).
+        //
+        // The plane's ANCHOR is `center_`, already local. Its NORMAL is the
+        // camera forward, a genuinely WORLD direction — and a normal is
+        // carried into local space by `M^T` (`toLocalNormal`), NOT by `M^-1`
+        // (`toLocalDir`). The two are EQUAL for a pure rotation and diverge
+        // under any non-uniform scale, which is exactly the case where the
+        // wrong one silently tilts the drag plane.
+        //
+        // View forward: col-major lookAt stores (-f.x,-f.y,-f.z) at indices 2,6,10.
+        const ms = primaryModelSpace();
+        Vec3 fwdWorld = Vec3(-vpWorld_.view[2], -vpWorld_.view[6], -vpWorld_.view[10]);
+        Vec3 fwd = ms.toLocalNormal(fwdWorld);
+        Vec3 magOrig, ray;
+        screenPointToLocalRay(cast(float)e.x, cast(float)e.y, vpWorld_, ms, magOrig, ray);
+        Vec3 hit;
+        if (rayPlaneIntersect(magOrig, ray, center_, fwd, hit))
+            target_ = hit;
+
+        // Strength ramps 0→1 over STRENGTH_PX pixels from the grab point.
+        float dx = cast(float)(e.x - dragStartX);
+        float dy = cast(float)(e.y - dragStartY);
+        float d  = sqrt(dx*dx + dy*dy);
+        strength_ = d / STRENGTH_PX;
+        if (strength_ > 1.0f) strength_ = 1.0f;
+
+        rebuildPreview();
+        return true;
+    }
+
+    override void draw(const ref Shader shader, const ref Viewport vp, ref VectorStack vts,
+                       const ref DrawPlan plan, bool visualOnly = false) {
+        vpWorld_ = vp;
+        // No gizmo in v1 — hover sphere drawing deferred to later.
+    }
+
+private:
+    // The weight is world-space, so the Element anchor is the DRAWN vertex.
+    FalloffPacket anchoredFalloff(const ref AimViewport aim) {
+        return elementAnchoredAt(falloff_, aim.toWorld(center_), dist_, pickedVi);
+    }
+
+    void rebuildPreview() {
+        if (!active || pickedVi < 0) return;
+        // Perf (task 1370) — AFTER the guard(s) above, never on the first
+        // line: an early-out must record no sample, or `count` tallies
+        // refusals as work. See Cat.toolPreview for the decomposition.
+        auto zPreview = g_perf.scope_(Cat.toolPreview);
+        before.restore(*mesh);
+
+        if (strength_ <= 0.0f) {
+            built = false;
+            refreshCaches();
+            return;
+        }
+
+        // Moving set: selected verts (empty → whole mesh), vertex mode.
+        int[] indices = mesh.selectedVertexIndicesVertices();
+
+        // A picked falloff may project (Screen / Lasso), so the aim space is
+        // the real one, built from this tool's own world viewport (task 0619).
+        const auto aim = aimSpace(vpWorld_, primaryModelSpace());
+        FalloffPacket fp = anchoredFalloff(aim);
+        bool displaced = applyMagnet(mesh, indices, target_, strength_, fp, aim,
+                                     touchedIdx_, touchedPrev_);
+        built = displaced;
+        // Freeze the identity WITH the indices, every rebuild. This tool's own
+        // per-motion edit is Position-class, so it moves no term of the key —
+        // a legal drag stamps and matches the same three values throughout.
+        if (displaced) sessionKey_.stamp(*mesh);
+        if (displaced) mesh.commitChange(MeshEditScope.Position);
+        refreshCaches();
+    }
+
+    final PreparedDeactivateEffect prepareDeactivate(PreparedRecordContext context) {
+        bool accepted;
+        if (active && built && touchedIdx_.length && context !is null &&
+            history !is null && gestureFactory !is null && sessionKey_.matches(*mesh)) {
+            Vec3[] after = new Vec3[](touchedIdx_.length);
+            foreach (k; 0 .. touchedIdx_.length)
+                after[k] = mesh.vertices[touchedIdx_[k]];
+            auto cmd = cast(MeshVertexEdit) gestureFactory();
+            if (cmd !is null) {
+                cmd.setEdit(touchedIdx_.dup, touchedPrev_.dup, after, "Magnet");
+                accepted = context.prepare(cmd, PreparedHistoryKind.Plain).accepted;
+            }
+        }
+        return PreparedDeactivateEffect(preparedToolStateOwner,
+            PreparedDeactivateKind.Magnet, accepted);
+    }
+
+    void commitEdit() {
+        if (history is null || gestureFactory is null) return;
+        if (!built || touchedIdx_.length == 0) return;
+        // ... and the document mesh must still be the one those indices came
+        // from. Without this the read below indexed a mesh a scene reset had
+        // already replaced. Dropping silently is right: there is no edit of
+        // ours left on that mesh to record.
+        if (!sessionKey_.matches(*mesh)) {
+            built               = false;
+            touchedIdx_.length  = 0;
+            touchedPrev_.length = 0;
+            return;
+        }
+        Vec3[] after;
+        after.length = touchedIdx_.length;
+        foreach (k; 0 .. touchedIdx_.length)
+            after[k] = mesh.vertices[touchedIdx_[k]];
+        // The ONE non-wrapper tool on the vertex-delta carrier: `setEdit` is a
+        // THIRD install form, expressible by neither of the snapshot spellings
+        // — which is why the seam takes a FILLED command rather than an
+        // installer set (task 1905, round 2 / Б2).
+        auto cmd = cast(MeshVertexEdit) gestureFactory();
+        if (cmd is null) { noteGestureCarrierMismatch(); return; }
+        cmd.setEdit(touchedIdx_.dup, touchedPrev_.dup, after, "Magnet");
+        recordGestureEdit(cmd, GestureRecordMode.Plain);
+        built               = false;
+        touchedIdx_.length  = 0;
+        touchedPrev_.length = 0;
+    }
+
+    void refreshCaches() {
+        refreshDisplay(mesh, gpu);
+    }
+}

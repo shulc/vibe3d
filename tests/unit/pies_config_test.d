@@ -14,7 +14,7 @@ import std.file   : write, remove, tempDir;
 import std.format : format;
 import std.process : thisProcessID;
 
-import buttonset;
+import vibe3d.ui.editor.buttonset;
 
 private string writeTmpYaml(string tag, string body_) {
     // Per-process name: the suite runs workers in parallel and a shared

@@ -106,12 +106,12 @@ module tests.unit.undo_parity_l3_test;
 import std.format : format;
 import std.json   : JSONValue, parseJSON;
 
-import command;
+import vibe3d.editing.commands.runtime.command;
 import vibe3d.mesh.core.mesh;
 import vibe3d.viewport.camera.view;
 import vibe3d.editing.contracts.editmode;
-import math      : Vec3;
-import http_json : meshPlanesJson, PlaneDumpMeta;
+import vibe3d.util.math.math      : Vec3;
+import vibe3d.runtime.application_core.http_json : meshPlanesJson, PlaneDumpMeta;
 
 
 import tests.unit.fixtures            : makeTaggedGridFull;
@@ -120,8 +120,8 @@ import tests.unit.undo_parity_l0_test : ParityCell, comparePlanes, fixturePath,
                                         compareWithExceptions,
                                         assertExceptionTableWellFormed;
 
-import commands.mesh.delete_ : MeshDelete;
-import commands.mesh.remove_ : MeshRemove;
+import vibe3d.editing.commands.editor.commands.mesh.delete_ : MeshDelete;
+import vibe3d.editing.commands.editor.commands.mesh.remove_ : MeshRemove;
 
 enum string kL3Family = "delete_remove";
 enum string kL3Stand  = "makeTaggedGridFull(3)";

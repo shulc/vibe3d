@@ -2,28 +2,28 @@ module tests.unit.history_replay_boundary_test;
 
 import tests.unit.http_test_client : receiveUntilClosed;
 
-import ai.exploration : AiExplorationController;
-import ai.state : EditorAiState;
-import application_command_binding : ApplicationCommandBinding;
-import command : CmdFlags, Command, g_testMode;
-import command_executor : CommandExecutor;
-import command_history : CommandHistory, RecordMode;
-import commands.tool.attr : ToolAttrCommand;
-import commands.tool.host : ToolHost;
-import edit_session : EditSession;
+import vibe3d.runtime.ai_advisor.ai.exploration : AiExplorationController;
+import vibe3d.runtime.ai_advisor.ai.state : EditorAiState;
+import vibe3d.apps.desktop.application_command_binding : ApplicationCommandBinding;
+import vibe3d.editing.commands.runtime.command : CmdFlags, Command, g_testMode;
+import vibe3d.editing.commands.runtime.command_executor : CommandExecutor;
+import vibe3d.editing.commands.runtime.command_history : CommandHistory, RecordMode;
+import vibe3d.editing.tools.interactive.commands.tool.attr : ToolAttrCommand;
+import vibe3d.editing.tools.interactive.commands.tool.host : ToolHost;
+import vibe3d.editing.tools.interactive.edit_session : EditSession;
 import vibe3d.editing.contracts.editmode : EditMode;
-import guarded_action_controller : GuardObservationPorts,
+import vibe3d.apps.desktop.guarded_action_controller : GuardObservationPorts,
     GuardedActionController, GuardedActionPorts;
-import http_command_adapter : AutomationResetContext, AutomationResetHook,
+import vibe3d.apps.desktop.http_command_adapter : AutomationResetContext, AutomationResetHook,
     CommandHttpAdapter;
-import http_providers : HistoryHttpAdapter;
-import http_server : BridgeResultKind, HttpServer;
+import vibe3d.apps.desktop.http_providers : HistoryHttpAdapter;
+import vibe3d.runtime.http.http_server : BridgeResultKind, HttpServer;
 import vibe3d.mesh.core.mesh : Mesh, makeCube;
 import vibe3d.editing.params.params : Param, wireArgs;
 import vibe3d.util.profiling.perf_probe : g_commandGc;
-import pipe_gizmo_host : PipeGizmoHost;
-import registry : Registry;
-import step_trace : StepTrace;
+import vibe3d.editing.tools.interactive.pipe_gizmo_host : PipeGizmoHost;
+import vibe3d.editing.tools.interactive.registry : Registry;
+import vibe3d.editing.commands.editor.step_trace : StepTrace;
 import std.algorithm : canFind, count;
 import std.conv : to;
 import std.file : exists, readText;
@@ -37,7 +37,7 @@ import std.string : indexOf, startsWith;
 import core.atomic : atomicLoad, atomicStore;
 import core.thread : Thread;
 import core.time : Duration, MonoTime, msecs, seconds;
-import tool : Tool;
+import vibe3d.editing.tools.interactive.tool : Tool;
 import vibe3d.viewport.camera.view : View;
 
 private size_t resetUiCalls;

@@ -9,9 +9,9 @@ import std.path   : buildPath, absolutePath;
 import std.process : environment;
 import std.format : format;
 import vibe3d.util.log.log            : logWarn;
-import viewport       : LayoutPreset;
-import display_state  : DisplayStyle, WireOverlay;
-import coord_rounding : CoordinateRounding, kCoordRoundingDefault,
+import vibe3d.viewport.host.viewport       : LayoutPreset;
+import vibe3d.viewport.display_policy.display_state  : DisplayStyle, WireOverlay;
+import vibe3d.editing.tools.interactive.coord_rounding : CoordinateRounding, kCoordRoundingDefault,
                         kFixedIncrementDefault, coordRoundingName,
                         parseCoordRounding;
 import vibe3d.util.spatial.trackball      : kTrackballDefault, kTrackballSpeedDefault,
@@ -19,7 +19,7 @@ import vibe3d.util.spatial.trackball      : kTrackballDefault, kTrackballSpeedDe
 import std.file : tempDir, rmdirRecurse, mkdirRecurse;
 import std.path : buildPath;
 import std.random : uniform;
-import prefs;
+import vibe3d.apps.desktop.prefs;
 
 // Pure filename math only — no GL context, no filesystem access.
 unittest {

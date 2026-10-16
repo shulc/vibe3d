@@ -27,7 +27,7 @@ import vibe3d.mesh.core.mesh       : Mesh, MeshMap, MapDomain, makeCube, kUvMapN
 import vibe3d.viewport.camera.view       : View;
 import vibe3d.editing.contracts.editmode   : EditMode;
 import vibe3d.mesh.snapshot.snapshot   : MeshSnapshot;
-import commands.mesh.uv_map_util;
+import vibe3d.editing.commands.editor.commands.mesh.uv_map_util;
 import std.net.curl : post, get;
 
 void main() {}

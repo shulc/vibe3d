@@ -12,7 +12,7 @@
 // Source-backed tests run their unittest blocks at process startup (before
 // main), so main() is intentionally empty.
 
-import forms;
+import vibe3d.ui.forms.forms;
 import vibe3d.editing.params.params : Param, ParamHints, IntEnumEntry, choicesOf;
 
 void main() {}

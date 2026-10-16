@@ -26,27 +26,27 @@
 // isolation when scoring a mutation.
 module tests.unit.undo_parity_l1_test;
 
-import command;
+import vibe3d.editing.commands.runtime.command;
 import vibe3d.mesh.core.mesh;
 import vibe3d.viewport.camera.view;
 import vibe3d.editing.contracts.editmode;
-import math : Vec3;
+import vibe3d.util.math.math : Vec3;
 
 import tests.unit.fixtures : makeTaggedGridMaps;
 import tests.unit.undo_parity_l0_test : ParityCell, runCell, compareOrCapture,
                                         setS, setI, setF, setV, setB;
 
-import commands.mesh.uv_map_util : UvDelete, UvRename, UvCopy, UvClear;
-import commands.mesh.uv_transform: UvFlip, UvMirror, UvRotate;
-import commands.mesh.uv_pack     : UvFit, UvPack;
-import commands.mesh.uv_project  : UvProject;
-import commands.mesh.uv_relax    : UvRelax;
-import commands.mesh.uv_unwrap   : UvUnwrap;
-import commands.mesh.weightmap   : WeightmapCreate, WeightmapRemove,
+import vibe3d.editing.commands.editor.commands.mesh.uv_map_util : UvDelete, UvRename, UvCopy, UvClear;
+import vibe3d.editing.commands.editor.commands.mesh.uv_transform: UvFlip, UvMirror, UvRotate;
+import vibe3d.editing.commands.editor.commands.mesh.uv_pack     : UvFit, UvPack;
+import vibe3d.editing.commands.editor.commands.mesh.uv_project  : UvProject;
+import vibe3d.editing.commands.editor.commands.mesh.uv_relax    : UvRelax;
+import vibe3d.editing.commands.editor.commands.mesh.uv_unwrap   : UvUnwrap;
+import vibe3d.editing.commands.editor.commands.mesh.weightmap   : WeightmapCreate, WeightmapRemove,
                                    WeightmapRename, WeightmapSet;
-import commands.mesh.morph       : MorphCreate, MorphRemove, MorphRename,
+import vibe3d.editing.commands.editor.commands.mesh.morph       : MorphCreate, MorphRemove, MorphRename,
                                    MorphSet, MorphClear, MorphApplyCmd;
-import commands.select.sets      : SelectSetStore, SelectSetEdit,
+import vibe3d.editing.commands.editor.commands.select.sets      : SelectSetStore, SelectSetEdit,
                                    SelectSetRename, SelectSetDelete;
 
 enum string kL1Family = "uv_maps_sets";

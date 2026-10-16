@@ -1,0 +1,219 @@
+{
+  "name": "tool-state",
+  "description": "Mesh session identity and preview rebuild state",
+  "license": "MIT",
+  "targetType": "staticLibrary",
+  "sourcePaths": [
+    "source"
+  ],
+  "dependencies": {
+    "vibe3d:mesh": {
+      "path": "../../../.."
+    },
+    "vibe3d:mesh-snapshot": {
+      "path": "../../../.."
+    }
+  },
+  "toolchainRequirements": {
+    "dmd": ">=2.111.0",
+    "ldc": ">=1.41.0"
+  },
+  "buildTypes": {
+    "profile-fp": {
+      "buildOptions": [
+        "debugMode",
+        "debugInfo",
+        "optimize"
+      ],
+      "dflags-dmd": [
+        "-gs"
+      ],
+      "dflags-ldc": [
+        "--frame-pointer=all"
+      ]
+    },
+    "perf": {
+      "buildOptions": [
+        "releaseMode",
+        "optimize",
+        "inline"
+      ],
+      "versions": [
+        "PerfProbe"
+      ]
+    },
+    "perf-count": {
+      "buildOptions": [
+        "debugMode",
+        "debugInfo"
+      ],
+      "versions": [
+        "PerfProbe"
+      ]
+    },
+    "perf-unit": {
+      "buildOptions": [
+        "debugMode",
+        "debugInfo",
+        "unittests"
+      ],
+      "versions": [
+        "PerfProbe"
+      ]
+    },
+    "check": {
+      "buildOptions": [
+        "debugMode",
+        "debugInfo"
+      ],
+      "dflags-ldc": [
+        "--boundscheck=on",
+        "--checkaction=C",
+        "--frame-pointer=all"
+      ],
+      "versions": [
+        "SanitizerSelfTest"
+      ]
+    },
+    "check-unit": {
+      "buildOptions": [
+        "debugMode",
+        "debugInfo",
+        "unittests"
+      ],
+      "dflags-ldc": [
+        "--boundscheck=on",
+        "--frame-pointer=all"
+      ],
+      "versions": [
+        "SanitizerSelfTest"
+      ]
+    },
+    "check-release": {
+      "buildOptions": [
+        "releaseMode",
+        "optimize",
+        "inline",
+        "debugInfo"
+      ],
+      "dflags-ldc": [
+        "--boundscheck=on",
+        "--frame-pointer=all"
+      ],
+      "versions": [
+        "SanitizerSelfTest"
+      ]
+    },
+    "sanitize": {
+      "buildOptions": [
+        "debugMode",
+        "debugInfo"
+      ],
+      "dflags-ldc": [
+        "--fsanitize=address",
+        "--fsanitize-address-use-after-return=never",
+        "--checkaction=C",
+        "--frame-pointer=all"
+      ],
+      "versions": [
+        "SanitizerSelfTest"
+      ]
+    },
+    "sanitize-unit": {
+      "buildOptions": [
+        "debugMode",
+        "debugInfo",
+        "unittests"
+      ],
+      "dflags-ldc": [
+        "--fsanitize=address",
+        "--fsanitize-address-use-after-return=never",
+        "--frame-pointer=all"
+      ],
+      "versions": [
+        "SanitizerSelfTest"
+      ]
+    },
+    "tsan": {
+      "buildOptions": [
+        "debugMode",
+        "debugInfo"
+      ],
+      "dflags-ldc": [
+        "--fsanitize=thread",
+        "--enable-asserts=false",
+        "--frame-pointer=all"
+      ],
+      "versions": [
+        "SanitizerSelfTest",
+        "SanitizerThreadPreinit"
+      ]
+    }
+  },
+  "configurations": [
+    {
+      "name": "modeling",
+      "versions": [
+        "WithAI"
+      ],
+      "subConfigurations": {
+        "vibe3d:mesh": "modeling",
+        "vibe3d:mesh-snapshot": "modeling"
+      }
+    },
+    {
+      "name": "modeling-noai",
+      "versions": [],
+      "subConfigurations": {
+        "vibe3d:mesh": "modeling-noai",
+        "vibe3d:mesh-snapshot": "modeling-noai"
+      }
+    },
+    {
+      "name": "with-render",
+      "versions": [
+        "WithRender",
+        "WithAI"
+      ],
+      "subConfigurations": {
+        "vibe3d:mesh": "with-render",
+        "vibe3d:mesh-snapshot": "with-render"
+      }
+    },
+    {
+      "name": "web",
+      "versions": [
+        "web"
+      ],
+      "subConfigurations": {
+        "vibe3d:mesh": "web",
+        "vibe3d:mesh-snapshot": "web"
+      }
+    },
+    {
+      "name": "root-tests",
+      "versions": [
+        "WithAI"
+      ],
+      "subConfigurations": {
+        "vibe3d:mesh": "root-tests",
+        "vibe3d:mesh-snapshot": "root-tests"
+      },
+      "targetType": "sourceLibrary"
+    },
+    {
+      "name": "isolated-tests",
+      "versions": [],
+      "subConfigurations": {
+        "vibe3d:mesh": "isolated-tests",
+        "vibe3d:mesh-snapshot": "isolated-tests"
+      },
+      "targetType": "sourceLibrary"
+    }
+  ],
+  "targetName": "vibe3d-tool-state",
+  "targetPath": ".",
+  "importPaths": [
+    "source"
+  ]
+}

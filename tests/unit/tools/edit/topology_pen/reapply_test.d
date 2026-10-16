@@ -2,10 +2,10 @@
 // 8640 S7b, §9.8 / §9.17.6 / §9.26.3 / §9.27 [A15-4]). Named into the pen's
 // package for its `package` members (gestures_test.d's header has why). The
 // suite half is tests/test_session_laws_topology_pen_offset.d.
-module tools.edit.topology_pen.reapply_test;
+module vibe3d.editing.tools.interactive.tools.edit.topology_pen.reapply_test;
 
-import tools.edit.topology_pen;
-import math : Vec3;
+import vibe3d.editing.tools.interactive.tools.edit.topology_pen;
+import vibe3d.util.math.math : Vec3;
 
 // kReapply — the table IS the plan's: per kind, what it reads and its shape.
 // A row moved between shapes (Add Loop or Fill to carriedT, Smooth reading
@@ -68,13 +68,13 @@ unittest {
     import vibe3d.mesh.core.mesh : Mesh;
     import vibe3d.editing.contracts.editmode : EditMode;
     import vibe3d.editing.pipeline.contracts.operator : VectorStack;
-    import toolpipe.pipeline : ToolPipeContext, g_pipeCtx;
-    import toolpipe.stages.symmetry : SymmetryStage;
-    import property_panel : PropertyPanel;
+    import vibe3d.editing.pipeline.runtime.toolpipe.pipeline : ToolPipeContext, g_pipeCtx;
+    import vibe3d.editing.pipeline.evaluation.toolpipe.stages.symmetry : SymmetryStage;
+    import vibe3d.editing.tools.interactive.property_panel : PropertyPanel;
     import tests.unit.ui.headless_panel : openPanel;
-    import command_history : CommandHistory;
-    import edit_session : EditSession;
-    import tool : Tool;
+    import vibe3d.editing.commands.runtime.command_history : CommandHistory;
+    import vibe3d.editing.tools.interactive.edit_session : EditSession;
+    import vibe3d.editing.tools.interactive.tool : Tool;
     import std.math : abs;
     Mesh m;
     foreach(p;[Vec3(.1,0,0),Vec3(.4,0,0),Vec3(.4,.4,0),Vec3(.1,.4,0),
@@ -90,7 +90,7 @@ unittest {
     auto pen=new TopologyPenTool(); pen.meshSrc_=()=>mp;
     pen.stepKind_=[PenStepKind.VertexMove];
     pen.stepVerts_=[1u]; pen.stepOrig_=[Vec3(.4,0,0)]; pen.offsetX_=.2;
-    import symmetry : writeMovePositions;
+    import vibe3d.editing.selection.query.symmetry : writeMovePositions;
     writeMovePositions(m,sym.publishedPacket(),[1u],[Vec3(.6,0,0)]);
     assert(abs(m.vertices[1].x-.6)<1e-6 && abs(m.vertices[6].x+.6)<1e-6,"9494 widget baseline source and partner");
     assert(sym.evaluate(vts));

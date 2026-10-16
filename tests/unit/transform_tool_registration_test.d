@@ -1,25 +1,25 @@
 module tests.unit.transform_tool_registration_test;
 
-import command : Command;
-import command_history : CommandHistory;
-import commands.mesh.morph_edit : MeshMorphEdit;
+import vibe3d.editing.commands.runtime.command : Command;
+import vibe3d.editing.commands.runtime.command_history : CommandHistory;
+import vibe3d.editing.commands.editor.commands.mesh.morph_edit : MeshMorphEdit;
 import vibe3d.documents.model.document : Layer;
 import vibe3d.editing.contracts.editmode : EditMode;
 import vibe3d.mesh.core.mesh : Mesh;
-import pipe_gizmo_host : PipeGizmoHost;
+import vibe3d.editing.tools.interactive.pipe_gizmo_host : PipeGizmoHost;
 import vibe3d.editing.contracts.seltype : SelMode;
 import tests.unit.live_registration_rig : LiveRegistrationRig;
-import tool : Tool;
-import tools.alignment.linear_align_tool : LinearAlignTool;
-import tools.alignment.radial_align_tool : RadialAlignTool;
-import tools.common.command_wrapper : CommandWrapperTool, XfrmJitterTool,
+import vibe3d.editing.tools.interactive.tool : Tool;
+import vibe3d.editing.tools.interactive.tools.alignment.linear_align_tool : LinearAlignTool;
+import vibe3d.editing.tools.interactive.tools.alignment.radial_align_tool : RadialAlignTool;
+import vibe3d.editing.tools.interactive.tools.common.command_wrapper : CommandWrapperTool, XfrmJitterTool,
     XfrmQuantizeTool, XfrmSmoothTool;
-import tools.deform.bend : BendTool;
-import tools.deform.push : PushTool;
-import tools.slice.edge_slide : EdgeSlideTool;
-import tools.transform.xfrm_transform : XfrmTransformTool;
-import handler : HitRule;
-import tools.transform.transform : TransformTool;
+import vibe3d.editing.tools.interactive.tools.deform.bend : BendTool;
+import vibe3d.editing.tools.interactive.tools.deform.push : PushTool;
+import vibe3d.editing.tools.interactive.tools.slice.edge_slide : EdgeSlideTool;
+import vibe3d.editing.tools.interactive.tools.transform.xfrm_transform : XfrmTransformTool;
+import vibe3d.editing.tools.interactive.handler : HitRule;
+import vibe3d.editing.tools.interactive.tools.transform.transform : TransformTool;
 
 import std.algorithm : canFind;
 import std.file : readText;

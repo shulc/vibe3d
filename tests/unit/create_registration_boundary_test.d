@@ -4,15 +4,15 @@ module tests.unit.create_registration_boundary_test;
 import tests.unit.census_symbols : exists = wave15Exists;
 
 import core.exception : AssertError;
-import command_history : CommandHistory;
-import commands.mesh.session_edit : MeshSessionEdit;
-import create_tool_registration : CreateToolDeps, registerCreateToolCommands;
-static import create_tool_registration;
-import live_registration_roles : LiveSessionRole, LiveViewModeRole;
-import mesh_gpu : GpuMesh;
-import registry : Registry;
-import shader : LitShader;
-import tools.edit.topology_pen.defs : TopoPenFactories;
+import vibe3d.editing.commands.runtime.command_history : CommandHistory;
+import vibe3d.editing.commands.editor.commands.mesh.session_edit : MeshSessionEdit;
+import vibe3d.apps.desktop.create_tool_registration : CreateToolDeps, registerCreateToolCommands;
+static import create_tool_registration = vibe3d.apps.desktop.create_tool_registration;
+import vibe3d.runtime.application_core.live_registration_roles : LiveSessionRole, LiveViewModeRole;
+import vibe3d.viewport.gpu.mesh_gpu : GpuMesh;
+import vibe3d.editing.tools.interactive.registry : Registry;
+import vibe3d.viewport.gpu.shader : LitShader;
+import vibe3d.editing.tools.interactive.tools.edit.topology_pen.defs : TopoPenFactories;
 
 import std.array : join;
 import std.algorithm : sort, canFind;

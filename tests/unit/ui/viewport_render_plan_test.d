@@ -1,13 +1,13 @@
-module ui.viewport_render_plan_test;
+module vibe3d.ui.editor.ui.viewport_render_plan_test;
 
-import display_state : DrawPlan;
-import viewport_overlay_mode : OverlayMode;
+import vibe3d.viewport.display_policy.display_state : DrawPlan;
+import vibe3d.viewport.display_policy.viewport_overlay_mode : OverlayMode;
 import vibe3d.util.spatial.spatial : Viewport;
 import vibe3d.editing.pipeline.contracts.operator : VectorStack;
-import shader : Shader;
-import tool : Tool;
+import vibe3d.viewport.gpu.shader : Shader;
+import vibe3d.editing.tools.interactive.tool : Tool;
 import vibe3d.editing.pipeline.contracts.toolpipe.packets : SubjectPacket;
-import ui.viewport_render : ToolOverlayInputs, ViewportSceneRenderer;
+import vibe3d.ui.editor.ui.viewport_render : ToolOverlayInputs, ViewportSceneRenderer;
 
 private final class PlanCaptureTool : Tool {
     bool called;

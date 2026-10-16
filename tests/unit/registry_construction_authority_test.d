@@ -14,13 +14,13 @@ import std.format : format;
 import std.path : baseName, buildPath, buildNormalizedPath, dirName;
 import std.string : indexOf, splitLines;
 
-import application_command_binding : CommandInvocationContext;
-import command : Command, CommandOrigin;
+import vibe3d.apps.desktop.application_command_binding : CommandInvocationContext;
+import vibe3d.editing.commands.runtime.command : Command, CommandOrigin;
 import vibe3d.editing.contracts.editmode : EditMode;
-import live_registration_roles : LiveSessionRole;
+import vibe3d.runtime.application_core.live_registration_roles : LiveSessionRole;
 import vibe3d.mesh.core.mesh : Mesh;
-import registry : CommandFactory, Registry;
-import command_registry : CommandRegistry;
+import vibe3d.editing.tools.interactive.registry : CommandFactory, Registry;
+import vibe3d.editing.commands.runtime.command_registry : CommandRegistry;
 import vibe3d.editing.contracts.seltype : SelType;
 import tests.unit.census_symbols : blankNonCode, registrationFamilyBytes,
     symbolTokenHits;
@@ -575,9 +575,9 @@ version (AccessRuntimeOnly) {} else unittest {
 
 
 unittest { // Construct before first registration: empty AA storage cannot mask a copy.
-    import command_executor : CommandExecutor;
-    import command_history : CommandHistory;
-    import command_invocation : CommandInvocationOutcome, CommandInvocationResult;
+    import vibe3d.editing.commands.runtime.command_executor : CommandExecutor;
+    import vibe3d.editing.commands.runtime.command_history : CommandHistory;
+    import vibe3d.editing.commands.runtime.command_invocation : CommandInvocationOutcome, CommandInvocationResult;
     auto rig = new LiveRegistrationRig;
     Registry owner;
     assert(owner.commandIds().length == 0, "1D factory requires fresh empty owner");
@@ -619,14 +619,14 @@ unittest { // Construct before first registration: empty AA storage cannot mask 
 
 
 unittest { // The desktop receiver instantiates the same operation-only helpers.
-    import command : g_editTargetResolver;
-    import command_executor : CommandExecutor;
-    import command_history : CommandHistory;
-    import command_invocation;
+    import vibe3d.editing.commands.runtime.command : g_editTargetResolver;
+    import vibe3d.editing.commands.runtime.command_executor : CommandExecutor;
+    import vibe3d.editing.commands.runtime.command_history : CommandHistory;
+    import vibe3d.editing.commands.runtime.command_invocation;
     import vibe3d.mesh.change.change_bus : changeBus, ChangeBus;
     import vibe3d.mesh.core.mesh : makeCube, g_isDocumentMesh;
-    import pilot_command_registration;
-    import math : Vec3;
+    import vibe3d.runtime.application_core.pilot_command_registration;
+    import vibe3d.util.math.math : Vec3;
 import vibe3d.util.spatial.spatial : Viewport;
 
     const savedResolver = g_editTargetResolver; auto savedBus = changeBus;
@@ -685,9 +685,9 @@ private final class FactoryHookProbe : ProbeCommand {
 }
 
 unittest {
-    import command_executor : CommandExecutor;
-    import command_history : CommandHistory, RecordMode;
-    import command_invocation : CommandInvocationOutcome;
+    import vibe3d.editing.commands.runtime.command_executor : CommandExecutor;
+    import vibe3d.editing.commands.runtime.command_history : CommandHistory, RecordMode;
+    import vibe3d.editing.commands.runtime.command_invocation : CommandInvocationOutcome;
     Registry owner;
     auto history = new CommandHistory;
     auto executor = new CommandExecutor(history, () => false, (transition) {});

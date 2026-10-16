@@ -5,15 +5,15 @@ module tests.unit.commands.workplane_test;
 
 import std.math : isNaN, sqrt;
 import std.json : JSONValue, JSONType;
-import command;
+import vibe3d.editing.commands.runtime.command;
 import vibe3d.editing.pipeline.contracts.operator : Operator, Task, VectorStack, PacketKind, OperatorActrCommon;
 import vibe3d.mesh.core.mesh    : Mesh;
 import vibe3d.viewport.camera.view;
 import vibe3d.editing.contracts.editmode : EditMode;
-import math     : Vec3, dot, cross, normalize;
-import toolpipe.pipeline : g_pipeCtx;
-import toolpipe.stages.workplane : WorkplaneStage;
-import commands.workplane;
+import vibe3d.util.math.math     : Vec3, dot, cross, normalize;
+import vibe3d.editing.pipeline.runtime.toolpipe.pipeline : g_pipeCtx;
+import vibe3d.editing.pipeline.evaluation.toolpipe.stages.workplane : WorkplaneStage;
+import vibe3d.apps.desktop.commands.workplane;
 
 unittest {
     // Right-handed basis check. Given (normal, axis2), reconstruct axis1

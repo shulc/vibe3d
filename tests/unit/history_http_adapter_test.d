@@ -5,15 +5,15 @@ import tests.unit.http_test_client : receiveUntilClosed;
 import core.atomic : atomicLoad, atomicStore;
 import core.thread : Thread;
 import core.time : Duration, MonoTime, msecs, seconds;
-import command : CmdFlags, Command;
-import command_history : CommandHistory, HistoryEntry, HistoryFlags;
-import edit_session : EditSession;
+import vibe3d.editing.commands.runtime.command : CmdFlags, Command;
+import vibe3d.editing.commands.runtime.command_history : CommandHistory, HistoryEntry, HistoryFlags;
+import vibe3d.editing.tools.interactive.edit_session : EditSession;
 import vibe3d.editing.contracts.editmode : EditMode;
-import http_server : BridgeResultKind, HttpServer;
-import http_providers : HistoryHttpAdapter;
+import vibe3d.runtime.http.http_server : BridgeResultKind, HttpServer;
+import vibe3d.apps.desktop.http_providers : HistoryHttpAdapter;
 import vibe3d.mesh.core.mesh : Mesh;
 import vibe3d.editing.params.params : Param;
-import step_trace : StepTrace;
+import vibe3d.editing.commands.editor.step_trace : StepTrace;
 import std.algorithm : canFind, count;
 import std.conv : to;
 import std.file : readText;
@@ -23,7 +23,7 @@ import std.path : buildPath, dirName;
 import std.socket : InternetAddress, Socket, SocketOption,
     SocketOptionLevel, TcpSocket;
 import std.string : indexOf, startsWith;
-import tool : Tool;
+import vibe3d.editing.tools.interactive.tool : Tool;
 import vibe3d.viewport.camera.view : View;
 
 private final class RowCommand : Command {

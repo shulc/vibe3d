@@ -2,10 +2,10 @@ module test_camera_intrinsics_map;
 import perspective_camera_rig_helpers : PerspectiveCameraRig;
 import http_client : postJson;
 import drag_helpers : fetchCamera,viewportFromCamera,Vec3;
-import math : ProductionVec3=Vec3;
+import vibe3d.util.math.math : ProductionVec3=Vec3;
 import vibe3d.util.spatial.spatial : ProductionViewport=Viewport;
-import drag : preparePlaneDrag,HandleDrag,DragFrame,DragKind,viewWorldPerPixel;
-import viewgrid : viewVectorQuantum,g_viewGrid,ViewGridPrefs;
+import vibe3d.editing.tools.interactive.drag : preparePlaneDrag,HandleDrag,DragFrame,DragKind,viewWorldPerPixel;
+import vibe3d.editing.selection.query.viewgrid : viewVectorQuantum,g_viewGrid,ViewGridPrefs;
 import std.math : abs;
 void main() {}
 unittest {

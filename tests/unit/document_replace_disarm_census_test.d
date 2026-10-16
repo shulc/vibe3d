@@ -305,7 +305,7 @@ unittest {
 // no-op (headless); "" (nothing was dropped) never reaches the hook; an id
 // reaches it exactly once. Positive control first.
 unittest {
-    import tool_disarm : g_rearmTool, rearmToolAfterPrimaryMove;
+    import vibe3d.editing.tools.interactive.tool_disarm : g_rearmTool, rearmToolAfterPrimaryMove;
     string[] calls;
     auto saved = g_rearmTool;
     scope (exit) g_rearmTool = saved;

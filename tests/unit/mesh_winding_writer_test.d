@@ -37,7 +37,7 @@ import std.format    : format;
 import core.exception : AssertError;
 
 import vibe3d.mesh.core.mesh;
-import math : Vec3;
+import vibe3d.util.math.math : Vec3;
 import vibe3d.mesh.edit_log.mesh_edit_delta : MeshEditDelta, MeshOpEntry, MeshEditScope;
 
 private enum uint kTestScope = MeshEditScope.Geometry;

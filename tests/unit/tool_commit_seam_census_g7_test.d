@@ -119,7 +119,7 @@ import tests.unit.census_symbols : LedgerHit, LedgerRow, SurfaceHit,
    balancedSpan, blankNonCode, countOccurrences, enclosingSymbols, historySurface,
    isIdentChar, lineOf, reconcile, symbolAt, symbolTokenHits,
    toolRegistrationHead;
-import tools.edit.topology_pen.defs : TopoPenFactories;
+import vibe3d.editing.tools.interactive.tools.edit.topology_pen.defs : TopoPenFactories;
 
 private enum repoRoot = dirName(dirName(dirName(__FILE_FULL_PATH__)));
 

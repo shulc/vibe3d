@@ -10,7 +10,7 @@ import vibe3d.mesh.contracts.mesh_scope : MeshEditScope;
 
 import vibe3d.mesh.core.mesh;
 import vibe3d.mesh.ops.mesh_ops.cleanup : cleanupMesh, kCleanupEditScope;
-import math;
+import vibe3d.util.math.math;
 
 /// Index in `m.edges[]` of the edge joining `a` and `b`, or **-1** when there
 /// is none. Vertex order does not matter.

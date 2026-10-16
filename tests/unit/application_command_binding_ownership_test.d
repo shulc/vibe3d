@@ -7,26 +7,26 @@ import std.path : buildPath, dirName;
 import std.algorithm.searching : canFind;
 import std.string : indexOf;
 
-import ai.exploration : AiExplorationController;
-import ai.state : EditorAiState;
-import application_command_binding : ApplicationCommandBinding,
+import vibe3d.runtime.ai_advisor.ai.exploration : AiExplorationController;
+import vibe3d.runtime.ai_advisor.ai.state : EditorAiState;
+import vibe3d.apps.desktop.application_command_binding : ApplicationCommandBinding,
     CommandInvocationContext, CommandInvocationOutcome;
-import command : CmdFlags, Command, CommandOrigin, g_testMode;
-import command_executor : CommandExecutor;
-import command_history : CommandHistory, RecordMode;
-import edit_session : EditSession;
+import vibe3d.editing.commands.runtime.command : CmdFlags, Command, CommandOrigin, g_testMode;
+import vibe3d.editing.commands.runtime.command_executor : CommandExecutor;
+import vibe3d.editing.commands.runtime.command_history : CommandHistory, RecordMode;
+import vibe3d.editing.tools.interactive.edit_session : EditSession;
 import vibe3d.editing.contracts.editmode : EditMode;
-import guarded_action_controller : GuardObservationPorts,
+import vibe3d.apps.desktop.guarded_action_controller : GuardObservationPorts,
     GuardedActionController, GuardedActionPorts;
-import http_command_adapter : AutomationResetContext, AutomationResetHook,
+import vibe3d.apps.desktop.http_command_adapter : AutomationResetContext, AutomationResetHook,
     CommandHttpAdapter;
-import http_server : HttpServer;
+import vibe3d.runtime.http.http_server : HttpServer;
 import vibe3d.mesh.core.mesh : Mesh;
-import pipe_gizmo_host : PipeGizmoHost;
-import registry : Registry;
-import step_trace : StepTrace;
-import tool : Tool;
-import ui.discard_guard : UiRunOutcome;
+import vibe3d.editing.tools.interactive.pipe_gizmo_host : PipeGizmoHost;
+import vibe3d.editing.tools.interactive.registry : Registry;
+import vibe3d.editing.commands.editor.step_trace : StepTrace;
+import vibe3d.editing.tools.interactive.tool : Tool;
+import vibe3d.ui.editor.ui.discard_guard : UiRunOutcome;
 import vibe3d.viewport.camera.view : View;
 
 private size_t uiResetCalls;
@@ -436,13 +436,13 @@ unittest { // command adapter owns reset policy without an EditorApp capture
 }
 
 unittest { // K3 Bridge refusal through ordinary UI and repeated dispatch.
-    import application_command_binding : CommandInvocationContext;
-    import command : CommandOrigin;
-    import commands.tool.bridge_headless : BridgeHeadlessCommand;
-    import math : Vec3;
-    import mesh_gpu : GpuMesh;
+    import vibe3d.apps.desktop.application_command_binding : CommandInvocationContext;
+    import vibe3d.editing.commands.runtime.command : CommandOrigin;
+    import vibe3d.editing.tools.interactive.commands.tool.bridge_headless : BridgeHeadlessCommand;
+    import vibe3d.util.math.math : Vec3;
+    import vibe3d.viewport.gpu.mesh_gpu : GpuMesh;
     import tests.unit.fixtures : findEdge;
-    import tools.edit.bridge_tool : BridgeTool;
+    import vibe3d.editing.tools.interactive.tools.edit.bridge_tool : BridgeTool;
     Mesh m;
     foreach (p; [Vec3(0,0,0), Vec3(1,0,0), Vec3(1,1,0),
                  Vec3(0,0,1), Vec3(1,0,1), Vec3(1,1,1)]) m.addVertex(p);

@@ -22,7 +22,7 @@
 /// tree; this one checks the production arrangement.
 module test_injected_modules_linked_src;
 
-import math : Vec3;   // makes this a source-backed test; see the header
+import vibe3d.util.math.math : Vec3;   // makes this a source-backed test; see the header
 import std.algorithm : filter, map, sort;
 import std.array     : array, join;
 import std.file      : dirEntries, SpanMode;

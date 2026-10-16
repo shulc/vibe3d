@@ -9,11 +9,11 @@ module tests.unit.face_mirror_refresh_test;
 
 import std.format : format;
 
-import math : Vec3;
+import vibe3d.util.math.math : Vec3;
 import vibe3d.mesh.core.mesh : Mesh;
-import mesh_gpu : GpuMesh, GpuUploadOwner, GpuResourceOwner, PreparedGpuUploadToken,
+import vibe3d.viewport.gpu.mesh_gpu : GpuMesh, GpuUploadOwner, GpuResourceOwner, PreparedGpuUploadToken,
     ValidatedGpuUploadToken, PreparedGpuResourceToken, ValidatedGpuResourceToken;
-import tests.unit.vertex_normals_test : hingedPatch;
+import vibe3d.viewport.display_policy.tests.unit.vertex_normals_test : hingedPatch;
 
 /// A full upload of `m` into `gpu` through the fake prepared owner.
 private void fullUpload(ref GpuMesh gpu, ref Mesh m) {
@@ -178,7 +178,7 @@ unittest { // the fan law: (f0, fi, fi+1) per triangle, positions and the face n
 }
 
 unittest { // the submit decision: an idle refresh submits nothing; a fan-out write forces a whole submit
-    import mesh_gpu : DisplayPayloadWriter;
+    import vibe3d.viewport.gpu.mesh_gpu : DisplayPayloadWriter;
     auto m = rig();
     GpuMesh gpu;
     fullUpload(gpu, m);

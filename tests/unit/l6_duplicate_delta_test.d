@@ -18,8 +18,8 @@ import std.conv   : to;
 import std.format : format;
 
 import vibe3d.mesh.change.change_bus : changeBus;
-import command;
-import math    : Vec3;
+import vibe3d.editing.commands.runtime.command;
+import vibe3d.util.math.math    : Vec3;
 import vibe3d.mesh.core.mesh;
 import vibe3d.mesh.edit_log.mesh_edit_delta : MeshEditDelta, MeshEditScope, MeshOpEntry;
 import vibe3d.viewport.camera.view;
@@ -27,11 +27,11 @@ import vibe3d.editing.contracts.editmode;
 
 import tests.unit.fixtures : makeTaggedGridFull;
 
-import commands.mesh.array_        : MeshArray;
-import commands.mesh.clone_        : MeshClone;
-import commands.mesh.duplicate_    : MeshDuplicate;
-import commands.mesh.mirror_       : MeshMirror;
-import commands.mesh.radial_array_ : MeshRadialArray;
+import vibe3d.editing.commands.editor.commands.mesh.array_        : MeshArray;
+import vibe3d.editing.commands.editor.commands.mesh.clone_        : MeshClone;
+import vibe3d.editing.commands.editor.commands.mesh.duplicate_    : MeshDuplicate;
+import vibe3d.editing.commands.editor.commands.mesh.mirror_       : MeshMirror;
+import vibe3d.editing.commands.editor.commands.mesh.radial_array_ : MeshRadialArray;
 import tests.unit.undo_parity_l0_test : setF, setI, setV, setS;
 
 private Mesh* stand()

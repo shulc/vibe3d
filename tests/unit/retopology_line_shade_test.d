@@ -26,10 +26,10 @@ import std.path   : buildPath, dirName, relativePath;
 import std.regex  : ctRegex, matchAll, matchFirst, replaceAll;
 import std.string : indexOf;
 
-import light_rig : kKeyLightEye, kFillLightEye, kKeyIntensity, kFillIntensity,
+import vibe3d.viewport.display_policy.light_rig : kKeyLightEye, kFillLightEye, kKeyIntensity, kFillIntensity,
     kLightAmbient, specPowerForRoughness;
-import math : Vec3;
-import retopology_line_shade : lineShade;
+import vibe3d.util.math.math : Vec3;
+import vibe3d.viewport.display_policy.retopology_line_shade : lineShade;
 import tests.unit.census_symbols : balancedSpan, blankNonCode,
     blankUnittestBodies, countOccurrences, lineOf;
 
@@ -245,7 +245,7 @@ import tests.unit.census_symbols : exists = wave15Exists;
 }
 
 unittest { // 5a. the fence: rig locations are private, and nobody spells around it
-    import shader : LitShader;
+    import vibe3d.viewport.gpu.shader : LitShader;
     // Positive control: the same probe DOES compile on a public field, so a
     // `false` below means "private", not "the probe is malformed".
     static assert(__traits(compiles, (LitShader s) { auto v = s.locModel; }),

@@ -2,10 +2,10 @@
 
 import vibe3d.editing.interaction.data.ai.interaction : AiAdvisorDecision, AiCandidate, AiCandidateKind,
     AiInteractionContext, AiIntent;
-import ai.interaction_log : makeAiInteractionLogRecord;
-import ai.offline_evaluator : evaluateAiOfflineBaseline,
+import vibe3d.runtime.ai_advisor.ai.interaction_log : makeAiInteractionLogRecord;
+import vibe3d.runtime.ai_advisor.ai.offline_evaluator : evaluateAiOfflineBaseline,
     predictAiOfflineBaselineWinner, replayAiOfflineAdvisorDecision;
-import ai.synthetic_dataset : makeAiSyntheticInteractionDataset;
+import vibe3d.runtime.ai_advisor.ai.synthetic_dataset : makeAiSyntheticInteractionDataset;
 
 void main() {}
 

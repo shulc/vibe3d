@@ -14,12 +14,12 @@ import std.path : buildPath, dirName;
 
 import tests.unit.census_symbols : blankNonCode, blankUnittestBodies;
 
-import commands.mesh.edge_slide : MeshEdgeSlide;
-import commands.mesh.jitter : MeshJitter;
-import commands.mesh.vertex_position_result : VertexPositionResultBuilder;
-import tools.common.command_wrapper : CommandWrapperTool, XfrmJitterTool,
+import vibe3d.editing.commands.editor.commands.mesh.edge_slide : MeshEdgeSlide;
+import vibe3d.editing.commands.editor.commands.mesh.jitter : MeshJitter;
+import vibe3d.editing.commands.editor.commands.mesh.vertex_position_result : VertexPositionResultBuilder;
+import vibe3d.editing.tools.interactive.tools.common.command_wrapper : CommandWrapperTool, XfrmJitterTool,
     XfrmQuantizeTool, XfrmSmoothTool;
-import tools.slice.edge_slide : EdgeSlideTool;
+import vibe3d.editing.tools.interactive.tools.slice.edge_slide : EdgeSlideTool;
 
 private enum repoRoot = dirName(dirName(dirName(__FILE_FULL_PATH__)));
 

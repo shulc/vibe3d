@@ -5,26 +5,26 @@ import std.file : exists, readText;
 import std.path : buildPath, dirName;
 import std.string : indexOf;
 
-import application_command_binding : ApplicationCommandBinding,
+import vibe3d.apps.desktop.application_command_binding : ApplicationCommandBinding,
     CommandInvocationContext, CommandInvocationOutcome;
-import command : Command, CommandOrigin, g_editTargetResolver;
-import command_executor : CommandExecutor;
-import command_history : CommandHistory, RecordMode;
-import commands.mesh.move_vertex : MeshMoveVertex;
+import vibe3d.editing.commands.runtime.command : Command, CommandOrigin, g_editTargetResolver;
+import vibe3d.editing.commands.runtime.command_executor : CommandExecutor;
+import vibe3d.editing.commands.runtime.command_history : CommandHistory, RecordMode;
+import vibe3d.editing.commands.editor.commands.mesh.move_vertex : MeshMoveVertex;
 import vibe3d.documents.model.document : Document;
-import edit_session : EditSession;
+import vibe3d.editing.tools.interactive.edit_session : EditSession;
 import vibe3d.editing.contracts.editmode : EditMode;
-import guarded_action_controller : GuardObservationPorts,
+import vibe3d.apps.desktop.guarded_action_controller : GuardObservationPorts,
     GuardedActionController, GuardedActionPorts;
-import math : Vec3;
+import vibe3d.util.math.math : Vec3;
 import vibe3d.mesh.core.mesh : Mesh, g_isDocumentMesh, makeCube;
-import registry : Registry;
+import vibe3d.editing.tools.interactive.registry : Registry;
 import vibe3d.editing.contracts.seltype : SelType;
-import session_owner : Session;
+import vibe3d.runtime.application_core.session_owner : Session;
 import tests.unit.census_symbols : blankNonCode;
-import tool : Tool;
-import tool_activation_ownership : ToolTransition;
-import ui.discard_guard : UiRunOutcome;
+import vibe3d.editing.tools.interactive.tool : Tool;
+import vibe3d.editing.commands.runtime.tool_activation_ownership : ToolTransition;
+import vibe3d.ui.editor.ui.discard_guard : UiRunOutcome;
 import vibe3d.viewport.camera.view : View;
 
 static assert(!__traits(isCopyable, Session),

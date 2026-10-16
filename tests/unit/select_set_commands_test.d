@@ -28,13 +28,13 @@
 // below into an uncaught-exception failure.
 module tests.unit.select_set_commands_test;
 
-import command;
+import vibe3d.editing.commands.runtime.command;
 import vibe3d.mesh.core.mesh : Mesh, makeCube;
 import vibe3d.viewport.camera.view : View;
 import vibe3d.editing.contracts.editmode : EditMode;
 import vibe3d.editing.contracts.seltype : SelType;
 import vibe3d.documents.model.document : Document;
-import commands.select.sets : SelectSetStore, SelectSetEdit, SelectSetApply,
+import vibe3d.editing.commands.editor.commands.select.sets : SelectSetStore, SelectSetEdit, SelectSetApply,
                                SelectSetRename, SelectSetDelete;
 
 version (unittest) {

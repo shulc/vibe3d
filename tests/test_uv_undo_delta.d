@@ -30,7 +30,7 @@
 import std.conv : to;
 
 import vibe3d.mesh.core.mesh : Mesh, MeshMap, MapDomain, kUvMapName, FaceIdx;
-import math : Vec3;
+import vibe3d.util.math.math : Vec3;
 import vibe3d.mesh.edit_log.mesh_edit_delta : MeshEditDelta, MeshEditTracker, MeshOpEntry, MeshEditScope;
 import vibe3d.mesh.edit_replay.mesh_edit_replay : apply, revert;
 

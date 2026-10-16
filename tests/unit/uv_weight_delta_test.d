@@ -68,18 +68,18 @@ import vibe3d.mesh.core.mesh;
 import vibe3d.viewport.camera.view;
 import vibe3d.editing.contracts.editmode;
 import vibe3d.mesh.change.change_bus : changeBus;
-import http_json  : meshPlanesJson, PlaneDumpMeta;
+import vibe3d.runtime.application_core.http_json  : meshPlanesJson, PlaneDumpMeta;
 import vibe3d.mesh.edit_log.mesh_edit_delta : MeshOpEntry;
 
-import command;
-import commands.mesh.weightmap    : WeightmapCreate, WeightmapRemove,
+import vibe3d.editing.commands.runtime.command;
+import vibe3d.editing.commands.editor.commands.mesh.weightmap    : WeightmapCreate, WeightmapRemove,
                                     WeightmapRename, WeightmapSet;
-import commands.mesh.uv_map_util  : UvDelete, UvRename, UvCopy, UvClear;
-import commands.mesh.uv_transform : UvFlip, UvMirror, UvRotate;
-import commands.mesh.uv_pack      : UvFit, UvPack;
-import commands.mesh.uv_project   : UvProject;
-import commands.mesh.uv_relax     : UvRelax;
-import commands.mesh.uv_unwrap    : UvUnwrap;
+import vibe3d.editing.commands.editor.commands.mesh.uv_map_util  : UvDelete, UvRename, UvCopy, UvClear;
+import vibe3d.editing.commands.editor.commands.mesh.uv_transform : UvFlip, UvMirror, UvRotate;
+import vibe3d.editing.commands.editor.commands.mesh.uv_pack      : UvFit, UvPack;
+import vibe3d.editing.commands.editor.commands.mesh.uv_project   : UvProject;
+import vibe3d.editing.commands.editor.commands.mesh.uv_relax     : UvRelax;
+import vibe3d.editing.commands.editor.commands.mesh.uv_unwrap    : UvUnwrap;
 
 import tests.unit.fixtures : makeTaggedGridMaps;
 import tests.unit.undo_parity_l0_test : comparePlanes, setS, setI, setF;

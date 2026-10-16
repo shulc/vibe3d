@@ -7,24 +7,24 @@
 // through the state they produce instead of guessed from source text.
 module tests.unit.transform_history_ownership_census_test;
 
-import command_history : CommandHistory;
-import commands.layer.xform_edit : LayerXformEdit;
-import commands.mesh.morph_edit : MeshMorphEdit;
-import commands.mesh.vertex_edit : MeshVertexEdit;
+import vibe3d.editing.commands.runtime.command_history : CommandHistory;
+import vibe3d.editing.commands.editor.commands.layer.xform_edit : LayerXformEdit;
+import vibe3d.editing.commands.editor.commands.mesh.morph_edit : MeshMorphEdit;
+import vibe3d.editing.commands.editor.commands.mesh.vertex_edit : MeshVertexEdit;
 import vibe3d.documents.model.document : Document, Layer;
-import editor_app : EditorApp;
+import vibe3d.apps.desktop.editor_app : EditorApp;
 import vibe3d.mesh.core.mesh : Mesh, makeCube;
-import mesh_gpu : GpuMesh;
-import pipe_gizmo_host : PipeGizmoHost;
-import registration : buildRegisteredXfrmTransformForOwnershipTest;
-import registry : Registry;
+import vibe3d.viewport.gpu.mesh_gpu : GpuMesh;
+import vibe3d.editing.tools.interactive.pipe_gizmo_host : PipeGizmoHost;
+import vibe3d.apps.desktop.registration : buildRegisteredXfrmTransformForOwnershipTest;
+import vibe3d.editing.tools.interactive.registry : Registry;
 import vibe3d.editing.contracts.seltype : SelMode;
-import session_owner : Session;
+import vibe3d.runtime.application_core.session_owner : Session;
 import vibe3d.editing.pipeline.contracts.operator : VectorStack;
 import std.conv : to;
-import ai.exploration : AiExplorationController;
-import ai.interaction_log_writer : AiInteractionLogWriter;
-import tools.transform.xfrm_transform : XfrmTransformTool;
+import vibe3d.runtime.ai_advisor.ai.exploration : AiExplorationController;
+import vibe3d.runtime.ai_advisor.ai.interaction_log_writer : AiInteractionLogWriter;
+import vibe3d.editing.tools.interactive.tools.transform.xfrm_transform : XfrmTransformTool;
 import vibe3d.viewport.camera.view : View;
 
 unittest // executes in the module-unittest gate, before any HTTP driver starts

@@ -28,7 +28,7 @@ import vibe3d.mesh.edit_replay.mesh_edit_replay : apply, revert;
 import std.format : format;
 
 import vibe3d.mesh.core.mesh;
-import math : Vec3;
+import vibe3d.util.math.math : Vec3;
 import vibe3d.mesh.edit_log.mesh_edit_delta;
 import vibe3d.mesh.change.change_bus : changeBus, SelDomain;
 

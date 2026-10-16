@@ -1,23 +1,23 @@
 // The file-I/O registrar is tested through its real factories, then its
 // production call is pinned separately because this rig builds its own roles.
-module commands.file.file_io_registration_test;
+module vibe3d.apps.desktop.commands.file.file_io_registration_test;
 
 import std.algorithm : count;
 import std.file : exists, readText, remove;
 import std.path : buildPath, buildNormalizedPath, dirName;
 import std.string : indexOf;
 
-import command_history : CommandHistory;
-import commands.file.load : FileLoad, FileLoadMode;
-import commands.file.save : FileSave, FileSaveMode;
+import vibe3d.editing.commands.runtime.command_history : CommandHistory;
+import vibe3d.apps.desktop.commands.file.load : FileLoad, FileLoadMode;
+import vibe3d.apps.desktop.commands.file.save : FileSave, FileSaveMode;
 import vibe3d.documents.model.document : Document, Layer;
 import vibe3d.editing.contracts.editmode : EditMode;
-import file_io_registration : registerFileIoCommands;
-import live_registration_roles : LiveSessionRole, LiveView,
+import vibe3d.apps.desktop.file_io_registration : registerFileIoCommands;
+import vibe3d.runtime.application_core.live_registration_roles : LiveSessionRole, LiveView,
     LiveViewModeRole;
 import vibe3d.mesh.core.mesh : makeCube, makeGridPlane, makeOctahedron;
-import registry : Registry;
-import session_owner : Session;
+import vibe3d.editing.tools.interactive.registry : Registry;
+import vibe3d.runtime.application_core.session_owner : Session;
 import vibe3d.viewport.camera.view : View;
 
 private enum repoRoot = buildNormalizedPath(dirName(__FILE_FULL_PATH__),
@@ -78,7 +78,7 @@ unittest { // every format factory retains its own configure argument
 }
 
 unittest { // a history-held command stays on A while new factories resolve B
-    import io.doc_state : clearCurrentDoc, requestDocRebaseline;
+    import vibe3d.runtime.application_core.io.doc_state : clearCurrentDoc, requestDocRebaseline;
 
     auto session = Session.bootstrap(makeCube());
     auto layerA = session.document.layers[0];

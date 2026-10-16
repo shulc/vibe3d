@@ -5,9 +5,9 @@ module tests.unit.mesh_ops.decimate_test;
 import vibe3d.mesh.ops.mesh_ops.triangulate : triangulateFacesByMask;
 import vibe3d.mesh.edit_replay.mesh_edit_replay : apply, revert;
 
-import subpatch_factories : subdivideCube;
+import vibe3d.viewport.subpatch.subpatch_factories : subdivideCube;
 import vibe3d.mesh.core.mesh;
-import math;
+import vibe3d.util.math.math;
 import vibe3d.mesh.ops.mesh_ops.decimate;
 import vibe3d.mesh.edit_log.mesh_edit_delta : MeshEditScope, MeshEditDelta, MeshOpEntry;
 

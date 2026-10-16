@@ -23,10 +23,10 @@ module tests.unit.ui.transform_panel_widget_test;
 import std.math : fabs;
 
 import vibe3d.mesh.core.mesh : Mesh, makeCube;
-import mesh_gpu : GpuMesh;
+import vibe3d.viewport.gpu.mesh_gpu : GpuMesh;
 import vibe3d.editing.contracts.editmode : EditMode;
 import vibe3d.editing.contracts.seltype : SelType;
-import tools.transform.xfrm_transform : XfrmTransformTool;
+import vibe3d.editing.tools.interactive.tools.transform.xfrm_transform : XfrmTransformTool;
 
 import tests.unit.ui.headless_panel : HeadlessPanel, openPanel;
 

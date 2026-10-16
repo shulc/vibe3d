@@ -28,7 +28,7 @@ import std.algorithm.searching : canFind;
 import std.format : format;
 
 import vibe3d.mesh.core.mesh;
-import math : Vec3;
+import vibe3d.util.math.math : Vec3;
 import vibe3d.mesh.edit_log.mesh_edit_delta;
 
 /// The DERIVED hidden planes, as one exact list per domain. This is the plane

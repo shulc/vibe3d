@@ -12,7 +12,7 @@ module tests.unit.extend_offset_mirror_test;
 
 import std.format : format;
 import std.math : abs;
-import math : Vec3;
+import vibe3d.util.math.math : Vec3;
 import vibe3d.mesh.core.mesh : Mesh, MeshEditBatch, edgeKey;
 import vibe3d.mesh.ops.mesh_ops.extrude : extendEdgesByMask, ExtendOffsetMirror, kExtrudeEditScope;
 

@@ -2,37 +2,37 @@
 // inputs and ordering so helper correctness cannot hide mis-wiring.
 module tests.unit.commands.select.selection_command_registration_test;
 
-import application_command_binding : CommandInvocationContext,
+import vibe3d.apps.desktop.application_command_binding : CommandInvocationContext,
     CommandInvocationResult;
-import command : Command, CommandOrigin;
-import command_args : bindArgs;
-import commands.select.between : SelectBetween;
-import commands.select.boundary : SelectBoundary;
-import commands.select.by_stat : SelectByStatEdge, SelectByStatPolygon,
+import vibe3d.editing.commands.runtime.command : Command, CommandOrigin;
+import vibe3d.editing.commands.runtime.command_args : bindArgs;
+import vibe3d.editing.commands.editor.commands.select.between : SelectBetween;
+import vibe3d.editing.commands.editor.commands.select.boundary : SelectBoundary;
+import vibe3d.editing.commands.editor.commands.select.by_stat : SelectByStatEdge, SelectByStatPolygon,
     SelectByStatVertex;
-import commands.select.by_tag : SelectByTag;
-import commands.select.connect : SelectConnect;
-import commands.select.contract : SelectionContract;
-import commands.select.convert : SelectConvertCommand;
-import commands.select.drop : SelectDropCommand;
-import commands.select.element : SelectElementCommand;
-import commands.select.expand : SelectionExpand;
-import commands.select.fill : SelectFillHoles, SelectFillInsideLoop;
-import commands.select.invert : SelectInvert;
-import commands.select.less : SelectLess;
-import commands.select.loop : SelectLoop;
-import commands.select.more : SelectMore;
-import commands.select.ring : SelectRing;
-import commands.select.sets : SelectSetApply, SelectSetDelete, SelectSetEdit,
+import vibe3d.editing.commands.editor.commands.select.by_tag : SelectByTag;
+import vibe3d.editing.commands.editor.commands.select.connect : SelectConnect;
+import vibe3d.editing.commands.editor.commands.select.contract : SelectionContract;
+import vibe3d.editing.commands.editor.commands.select.convert : SelectConvertCommand;
+import vibe3d.editing.commands.runtime.commands.select.drop : SelectDropCommand;
+import vibe3d.editing.commands.runtime.commands.select.element : SelectElementCommand;
+import vibe3d.editing.commands.editor.commands.select.expand : SelectionExpand;
+import vibe3d.editing.commands.editor.commands.select.fill : SelectFillHoles, SelectFillInsideLoop;
+import vibe3d.editing.commands.runtime.commands.select.invert : SelectInvert;
+import vibe3d.editing.commands.editor.commands.select.less : SelectLess;
+import vibe3d.editing.commands.editor.commands.select.loop : SelectLoop;
+import vibe3d.editing.commands.editor.commands.select.more : SelectMore;
+import vibe3d.editing.commands.editor.commands.select.ring : SelectRing;
+import vibe3d.editing.commands.editor.commands.select.sets : SelectSetApply, SelectSetDelete, SelectSetEdit,
     SelectSetRename, SelectSetStore;
-import commands.select.type_from : SelectTypeFromCommand;
+import vibe3d.editing.commands.editor.commands.select.type_from : SelectTypeFromCommand;
 import core.exception : AssertError;
 import vibe3d.documents.model.document : Layer;
 import vibe3d.editing.contracts.editmode : EditMode;
 import vibe3d.mesh.core.mesh : Mesh, makeGridPlane;
 import vibe3d.mesh.core.mesh_selsets : selSetOwnsPolygon;
 import vibe3d.editing.contracts.seltype : SelMode, SelType, currentSelType, geometryEditMode;
-import selection_command_registration : SelectionTypeDoors,
+import vibe3d.apps.desktop.selection_command_registration : SelectionTypeDoors,
     registerSelectionCommands;
 import std.algorithm : count, sort;
 import std.array : join, split;
@@ -44,7 +44,7 @@ import std.path : baseName, buildNormalizedPath, buildPath, dirName;
 import std.string : indexOf;
 import tests.unit.census_symbols : blankNonCode, registrationFamilyBytes;
 import tests.unit.live_registration_rig : LiveRegistrationRig;
-import tool : Tool;
+import vibe3d.editing.tools.interactive.tool : Tool;
 
 private enum repoRoot = buildNormalizedPath(dirName(__FILE_FULL_PATH__),
     "..", "..", "..", "..");

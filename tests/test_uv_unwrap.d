@@ -32,13 +32,13 @@ import std.json      : parseJSON, JSONValue;
 import std.algorithm : canFind;
 
 import vibe3d.mesh.core.mesh          : Mesh, MeshMap, MapDomain, kUvMapName, makeCube;
-import math          : Vec3;
+import vibe3d.util.math.math          : Vec3;
 import vibe3d.viewport.camera.view          : View;
 import vibe3d.editing.contracts.editmode      : EditMode;
 import vibe3d.mesh.snapshot.snapshot      : MeshSnapshot;
 import vibe3d.mesh.ops.uv_project    : UvProjMode, UvProjAxis, projectUv;
 import vibe3d.mesh.ops.uv_unwrap     : uvUnwrap, uvDirichletEnergy, uvAngularDistortion;
-import commands.mesh.uv_unwrap : UvUnwrap;
+import vibe3d.editing.commands.editor.commands.mesh.uv_unwrap : UvUnwrap;
 import std.net.curl  : post, get;
 
 void main() {}

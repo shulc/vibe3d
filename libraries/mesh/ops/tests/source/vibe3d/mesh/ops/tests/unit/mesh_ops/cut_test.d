@@ -9,7 +9,7 @@ import vibe3d.util.math.math;
 import std.math : abs;
 import vibe3d.mesh.ops.mesh_ops.cut;
 import vibe3d.mesh.edit_log.mesh_edit_delta : MeshEditDelta, MeshEditScope, MeshOpEntry;
-import http_json : meshPlanesJson;   // task 1903 L2: the plane-cut round-trip
+import vibe3d.runtime.application_core.http_json : meshPlanesJson;   // task 1903 L2: the plane-cut round-trip
 
 // Task 1903 Stage E3: every entry point of this family is a free function over
 // `ref MeshEditBatch` now, so a test cannot call one on a bare `Mesh` — that is

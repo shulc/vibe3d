@@ -18,23 +18,23 @@ import std.json : JSONType, JSONValue, parseJSON;
 import std.path : baseName, buildPath, dirName;
 import std.process : thisProcessID;
 
-import command : Command;
-import command_args : bindArgs;
-import command_history : RecordMode;
-import commands.file.load : FileLoad;
-import commands.file.save : FileSave;
+import vibe3d.editing.commands.runtime.command : Command;
+import vibe3d.editing.commands.runtime.command_args : bindArgs;
+import vibe3d.editing.commands.runtime.command_history : RecordMode;
+import vibe3d.apps.desktop.commands.file.load : FileLoad;
+import vibe3d.apps.desktop.commands.file.save : FileSave;
 import vibe3d.documents.model.document : ItemKind, Layer;
-import file_io_registration : registerFileIoCommands;
-import guarded_action_controller;
-import io.browser_pick_resume;
-import io.file_dialog : selectBrowserBackendForTest;
+import vibe3d.apps.desktop.file_io_registration : registerFileIoCommands;
+import vibe3d.apps.desktop.guarded_action_controller;
+import vibe3d.platform.file.io.browser_pick_resume;
+import vibe3d.platform.file.io.file_dialog : selectBrowserBackendForTest;
 import vibe3d.documents.image_codec.io.image_decode : DecodedImage, imageDecode;
-import item_command_registration : ItemLifecycleDoors, registerItemCommands;
-import live_registration_roles : LiveSessionRole, LiveView, LiveViewModeRole;
+import vibe3d.apps.desktop.item_command_registration : ItemLifecycleDoors, registerItemCommands;
+import vibe3d.runtime.application_core.live_registration_roles : LiveSessionRole, LiveView, LiveViewModeRole;
 import vibe3d.mesh.core.mesh : makeCube;
-import registry : Registry;
-import session_owner : Session;
-import ui.discard_guard : GuardAnswer, GuardRecord, UiRunOutcome;
+import vibe3d.editing.tools.interactive.registry : Registry;
+import vibe3d.runtime.application_core.session_owner : Session;
+import vibe3d.ui.editor.ui.discard_guard : GuardAnswer, GuardRecord, UiRunOutcome;
 import vibe3d.viewport.camera.view : View;
 
 private enum repoRoot = dirName(dirName(dirName(__FILE_FULL_PATH__)));
@@ -57,7 +57,7 @@ private Layer[] imagesOf(Session* session) {
 // (1) Fixture oracle.
 // ---------------------------------------------------------------------------
 unittest {
-    import io.doc_state : clearCurrentDoc, requestDocRebaseline;
+    import vibe3d.runtime.application_core.io.doc_state : clearCurrentDoc, requestDocRebaseline;
 
     // magenta8.png: 8x8, every pixel (255,0,255,255) — what cell I3 counts.
     {
@@ -157,7 +157,7 @@ unittest {
 // then resumed with the pick's path, replacing the item its `index` named.
 // ---------------------------------------------------------------------------
 unittest {
-    import io.doc_state : clearCurrentDoc;
+    import vibe3d.runtime.application_core.io.doc_state : clearCurrentDoc;
 
     const root = freshDir("replace");
     setWorkRootForTest(root);
@@ -181,7 +181,7 @@ unittest {
     // A loaded image to replace, loaded on the desktop path from a real file.
     const src = buildPath(root, "src");
     mkdirRecurse(src);
-    import io.image_path : writeTestBmp;
+    import vibe3d.documents.io.io.image_path : writeTestBmp;
     writeTestBmp(buildPath(src, "first.bmp"), 3, 2);
     auto ld = reg.makeCommand("image.load");
     auto loadArgs = JSONValue(["path": JSONValue(buildPath(src, "first.bmp"))]);

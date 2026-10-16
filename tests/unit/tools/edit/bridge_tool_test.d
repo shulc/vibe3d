@@ -7,18 +7,18 @@ import vibe3d.mesh.edit_replay.mesh_edit_replay : apply, revert;
 import bindbc.opengl;
 import bindbc.sdl;
 import vibe3d.editing.pipeline.contracts.operator : VectorStack;
-import tool;
+import vibe3d.editing.tools.interactive.tool;
 import vibe3d.mesh.core.mesh;
-import math;
+import vibe3d.util.math.math;
 import vibe3d.editing.contracts.editmode : EditMode;
 import vibe3d.editing.params.params : Param;
-import command_history : CommandHistory;
-import commands.mesh.session_edit : MeshSessionEdit;
+import vibe3d.editing.commands.runtime.command_history : CommandHistory;
+import vibe3d.editing.commands.editor.commands.mesh.session_edit : MeshSessionEdit;
 import vibe3d.mesh.snapshot.snapshot : MeshSnapshot;
-import shader : Shader, LitShader, drawLitPreview;
+import vibe3d.viewport.gpu.shader : Shader, LitShader, drawLitPreview;
 import std.json : JSONValue, JSONType;
 import std.conv : to;
-import tools.edit.bridge_tool;
+import vibe3d.editing.tools.interactive.tools.edit.bridge_tool;
 import tests.unit.fixtures : findEdge;
 
 unittest { // Edge mode: remove=true is a safe no-op when the loop bounds
@@ -150,10 +150,10 @@ unittest { // Edge mode: mixed open+closed selection is a safe no-op
 }
 
 unittest {
-    import commands.tool.attr : ToolAttrCommand;
-    import commands.tool.host : ToolHost;
+    import vibe3d.editing.tools.interactive.commands.tool.attr : ToolAttrCommand;
+    import vibe3d.editing.tools.interactive.commands.tool.host : ToolHost;
     import vibe3d.editing.params.params : injectParamsInto;
-    import edit_session : EditSession;
+    import vibe3d.editing.tools.interactive.edit_session : EditSession;
     import vibe3d.viewport.camera.view : View;
     Mesh m; View v;
     Tool t = new BridgeTool(null, null, null, null);
@@ -270,7 +270,7 @@ import tests.unit.census_symbols : readText = wave15ReadText;
 }
 
 unittest {
-    import mesh_gpu : GpuMesh;
+    import vibe3d.viewport.gpu.mesh_gpu : GpuMesh;
     Mesh m;
     foreach (p; [Vec3(0,0,0), Vec3(1,0,0), Vec3(1,1,0),
                  Vec3(0,0,1), Vec3(1,0,1), Vec3(1,1,1)]) m.addVertex(p);
@@ -313,10 +313,10 @@ unittest {
 
 unittest { // Prepared result metadata publishes only with its owning commit.
     import vibe3d.documents.model.document : Layer;
-    import mesh_gpu : GpuMesh, GpuUploadOwner, GpuResourceOwner;
-    import prepared_record_context : PreparedRecordContext;
-    import prepared_bridge_activation : PreparedBridgeDeactivateOwner;
-    import record_observer_hub : RecordObserverHub;
+    import vibe3d.viewport.gpu.mesh_gpu : GpuMesh, GpuUploadOwner, GpuResourceOwner;
+    import vibe3d.editing.tools.interactive.prepared_record_context : PreparedRecordContext;
+    import vibe3d.editing.tools.interactive.prepared_bridge_activation : PreparedBridgeDeactivateOwner;
+    import vibe3d.editing.commands.runtime.record_observer_hub : RecordObserverHub;
     import vibe3d.editing.params.params : injectParamsInto;
     import vibe3d.viewport.camera.view : View;
     import vibe3d.mesh.ops.mesh_ops.bridge : kBridgeEditScope;
@@ -418,9 +418,9 @@ unittest { // Prepared result metadata publishes only with its owning commit.
 }
 
 unittest { // K3 typed guard, cached reason reset and inherited target precedence.
-    import command : g_editTargetResolver, kNoEditTargetReason;
-    import commands.tool.bridge_headless : BridgeHeadlessCommand;
-    import mesh_gpu : GpuMesh;
+    import vibe3d.editing.commands.runtime.command : g_editTargetResolver, kNoEditTargetReason;
+    import vibe3d.editing.tools.interactive.commands.tool.bridge_headless : BridgeHeadlessCommand;
+    import vibe3d.viewport.gpu.mesh_gpu : GpuMesh;
     import vibe3d.viewport.camera.view : View;
     Mesh m;
     foreach (p; [Vec3(0,0,0), Vec3(1,0,0), Vec3(1,1,0),

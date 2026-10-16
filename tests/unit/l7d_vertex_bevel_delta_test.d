@@ -18,7 +18,7 @@ import std.conv   : to;
 import std.format : format;
 
 import vibe3d.mesh.change.change_bus : changeBus;
-import command;
+import vibe3d.editing.commands.runtime.command;
 import vibe3d.mesh.core.mesh;
 import vibe3d.mesh.edit_log.mesh_edit_delta : MeshEditDelta, MeshOpEntry;
 import vibe3d.viewport.camera.view;
@@ -26,7 +26,7 @@ import vibe3d.editing.contracts.editmode;
 
 import tests.unit.fixtures : makeTaggedGridFull;
 import tests.unit.undo_parity_l0_test : setF;
-import commands.mesh.vertex_bevel : MeshVertexBevel;
+import vibe3d.editing.commands.editor.commands.mesh.vertex_bevel : MeshVertexBevel;
 
 private Mesh* stand()
 {

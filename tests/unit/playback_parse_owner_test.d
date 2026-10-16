@@ -5,8 +5,8 @@ import core.thread : Thread;
 import core.time : Duration, MonoTime, msecs, seconds;
 import vibe3d.platform.input.eventlog : clearEventPlayerControlsForTest,
     setEventPlayerClockForTest;
-import http_server : HttpResponse, HttpServer, InProcessHttpTransport;
-import playback_controller : PlaybackAcceptOutcome, PlaybackController;
+import vibe3d.runtime.http.http_server : HttpResponse, HttpServer, InProcessHttpTransport;
+import vibe3d.runtime.http.playback_controller : PlaybackAcceptOutcome, PlaybackController;
 import std.array : join;
 import std.file : readText;
 import std.path : buildPath, dirName;

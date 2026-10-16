@@ -3,7 +3,7 @@ module tests.unit.commands.tool.tool_host_read_view_test;
 
 import tests.unit.census_symbols : exists = wave15Exists;
 
-import commands.tool.host : ToolHost, ToolHostReadView;
+import vibe3d.editing.tools.interactive.commands.tool.host : ToolHost, ToolHostReadView;
 import core.exception : AssertError;
 import std.algorithm : count, sort;
 import std.array : join;
@@ -325,8 +325,8 @@ import tests.unit.census_symbols : exists = wave15Exists;
         ~ bypassFiles.join(", "));
     // A string mixin hides an accessor from the token counts above, so the
     // module's own member set is pinned by the compiler, not by the text.
-    static import commands.tool.host;
-    static assert([__traits(allMembers, commands.tool.host)]
+    static import vibe3d.editing.tools.interactive.commands.tool.host;
+    static assert([__traits(allMembers, vibe3d.editing.tools.interactive.commands.tool.host)]
         == ["object", "ToolHost", "ToolHostReadView"],
         "6350 V5 commands.tool.host gained a member beside the view");
 }

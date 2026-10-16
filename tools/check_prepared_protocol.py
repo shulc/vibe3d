@@ -1323,6 +1323,11 @@ def mutation_rejected(edit, expected_message, expected=WRITER_MANIFEST, inspect=
         # Projected fixture sources retain D1's original import identities;
         # their recipes must select that same state (math is already qualified).
         from census_contracts import _WAVE19_OWNERS
+        root_recipe = json.loads((ROOT / "dub.json").read_text())
+        root_recipe["sourcePaths"] = ["source"]
+        del root_recipe["importPaths"]
+        root_recipe["mainSourceFile"] = "source/app.d"
+        (mutant_root / "dub.json").write_text(json.dumps(root_recipe))
         for owner, old_root, new_root in _WAVE19_OWNERS:
             selected = next(ROOT / relative / "dub.json"
                             for relative in (old_root, new_root)
@@ -1335,15 +1340,16 @@ def mutation_rejected(edit, expected_message, expected=WRITER_MANIFEST, inspect=
                 recipe["name"] = "vibe3d-" + owner
             destination.write_text(json.dumps(recipe))
         def copy_current(source, destination):
-            from census_contracts import _wave19_import_original
-            destination.write_text(_wave19_import_original(source, source.read_text(), ROOT))
+            destination.write_text(read_source_text(source, root=ROOT))
         for path in logical_source_paths(ROOT / "source/tools", "*.d"):
             destination = mutant_root / path.relative_to(ROOT)
             destination.parent.mkdir(parents=True, exist_ok=True)
             destination.write_text(read_source_text(path))
         for relative in ("packages/tool-state/source/tools", "packages/transform-ops/source/tools",
                          "packages/creation-ops/source/tools", "packages/alignment-ops/source/tools"):
-            for source in (ROOT / relative).rglob("*.d"):
+            for source in logical_source_paths((ROOT / relative).parent, "*.d", root=ROOT):
+                if not source.is_relative_to(ROOT / relative):
+                    continue
                 destination = mutant_root / source.relative_to(ROOT)
                 destination.parent.mkdir(parents=True, exist_ok=True)
                 copy_current(source, destination)
@@ -1359,6 +1365,12 @@ def mutation_rejected(edit, expected_message, expected=WRITER_MANIFEST, inspect=
         (mutant_root / transition_relative.parent).mkdir(parents=True, exist_ok=True)
         (mutant_root / transition_relative).write_text(read_source_text(transition_path))
         copy_current(ROOT / "source/app.d", mutant_root / "source/app.d")
+        # Wave19: strict raw identity reads need these three complete backings.
+        for relative in ("packages/command-runtime/source/command.d",
+                         "packages/editor-ui/source/forms_render.d", "source/editor_app.d"):
+            destination = mutant_root / relative
+            destination.parent.mkdir(parents=True, exist_ok=True)
+            copy_current(ROOT / relative, destination)
         (mutant_root / "source/commands/tool").mkdir(parents=True)
         (mutant_root / "source/commands/tool/set.d").write_text(
             read_source_text(ROOT / "source/commands/tool/set.d"))

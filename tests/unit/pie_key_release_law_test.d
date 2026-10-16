@@ -1,6 +1,6 @@
 module tests.unit.pie_key_release_law_test;
 
-import pie_state : PieKeyUp, pieKeyUpEffect;
+import vibe3d.ui.editor.pie_state : PieKeyUp, pieKeyUpEffect;
 
 unittest { // U2a: taps through the exact 100 ms boundary stay open
     assert(pieKeyUpEffect(1000, 1000) == PieKeyUp.stay);

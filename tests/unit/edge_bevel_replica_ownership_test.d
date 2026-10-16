@@ -4,19 +4,19 @@ module tests.unit.edge_bevel_replica_ownership_test;
 
 import bindbc.opengl;
 import bindbc.sdl;
-import display_state : DrawPlan;
+import vibe3d.viewport.display_policy.display_state : DrawPlan;
 import vibe3d.editing.contracts.editmode : EditMode;
 import vibe3d.platform.input.eventlog : parkOverrideMouse, setOverrideMouse;
-import handler : CubicArrow, gizmoPixelSize, gizmoBoxHalfPx, GIZMO_ALPHA_ARM,
+import vibe3d.editing.tools.interactive.handler : CubicArrow, gizmoPixelSize, gizmoBoxHalfPx, GIZMO_ALPHA_ARM,
     GIZMO_STROKE_SCALE_SHAFT_PX, HandleState, getGizmoPixels, setGizmoPixels;
-import math : Vec3, lookAt, orthographicMatrix;
+import vibe3d.util.math.math : Vec3, lookAt, orthographicMatrix;
 import vibe3d.util.spatial.spatial : Viewport, isOrtho, projectToWindowFull;
 import vibe3d.mesh.core.mesh : Mesh, edgeKey;
-import mesh_gpu : GpuMesh;
+import vibe3d.viewport.gpu.mesh_gpu : GpuMesh;
 import vibe3d.editing.pipeline.contracts.operator : VectorStack;
-import overlay_space : OverlaySpace;
+import vibe3d.editing.tools.interactive.overlay_space : OverlaySpace;
 import vibe3d.util.profiling.perf_probe : g_fc, DrawPass;
-import shader : LitShader, Shader;
+import vibe3d.viewport.gpu.shader : LitShader, Shader;
 import std.conv : to;
 
 import tests.unit.census_symbols : readText = wave15ReadText;
@@ -28,11 +28,11 @@ import std.process : environment;
 import std.string : indexOf;
 import tests.unit.census_symbols : blankNonCode, countOccurrences,
     enclosingSymbols, lineOf, symbolAt, symbolTokenHits;
-import tool : Tool;
+import vibe3d.editing.tools.interactive.tool : Tool;
 import vibe3d.editing.pipeline.contracts.toolpipe.packets : SubjectPacket;
-import tools.edit.edge_bevel : EdgeBevelTool, EdgeBevelState, EdgeBevelProfile;
-import ui.viewport_render : ToolOverlayInputs, ViewportSceneRenderer;
-import viewport_overlay_mode : OverlayMode;
+import vibe3d.editing.tools.interactive.tools.edit.edge_bevel : EdgeBevelTool, EdgeBevelState, EdgeBevelProfile;
+import vibe3d.ui.editor.ui.viewport_render : ToolOverlayInputs, ViewportSceneRenderer;
+import vibe3d.viewport.display_policy.viewport_overlay_mode : OverlayMode;
 
 private immutable float[16] kView = [
      0, 0,  1, 0,
@@ -934,7 +934,7 @@ private void cellCapturedPreparedBasis(ViewportSceneRenderer renderer, Shader sh
     auto width = cast(CubicArrow)parts[0].h; auto miter = cast(CubicArrow)parts[1].h;
     assert(width !is null && miter !is null,
         "CUBE REGISTRATION: both picked parts reuse Scale CubicArrow");
-    import viewport_scheme : axisColor;
+    import vibe3d.viewport.display_policy.viewport_scheme : axisColor;
     assert(width.color == axisColor(2) && miter.color == axisColor(0),
         "CUBE COLORS: blue Width and red Mitering");
     const half = gizmoPixelSize(base, vp, gizmoBoxHalfPx());

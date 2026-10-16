@@ -36,7 +36,7 @@
 import vibe3d.mesh.core.mesh;
 import vibe3d.viewport.camera.view;
 import vibe3d.editing.contracts.editmode;
-import commands.select.loop : SelectLoop;
+import vibe3d.editing.commands.editor.commands.select.loop : SelectLoop;
 
 import std.algorithm : sort, canFind;
 import std.format    : format;

@@ -7,7 +7,7 @@ import bindbc.opengl : GLboolean, GLsizei, GLuint, GL_FALSE, GL_TRUE,
     glDeleteBuffers, glDeleteVertexArrays, glGenBuffers, glGenVertexArrays,
     glIsBuffer, glIsVertexArray;
 import vibe3d.mesh.core.mesh : Mesh, makeCube;
-import mesh_gpu : GpuCreateOwner, GpuCreateUploadOwner, GpuMesh,
+import vibe3d.viewport.gpu.mesh_gpu : GpuCreateOwner, GpuCreateUploadOwner, GpuMesh,
     GpuResourceOwner, PreparedGpuResourceToken, ValidatedGpuResourceToken;
 import std.file : readText;
 import std.format : format;

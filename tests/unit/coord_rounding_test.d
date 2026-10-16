@@ -4,7 +4,7 @@
 module tests.unit.coord_rounding_test;
 
 
-import coord_rounding;
+import vibe3d.editing.tools.interactive.coord_rounding;
 
 unittest {  // every enum value round-trips through its wire name
     foreach (m; [CoordinateRounding.None,   CoordinateRounding.Normal,

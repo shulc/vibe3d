@@ -6,12 +6,12 @@ import std.string : splitLines;
 
 import vibe3d.editing.interaction.data.ai.interaction : AiAdvisorDecision, AiCandidate, AiCandidateKind,
     AiInteractionContext, AiIntent;
-import ai.interaction_log : makeAiInteractionLogRecord;
-import ai.ranker_schema : aiRankerCandidateFeatureNames,
+import vibe3d.runtime.ai_advisor.ai.interaction_log : makeAiInteractionLogRecord;
+import vibe3d.runtime.ai_advisor.ai.ranker_schema : aiRankerCandidateFeatureNames,
     aiRankerContextFeatureNames, aiRankerDefaultMaxCandidates,
     aiRankerFeatureSchemaVersion;
-import ai.synthetic_dataset : makeAiSyntheticInteractionDataset;
-import ai.training_dataset : aiTrainingDatasetExporterVersion,
+import vibe3d.runtime.ai_advisor.ai.synthetic_dataset : makeAiSyntheticInteractionDataset;
+import vibe3d.runtime.ai_advisor.ai.training_dataset : aiTrainingDatasetExporterVersion,
     aiTrainingDatasetSchemaVersion, exportAiSyntheticTrainingDatasetJsonl,
     exportAiTrainingDatasetJsonl;
 

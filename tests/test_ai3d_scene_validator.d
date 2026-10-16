@@ -1,6 +1,6 @@
-import ai3d.scene_validator;
-import io.scene_ir;
-import math;
+import vibe3d.runtime.ai3d.ai3d.scene_validator;
+import vibe3d.documents.interchange.io.scene_ir;
+import vibe3d.util.math.math;
 
 ImportedPart triPart() {
     ImportedPart p;

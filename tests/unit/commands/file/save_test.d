@@ -6,20 +6,20 @@ module tests.unit.commands.file.save_test;
 import std.path : extension;
 import std.uni  : toLower;
 import nfde;
-import command;
+import vibe3d.editing.commands.runtime.command;
 import vibe3d.mesh.core.mesh;
 import vibe3d.viewport.camera.view;
 import vibe3d.editing.contracts.editmode;
 import vibe3d.documents.model.document : Document;
-import io.scene_ir : flattenDocument;
-import io.lwo_export : exportLwoDocument;
-import io.scene_export : exportViaAssimp, exportDocumentViaAssimp;
-import io.native : writeV3d;
-import io.formats;
-import io.doc_state : currentDocPath, hasCurrentDoc, setCurrentDocPath, requestDocRebaseline;
-import io.assimp_runtime : isAssimpAvailable;
-import prefs : g_prefs, prefsNoteRecentFile, prefsNoteLastDir;
-import commands.file.save;
+import vibe3d.documents.interchange.io.scene_ir : flattenDocument;
+import vibe3d.documents.interchange.io.lwo_export : exportLwoDocument;
+import vibe3d.documents.interchange.io.scene_export : exportViaAssimp, exportDocumentViaAssimp;
+import vibe3d.documents.io.io.native : writeV3d;
+import vibe3d.documents.interchange.io.formats;
+import vibe3d.runtime.application_core.io.doc_state : currentDocPath, hasCurrentDoc, setCurrentDocPath, requestDocRebaseline;
+import vibe3d.documents.interchange.io.assimp_runtime : isAssimpAvailable;
+import vibe3d.apps.desktop.prefs : g_prefs, prefsNoteRecentFile, prefsNoteLastDir;
+import vibe3d.apps.desktop.commands.file.save;
 import std.conv : to;
 
 // ---------------------------------------------------------------------------
@@ -36,7 +36,7 @@ private string browserSaveRoot(string tag) {
     import std.format : format;
     import std.path : buildPath;
     import std.process : thisProcessID;
-    import io.browser_pick_resume : setWorkRootForTest;
+    import vibe3d.platform.file.io.browser_pick_resume : setWorkRootForTest;
     auto root = buildPath(tempDir(), format("vibe3d_7400_save_%s_%d", tag, thisProcessID()));
     if (exists(root)) rmdirRecurse(root);
     mkdirRecurse(root);
@@ -46,18 +46,18 @@ private string browserSaveRoot(string tag) {
 
 private void dropBrowserSaveRoot(string root) {
     import std.file : exists, rmdirRecurse;
-    import io.browser_pick_resume : setWorkRootForTest;
+    import vibe3d.platform.file.io.browser_pick_resume : setWorkRootForTest;
     setWorkRootForTest(null);
     if (exists(root)) rmdirRecurse(root);
 }
 
 // R10b — an untitled browser save creates `<root>/untitled/` and writes there.
 unittest {
-    import command : g_testMode;
+    import vibe3d.editing.commands.runtime.command : g_testMode;
     import std.file : exists;
     import std.path : buildPath;
-    import io.doc_state : clearCurrentDoc;
-    import io.file_dialog : PickOutcome, pickSavePath, selectBrowserBackendForTest,
+    import vibe3d.runtime.application_core.io.doc_state : clearCurrentDoc;
+    import vibe3d.platform.file.io.file_dialog : PickOutcome, pickSavePath, selectBrowserBackendForTest,
                             setDeliverSavedFileForTest;
     import vibe3d.mesh.core.mesh : makeCube;
 
@@ -95,7 +95,7 @@ unittest {
     assert(currentDocPath() == target, "R10b: it becomes the current document");
 
     // Save As with an open document writes beside it (its directory is made).
-    import io.doc_state : setCurrentDocPath;
+    import vibe3d.runtime.application_core.io.doc_state : setCurrentDocPath;
     const beside = buildPath(root, "7", "scene.v3d");
     setCurrentDocPath(beside);
     auto saveAs = new FileSave(doc.activeMesh(), v, EditMode.Vertices, &doc);
@@ -109,9 +109,9 @@ unittest {
     import std.file : write, exists;
     import std.path : buildPath;
     import std.algorithm : canFind;
-    import io.doc_state : clearCurrentDoc;
-    import io.file_dialog : selectBrowserBackendForTest, setDeliverSavedFileForTest;
-    import io.browser_pick_resume : setWorkRootForTest;
+    import vibe3d.runtime.application_core.io.doc_state : clearCurrentDoc;
+    import vibe3d.platform.file.io.file_dialog : selectBrowserBackendForTest, setDeliverSavedFileForTest;
+    import vibe3d.platform.file.io.browser_pick_resume : setWorkRootForTest;
     import vibe3d.mesh.core.mesh : makeCube;
 
     const root = browserSaveRoot("r10c");
@@ -146,8 +146,8 @@ unittest {
 unittest {
     import std.file : exists, read;
     import std.path : buildPath;
-    import io.doc_state : clearCurrentDoc, docDirty, syncDocRevision;
-    import io.file_dialog : selectBrowserBackendForTest, setDeliverSavedFileForTest;
+    import vibe3d.runtime.application_core.io.doc_state : clearCurrentDoc, docDirty, syncDocRevision;
+    import vibe3d.platform.file.io.file_dialog : selectBrowserBackendForTest, setDeliverSavedFileForTest;
     import vibe3d.mesh.core.mesh : makeCube;
 
     const root = browserSaveRoot("r9");
@@ -208,8 +208,8 @@ unittest {
 unittest {
     import std.file : read, mkdirRecurse;
     import std.path : buildPath, extension;
-    import io.doc_state : clearCurrentDoc;
-    import io.file_dialog : setDeliverSavedFileForTest;
+    import vibe3d.runtime.application_core.io.doc_state : clearCurrentDoc;
+    import vibe3d.platform.file.io.file_dialog : setDeliverSavedFileForTest;
     import vibe3d.mesh.core.mesh : makeCube;
 
     const root = browserSaveRoot("r9b");
@@ -269,7 +269,7 @@ unittest {
     import vibe3d.mesh.core.mesh        : makeCube;
     import vibe3d.documents.model.document     : Layer, ItemKind;
     import vibe3d.viewport.camera.view         : View;
-    import io.doc_state : syncDocRevision, docDirty, clearCurrentDoc,
+    import vibe3d.runtime.application_core.io.doc_state : syncDocRevision, docDirty, clearCurrentDoc,
                           requestDocRebaseline;
 
     // Isolate from whatever revision state an earlier module's unittest (or

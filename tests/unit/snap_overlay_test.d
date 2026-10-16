@@ -21,21 +21,21 @@ import ImGui = d_imgui;
 import d_imgui.imgui_h : ImVec2;
 
 import vibe3d.platform.input.held_gesture_buttons : g_heldGestureButtons;
-import math : Vec3;
+import vibe3d.util.math.math : Vec3;
 import vibe3d.util.spatial.spatial : Viewport, projectToWindowFull;
 import vibe3d.mesh.core.mesh        : Mesh;
-import snap        : SnapResult;
-import snap_render : SnapMark, drawSnapOverlay;
+import vibe3d.editing.selection.query.snap        : SnapResult;
+import vibe3d.editing.tools.interactive.snap_render : SnapMark, drawSnapOverlay;
 import vibe3d.editing.pipeline.contracts.toolpipe.packets : SnapType;
 import vibe3d.viewport.camera.view        : View;
 import tests.unit.census_symbols : blankNonCode, blankUnittestBodies, countIdent;
 import tests.unit.ui.headless_panel : openPanel;
 
-import tools.transform.transform : TransformTool;
-import tools.create.box : BoxTool;
-import tools.create.primitive_create_tool : PrimitiveCreateTool;
-import tools.create.vertex_place : VertexTool;
-import tools.create.pen : PenTool;
+import vibe3d.editing.tools.interactive.tools.transform.transform : TransformTool;
+import vibe3d.editing.tools.interactive.tools.create.box : BoxTool;
+import vibe3d.editing.tools.interactive.tools.create.primitive_create_tool : PrimitiveCreateTool;
+import vibe3d.editing.tools.interactive.tools.create.vertex_place : VertexTool;
+import vibe3d.editing.tools.interactive.tools.create.pen : PenTool;
 
 private enum repoRoot = dirName(dirName(dirName(__FILE_FULL_PATH__)));
 

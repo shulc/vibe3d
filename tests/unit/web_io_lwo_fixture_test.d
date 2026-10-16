@@ -16,19 +16,19 @@ import std.path : buildPath, dirName;
 import std.process : thisProcessID;
 import std.regex : matchFirst, regex;
 
-import commands.file.load : FileLoad;
-import commands.file.save : FileSave;
-import file_io_registration : registerFileIoCommands;
-import live_registration_roles : LiveSessionRole, LiveView, LiveViewModeRole;
+import vibe3d.apps.desktop.commands.file.load : FileLoad;
+import vibe3d.apps.desktop.commands.file.save : FileSave;
+import vibe3d.apps.desktop.file_io_registration : registerFileIoCommands;
+import vibe3d.runtime.application_core.live_registration_roles : LiveSessionRole, LiveView, LiveViewModeRole;
 import vibe3d.mesh.core.mesh : makeCube;
-import registry : Registry;
-import session_owner : Session;
+import vibe3d.editing.tools.interactive.registry : Registry;
+import vibe3d.runtime.application_core.session_owner : Session;
 import vibe3d.viewport.camera.view : View;
 
 private enum repoRoot = dirName(dirName(dirName(__FILE_FULL_PATH__)));
 
 unittest {
-    import io.doc_state : clearCurrentDoc, hasCurrentDoc, requestDocRebaseline;
+    import vibe3d.runtime.application_core.io.doc_state : clearCurrentDoc, hasCurrentDoc, requestDocRebaseline;
 
     const fixtures = buildPath(repoRoot, "tests", "fixtures", "web_io");
     const source = buildPath(fixtures, "two_parts.lwo");

@@ -81,12 +81,12 @@ module tests.unit.undo_parity_l5_test;
 import std.format : format;
 import std.json   : JSONValue, parseJSON;
 
-import command;
+import vibe3d.editing.commands.runtime.command;
 import vibe3d.mesh.core.mesh;
 import vibe3d.viewport.camera.view;
 import vibe3d.editing.contracts.editmode;
-import math      : Vec3;
-import http_json : meshPlanesJson, PlaneDumpMeta;
+import vibe3d.util.math.math      : Vec3;
+import vibe3d.runtime.application_core.http_json : meshPlanesJson, PlaneDumpMeta;
 
 import tests.unit.fixtures            : makeTaggedGridDirty;
 import tests.unit.undo_parity_l0_test : ParityCell, comparePlanes, fixturePath,
@@ -95,8 +95,8 @@ import tests.unit.undo_parity_l0_test : ParityCell, comparePlanes, fixturePath,
                                         assertExceptionTableWellFormed;
 import tests.unit.undo_parity_l3_test : checkOrderNormalisation;
 
-import commands.mesh.cleanup     : MeshCleanup;
-import commands.mesh.edge_crease : EdgeCreaseSet, EdgeCreaseClear;
+import vibe3d.editing.commands.editor.commands.mesh.cleanup     : MeshCleanup;
+import vibe3d.editing.commands.editor.commands.mesh.edge_crease : EdgeCreaseSet, EdgeCreaseClear;
 
 enum string kL5Family = "cleanup";
 enum string kL5Stand  = "makeTaggedGridDirty(3)";

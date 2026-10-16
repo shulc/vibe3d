@@ -31,13 +31,13 @@ import std.conv   : to;
 import std.net.curl : post;
 
 import vibe3d.mesh.core.mesh        : Mesh, MeshMap, MapDomain, makeCube, kUvMapName;
-import math        : Vec3;
+import vibe3d.util.math.math        : Vec3;
 import vibe3d.viewport.camera.view        : View;
 import vibe3d.editing.contracts.editmode    : EditMode;
 import vibe3d.mesh.ops.uv_island   : UvBBox, computeUvIslands, loopsBBox, kUvDegenEps;
 import vibe3d.mesh.ops.uv_transform : UvAffine, applyUvAffine;
-import commands.mesh.uv_project : UvProject;
-import commands.mesh.uv_pack    : UvFit, UvPack;
+import vibe3d.editing.commands.editor.commands.mesh.uv_project : UvProject;
+import vibe3d.editing.commands.editor.commands.mesh.uv_pack    : UvFit, UvPack;
 
 void main() {}
 

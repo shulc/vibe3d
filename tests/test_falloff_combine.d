@@ -21,14 +21,14 @@
 
 import std.math : isClose;
 
-import math : Vec3;
+import vibe3d.util.math.math : Vec3;
 import vibe3d.util.spatial.spatial : Viewport, aimSpace, ModelSpace;
-import toolpipe.pipeline : Pipeline;
-import toolpipe.stages.falloff : FalloffStage;
+import vibe3d.editing.pipeline.runtime.toolpipe.pipeline : Pipeline;
+import vibe3d.editing.pipeline.evaluation.toolpipe.stages.falloff : FalloffStage;
 import vibe3d.editing.pipeline.contracts.toolpipe.packets : FalloffPacket, FalloffType, FalloffShape, FalloffMix,
                           SubjectPacket;
 import vibe3d.editing.pipeline.contracts.operator : VectorStack;
-import falloff : evaluateFalloff;
+import vibe3d.editing.pipeline.runtime.falloff : evaluateFalloff;
 
 void main() {}
 

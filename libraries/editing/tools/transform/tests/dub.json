@@ -1,0 +1,211 @@
+{
+  "name": "vibe3d-transform-ops-tests",
+  "license": "MIT",
+  "targetType": "executable",
+  "sourcePaths": [],
+  "importPaths": [
+    "source",
+    "../source"
+  ],
+  "sourceFiles": [
+    "../source/vibe3d/editing/tools/transform/tools/transform/arcball.d",
+    "../source/vibe3d/editing/tools/transform/tools/transform/cluster_values.d",
+    "../source/vibe3d/editing/tools/transform/tools/transform/item_xform_kernels.d",
+    "../source/vibe3d/editing/tools/transform/tools/transform/morph_route.d",
+    "../source/vibe3d/editing/tools/transform/tools/transform/relocate_plane.d",
+    "../source/vibe3d/editing/tools/transform/tools/transform/scale_input.d",
+    "../source/vibe3d/editing/tools/transform/tools/transform/xform_kernels.d",
+    "source/vibe3d/editing/tools/transform/tests/unit/ortho_relocate_prior_test.d",
+    "source/vibe3d/editing/tools/transform/tests/unit/tools/transform/arcball_regression_test.d",
+    "source/vibe3d/editing/tools/transform/tests/unit/tools/transform/arcball_test.d",
+    "source/vibe3d/editing/tools/transform/tests/unit/tools/transform/item_xform_kernels_test.d",
+    "source/vibe3d/editing/tools/transform/tests/unit/tools/transform/item_xform_regression_test.d",
+    "source/vibe3d/editing/tools/transform/tests/unit/tools/transform/morph_route_test.d",
+    "source/vibe3d/editing/tools/transform/tests/unit/tools/transform/scale_input_test.d",
+    "source/vibe3d/editing/tools/transform/tests/unit/tools/transform/transform_ops_population_test.d",
+    "source/vibe3d/editing/tools/transform/tests/unit/tools/transform/xform_kernels_test.d",
+    "source/vibe3d/editing/tools/transform/tools/transform/relocate_plane_test.d"
+  ],
+  "dependencies": {
+    "vibe3d:interaction-query": {
+      "path": "../../../../.."
+    },
+    "vibe3d:math": {
+      "path": "../../../../.."
+    },
+    "vibe3d:mesh": {
+      "path": "../../../../.."
+    },
+    "vibe3d:mesh-edit-log": {
+      "path": "../../../../.."
+    },
+    "vibe3d:profiling": {
+      "path": "../../../../.."
+    },
+    "vibe3d:spatial": {
+      "path": "../../../../.."
+    },
+    "vibe3d:pipe-contracts": {
+      "path": "../../../../.."
+    },
+    "vibe3d:document-model": {
+      "path": "../../../../.."
+    },
+    "vibe3d:pipe-runtime": {
+      "path": "../../../../.."
+    }
+  },
+  "toolchainRequirements": {
+    "dmd": ">=2.111.0",
+    "ldc": ">=1.41.0"
+  },
+  "buildTypes": {
+    "profile-fp": {
+      "buildOptions": [
+        "debugMode",
+        "debugInfo",
+        "optimize"
+      ],
+      "dflags-dmd": [
+        "-gs"
+      ],
+      "dflags-ldc": [
+        "--frame-pointer=all"
+      ]
+    },
+    "perf": {
+      "buildOptions": [
+        "releaseMode",
+        "optimize",
+        "inline"
+      ],
+      "versions": [
+        "PerfProbe"
+      ]
+    },
+    "perf-count": {
+      "buildOptions": [
+        "debugMode",
+        "debugInfo"
+      ],
+      "versions": [
+        "PerfProbe"
+      ]
+    },
+    "perf-unit": {
+      "buildOptions": [
+        "debugMode",
+        "debugInfo",
+        "unittests"
+      ],
+      "versions": [
+        "PerfProbe"
+      ]
+    },
+    "check": {
+      "buildOptions": [
+        "debugMode",
+        "debugInfo"
+      ],
+      "dflags-ldc": [
+        "--boundscheck=on",
+        "--checkaction=C",
+        "--frame-pointer=all"
+      ],
+      "versions": [
+        "SanitizerSelfTest"
+      ]
+    },
+    "check-unit": {
+      "buildOptions": [
+        "debugMode",
+        "debugInfo",
+        "unittests"
+      ],
+      "dflags-ldc": [
+        "--boundscheck=on",
+        "--frame-pointer=all"
+      ],
+      "versions": [
+        "SanitizerSelfTest"
+      ]
+    },
+    "check-release": {
+      "buildOptions": [
+        "releaseMode",
+        "optimize",
+        "inline",
+        "debugInfo"
+      ],
+      "dflags-ldc": [
+        "--boundscheck=on",
+        "--frame-pointer=all"
+      ],
+      "versions": [
+        "SanitizerSelfTest"
+      ]
+    },
+    "sanitize": {
+      "buildOptions": [
+        "debugMode",
+        "debugInfo"
+      ],
+      "dflags-ldc": [
+        "--fsanitize=address",
+        "--fsanitize-address-use-after-return=never",
+        "--checkaction=C",
+        "--frame-pointer=all"
+      ],
+      "versions": [
+        "SanitizerSelfTest"
+      ]
+    },
+    "sanitize-unit": {
+      "buildOptions": [
+        "debugMode",
+        "debugInfo",
+        "unittests"
+      ],
+      "dflags-ldc": [
+        "--fsanitize=address",
+        "--fsanitize-address-use-after-return=never",
+        "--frame-pointer=all"
+      ],
+      "versions": [
+        "SanitizerSelfTest"
+      ]
+    },
+    "tsan": {
+      "buildOptions": [
+        "debugMode",
+        "debugInfo"
+      ],
+      "dflags-ldc": [
+        "--fsanitize=thread",
+        "--enable-asserts=false",
+        "--frame-pointer=all"
+      ],
+      "versions": [
+        "SanitizerSelfTest",
+        "SanitizerThreadPreinit"
+      ]
+    }
+  },
+  "configurations": [
+    {
+      "name": "algorithm",
+      "subConfigurations": {
+        "vibe3d:interaction-query": "isolated-tests",
+        "vibe3d:math": "isolated-tests",
+        "vibe3d:mesh": "isolated-tests",
+        "vibe3d:mesh-edit-log": "isolated-tests",
+        "vibe3d:profiling": "isolated-tests",
+        "vibe3d:spatial": "isolated-tests",
+        "vibe3d:pipe-contracts": "isolated-tests",
+        "vibe3d:document-model": "isolated-tests",
+        "vibe3d:pipe-runtime": "isolated-tests"
+      }
+    }
+  ],
+  "dflags": []
+}

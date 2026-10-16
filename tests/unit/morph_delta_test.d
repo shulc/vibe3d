@@ -56,14 +56,14 @@ import std.json   : parseJSON, JSONValue;
 import vibe3d.mesh.core.mesh;
 import vibe3d.viewport.camera.view;
 import vibe3d.editing.contracts.editmode;
-import math       : Vec3;
+import vibe3d.util.math.math       : Vec3;
 import vibe3d.mesh.change.change_bus : changeBus;
-import http_json  : meshPlanesJson, PlaneDumpMeta;
+import vibe3d.runtime.application_core.http_json  : meshPlanesJson, PlaneDumpMeta;
 import vibe3d.mesh.edit_log.mesh_edit_delta : MeshOpEntry;
 import vibe3d.mesh.core.mesh_morph : morphApply;
-import morph_target;
+import vibe3d.runtime.application_core.morph_target;
 
-import commands.mesh.morph : MorphCreate, MorphRemove, MorphRename,
+import vibe3d.editing.commands.editor.commands.mesh.morph : MorphCreate, MorphRemove, MorphRename,
                              MorphSet, MorphClear, MorphApplyCmd;
 import tests.unit.fixtures : makeTaggedGridMaps;
 import tests.unit.undo_parity_l0_test : comparePlanes, setS, setI, setF;

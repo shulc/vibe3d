@@ -3,8 +3,8 @@
 // private symbol stayed behind -- see the task for the count.
 module tests.unit.display_state_test;
 
-public import viewport_scheme : kSchemeSolidFill;
-import display_state;
+public import vibe3d.viewport.display_policy.viewport_scheme : kSchemeSolidFill;
+import vibe3d.viewport.display_policy.display_state;
 import std.format : format;
 
 /// The shipped default differs by projection on the SURFACE axis only.
@@ -472,12 +472,12 @@ unittest {
 /// spelling) accepts every offered id and writes that style — driven through
 /// the real command with a headless ViewportManager.
 unittest {
-    import command_args : bindArgs;
-    import commands.viewport.display : ViewportDisplayStyle;
+    import vibe3d.editing.commands.runtime.command_args : bindArgs;
+    import vibe3d.apps.desktop.commands.viewport.display : ViewportDisplayStyle;
     import vibe3d.editing.contracts.editmode : EditMode;
     import vibe3d.mesh.core.mesh : makeCube;
     import std.format : format;
-    import viewport : ViewportManager;
+    import vibe3d.viewport.host.viewport : ViewportManager;
     auto vpm = new ViewportManager(0, 0, 800, 600);
     auto m = makeCube();
     size_t checked;
@@ -616,12 +616,12 @@ unittest {
 /// --test (production never writes the resolve gain) — and refuses a gain
 /// outside [0, kCompositeTestGainMax] or non-finite, writing nothing.
 unittest {
-    import command : g_testMode;
-    import command_args : bindArgs;
-    import commands.viewport.display : ViewportCompositeTestGain, kCompositeTestGainMax;
+    import vibe3d.editing.commands.runtime.command : g_testMode;
+    import vibe3d.editing.commands.runtime.command_args : bindArgs;
+    import vibe3d.apps.desktop.commands.viewport.display : ViewportCompositeTestGain, kCompositeTestGainMax;
     import vibe3d.editing.contracts.editmode : EditMode;
     import vibe3d.mesh.core.mesh : makeCube;
-    import viewport : ViewportManager;
+    import vibe3d.viewport.host.viewport : ViewportManager;
     immutable bool prior = g_testMode;
     scope (exit) g_testMode = prior;
     auto vpm = new ViewportManager(0, 0, 800, 600);

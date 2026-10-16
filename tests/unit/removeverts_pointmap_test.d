@@ -28,7 +28,7 @@ import vibe3d.mesh.edit_replay.mesh_edit_replay : apply, revert;
 import std.format : format;
 import std.math : isNaN;
 
-import math : Vec3;
+import vibe3d.util.math.math : Vec3;
 import vibe3d.mesh.core.mesh : Mesh, MeshMap, MapDomain, MapKind;
 import vibe3d.mesh.edit_log.mesh_edit_delta : MeshEditDelta, MeshEditTracker, MeshOpEntry, MeshEditScope;
 
@@ -637,8 +637,8 @@ unittest // W-7-P3-g: mesh.cleanup, one undo step, depth delta exactly one
 {
     import vibe3d.viewport.camera.view : View;
     import vibe3d.editing.contracts.editmode : EditMode;
-    import command_history : CommandHistory;
-    import commands.mesh.cleanup : MeshCleanup;
+    import vibe3d.editing.commands.runtime.command_history : CommandHistory;
+    import vibe3d.editing.commands.editor.commands.mesh.cleanup : MeshCleanup;
 
     auto m = new Mesh;
     *m = twoPointMapWeldStand();

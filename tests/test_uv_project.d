@@ -27,10 +27,10 @@ import std.json   : parseJSON, JSONType, JSONValue;
 import std.conv   : to;
 
 import vibe3d.mesh.core.mesh     : Mesh, MeshMap, MapDomain, makeCube, kUvMapName;
-import math     : Vec3;
+import vibe3d.util.math.math     : Vec3;
 import vibe3d.viewport.camera.view     : View;
 import vibe3d.editing.contracts.editmode : EditMode;
-import commands.mesh.uv_project : UvProject;
+import vibe3d.editing.commands.editor.commands.mesh.uv_project : UvProject;
 import vibe3d.mesh.ops.uv_project : UvProjMode, UvProjAxis, projectUv, dominantAxis;
 import std.net.curl : post, get;
 

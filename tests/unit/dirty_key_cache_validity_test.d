@@ -1,7 +1,7 @@
 // Retained image certification and production bypass wiring (20261690).
 module tests.unit.dirty_key_cache_validity_test;
 
-import viewport : Viewport3D, DirtyKey;
+import vibe3d.viewport.host.viewport : Viewport3D, DirtyKey;
 import tests.unit.census_symbols : blankNonCode, balancedSpan, countOccurrences;
 import std.file : readText;
 import std.path : buildPath, dirName;

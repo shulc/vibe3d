@@ -9,23 +9,23 @@ import std.algorithm : max;
 import std.format : format;
 import std.math : acos, fabs, PI;
 
-import commands.mesh.smooth : MeshSmooth;
-import commands.mesh.vertex_edit : MeshVertexEdit;
-import commands.mesh.vertex_position_result : VertexPositionResult;
-import command_history : CommandHistory;
+import vibe3d.editing.commands.editor.commands.mesh.smooth : MeshSmooth;
+import vibe3d.editing.commands.editor.commands.mesh.vertex_edit : MeshVertexEdit;
+import vibe3d.editing.commands.editor.commands.mesh.vertex_position_result : VertexPositionResult;
+import vibe3d.editing.commands.runtime.command_history : CommandHistory;
 import vibe3d.mesh.change.change_bus : MeshEditScope, changeBus;
-import display_sync : activeMeshResolver;
+import vibe3d.viewport.gpu.display_sync : activeMeshResolver;
 import vibe3d.documents.model.document : primaryModelSpaceResolver;
 import vibe3d.editing.contracts.editmode : EditMode;
-import falloff : evaluateFalloff;
-import math : Vec3, cross, dot;
+import vibe3d.editing.pipeline.runtime.falloff : evaluateFalloff;
+import vibe3d.util.math.math : Vec3, cross, dot;
 import vibe3d.util.spatial.spatial : AimViewport, ModelSpace, aimSpace, projectToWindowFull;
 import vibe3d.mesh.core.mesh : Mesh, makeCube;
 import vibe3d.editing.pipeline.contracts.operator : VectorStack;
 import vibe3d.editing.pipeline.contracts.toolpipe.packets : FalloffPacket, FalloffShape, FalloffType,
                           SubjectPacket;
 import vibe3d.viewport.camera.view : View;
-import tools.common.command_wrapper : XfrmSmoothTool;
+import vibe3d.editing.tools.interactive.tools.common.command_wrapper : XfrmSmoothTool;
 
 private Mesh openAsymmetricStand() {
     Mesh m;

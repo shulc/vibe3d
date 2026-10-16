@@ -1,0 +1,1305 @@
+/// IPR panel for vibe3d.
+///
+/// Owns the IPR ImGui controls and the per-frame orchestration:
+/// (1) syncs the persistent `Scene` IR from current vibe3d modeling state
+/// (Mesh + View), (2) hands the Scene to a `BackendBridge` which pushes
+/// the diff into whatever backend is active, (3) pulls rendered pixels
+/// and blits them as an ImGui::Image.
+///
+/// Panel knows nothing about Cycles or RPR -only about `Scene` +
+/// `BackendBridge`. The bridge is what changes when a different backend
+/// is selected (Phase 2).
+module vibe3d.apps.desktop.render.render_mvp;
+
+version (WithRender):
+
+import std.process : environment;
+import std.conv    : to;
+import std.format  : format;
+import std.stdio   : stderr;
+import std.math    : tan, atan, PI;
+import core.time   : MonoTime, dur, Duration;
+
+import bindbc.opengl;
+import ImGui = d_imgui;
+import d_imgui.imgui_h;
+
+import vibe3d.mesh.core.mesh : Mesh, Surface;
+import vibe3d.viewport.subpatch.subpatch_preview : SubpatchPreview;
+import vibe3d.viewport.camera.view : View, ProjKind;
+import vibe3d.util.math.math : Vec3;
+import vibe3d.util.spatial.spatial : Viewport;
+// Modeling-side bus constants and the watcher masks (boundary-safe: render
+// may read modeling, never the reverse).
+import vibe3d.mesh.change.change_bus : MeshChangeAll, MeshEditScope;
+import vibe3d.mesh.change.mesh_dirty : DisplayEpochMask, GeomEpochMask, TopoEpochMask;
+
+import vibe3d.render.model.render.backend;
+import vibe3d.render.model.render.scene;
+import vibe3d.render.backends.render.backend_bridge : BackendBridge;
+
+// ---------------------------------------------------------------------------
+// Diagnostics -opt-in via VIBE3D_IPR_TRACE=1.
+// ---------------------------------------------------------------------------
+
+private __gshared bool g_traceOn;
+private __gshared bool g_traceCheckedEnv;
+private void trace(string s)
+{
+    if (!g_traceCheckedEnv) {
+        g_traceOn = environment.get("VIBE3D_IPR_TRACE") !is null;
+        g_traceCheckedEnv = true;
+    }
+    if (g_traceOn) { stderr.writeln("[ipr] ", s); stderr.flush(); }
+}
+
+// ---------------------------------------------------------------------------
+// State
+// ---------------------------------------------------------------------------
+
+private enum Phase {
+    idle,        // no bridge -show "Start IPR"
+    running,     // bridge active, ticking -show "Stop IPR"
+    error,       // boot / sync failed -show "Retry"
+}
+
+private struct PanelState
+{
+    bool   panelOpen = true;
+    Phase  phase = Phase.idle;
+    string errorMsg;
+
+    BackendBridge bridge;
+    Scene         scene;
+
+    /// Config the UI is editing. Copied into the bridge on Start and on
+    /// any change while running (which triggers a `switchTo` re-init).
+    BackendConfig pendingCfg = BackendConfig("cuda");
+
+    /// Backend choice for the next IPR session: "cycles" or "rpr".
+    /// Edited via the Backend dropdown. On change, applyCfgChangeIfRunning
+    /// does a full `switchTo`. Initialized once from `VIBE3D_IPR_BACKEND`
+    /// on the first panel frame so the env override survives the UI takeover.
+    string selectedBackend = "cycles";
+    bool   selectedBackendInitialized;
+
+    // Scene-side ids (Scene's own counters, NOT backend handles).
+    // Scene-side ids. After MG4 the IPR scene may carry N meshes +
+    // N materials when the source mesh has multiple surfaces — one
+    // bucket per used `mesh.faceMaterial` index. `sceneLightId` stays
+    // singular (default scene = one sun).
+    ulong[] sceneMeshIds;
+    ulong[] sceneMaterialIds;
+    ulong   sceneLightId;
+
+    // Framebuffer / blit. Resolution is derived per-frame from the panel
+    // content region (see updateFramebufferSizeFromPanel). Defaults are
+    // for the first frame before that runs.
+    int    fbW = 512;
+    int    fbH = 384;
+    GLuint glTex;
+    int    glTexW;                   // texture dims of the last grabPixels
+    int    glTexH;                   // upload — used to letterbox the
+                                     // display while a backend resize is
+                                     // catching up (Cycles destroy+recreate
+                                     // takes ~200ms; would otherwise show
+                                     // stretching during panel-drag).
+    ulong  lastBlitVersion;          // last `bridge.frameVersion()` we uploaded
+
+    // IPR-opt 3: when bridge.tryBindGLTexture returns true, Cycles writes
+    // directly into a PBO on the device side and the backend's tick()
+    // blits PBO→glTex. We skip the CPU readback path and flip the image
+    // via UV in ImGui.Image (Cycles' PBO write is bottom-up).
+    bool   interopActive;
+    bool   interopProbed;            // probed once per session; reset on
+                                     // teardown / device switch
+
+    // Subpatch (Catmull-Clark) preview, IPR-owned. Independent of the
+    // viewport's preview so IPR can render at higher depth without
+    // tanking interactive performance.
+    SubpatchPreview iprSubpatch;
+    int             iprSubdivDepth = 3;
+
+    // Mesh-change signal (Stage 4 — change-notification bus). The IPR formerly
+    // detected mesh mutation by recomputing an O(N) FNV `vertsHash` over every
+    // vertex EVERY FRAME plus a `mutationVersion` compare, because vibe3d's
+    // mutation tracking has two intentional gaps:
+    //   - transform tools (Move/Rotate/Scale) write mesh.vertices in place
+    //     WITHOUT bumping mutationVersion (keeps symmetry pair-tables / falloff
+    //     caches stable mid-drag; mesh.d:2991-3000) — only the hash caught those.
+    //   - topology-only changes (Tab → setSubpatch, split, ...) bump
+    //     mutationVersion but leave positions untouched — only the version
+    //     caught those.
+    // The change bus delivers BOTH as flag bits, so the per-frame O(N) hash is
+    // gone. The bus subscriber (registered in initIPR) ORs Position|Geometry|
+    // Marks|Material into the two accumulators below ON THE MAIN THREAD; the
+    // debounce / apply path reads-and-clears them, also on the main thread.
+    //
+    // Two accumulators are needed because inputMoving and needsApply diff the
+    // mesh against TWO independent baselines (last-seen for debounce, applied
+    // for the worker push). A single mesh change must register in both until
+    // each is independently latched — captureLastSeen clears the first,
+    // cacheAppliedState clears the second (and, mirroring into last-seen, the
+    // first too). This reproduces exactly the old dual lastSeen/applied hash
+    // latch, with edge-accumulated flags in place of value fingerprints.
+    uint   modelChangedSinceSeen;    // for inputMoving (debounce baseline)
+    uint   modelChangedSinceApplied; // for needsApply / updateScene meshChanged
+
+    // Camera / framebuffer-size diff baselines. These are NOT mesh state, so
+    // they keep their value-compare form (unchanged by the bus).
+    // `roll` is a camera INPUT like azimuth/elevation: a bank changes the
+    // rendered image, so it has to be in the diff or the offline image keeps
+    // the pre-bank horizon until some other input happens to move.
+    float  lastSeenAzimuth = float.nan;
+    float  lastSeenElevation;
+    float  lastSeenDistance;
+    float  lastSeenRoll;
+    float  lastSeenFovY;
+    Vec3   lastSeenFocus;
+    int    lastSeenFbW;
+    int    lastSeenFbH;
+
+    float  appliedAzimuth = float.nan;
+    float  appliedElevation;
+    float  appliedDistance;
+    float  appliedRoll;
+    float  appliedFovY;
+    Vec3   appliedFocus;
+    int    appliedFbW;
+    int    appliedFbH;
+
+    MonoTime lastInputChange;
+}
+
+private __gshared PanelState g;
+
+private enum Duration restartIdleThreshold = dur!"msecs"(50);
+
+// ---------------------------------------------------------------------------
+// Public API
+// ---------------------------------------------------------------------------
+
+bool isIPRPanelOpen() { return g.panelOpen; }
+void setIPRPanelOpen(bool v) { g.panelOpen = v; }
+
+/// The change classes the IPR restarts for. Hoisted to module scope at task
+/// 1906 stage 2e so the `static assert` below can see it; the value is
+/// unchanged.
+private enum uint kRenderTriggers = MeshEditScope.Position
+                                  | MeshEditScope.Geometry   // Points | Polygons
+                                  | MeshEditScope.Marks       // Tab → subpatch
+                                  | MeshEditScope.Material;
+
+// TASK 1906 STAGE 2e, PLAN §3.5 ROW 22 — THIS ROW TAKES NO EPOCH WATCHER,
+// AND THAT IS A DECISION WITH A REASON, NOT AN OMISSION.
+//
+// Every other migrated consumer in stage 2 swapped a version counter for a
+// `mesh_dirty` epoch keyed on the SUBJECT ADDRESS. This one did not, on two
+// independent grounds, either of which is sufficient:
+//
+//   (a) NO WATCHER MASK COVERS THE TRIGGER SET. `DisplayEpochMask` omits
+//       `Marks` — exactly the Tab→subpatch flip the IPR must re-push for —
+//       while ADDING `Visibility` and `MapsDisplay`, viewport-only classes
+//       that would restart a render for nothing: one bit short of covering,
+//       and overlapping in the direction that costs. `GeomEpochMask` and
+//       `TopoEpochMask` are strict SUBSETS, dropping `Marks` AND `Material`,
+//       so an epoch on either would MISS changes the IPR must see. The
+//       relation is therefore not the same in all three directions, and the
+//       wording this note carried until the 2e review fold — "neither a
+//       subset nor a superset of any of the three" — was simply false of
+//       `GeomEpochMask`, which IS a subset. The claim that holds for all
+//       three, and the one the assert below tests, is that none of them
+//       COVERS `kRenderTriggers`. A fourth watcher is not free either: stage
+//       2d's review fold measured what an over-wide watcher costs and DELETED
+//       the any-class one it had just added. So the argument for a new
+//       watcher would have to be made in the task card, and it has not been.
+//
+//   (b) THE SHAPE IS WRONG ANYWAY. `mesh_dirty` serves consumers that COMPARE
+//       at a lazy recompute. This one REACTS: it ORs bits into two accumulators
+//       that are cleared at two different moments (`captureLastSeen` vs
+//       `cacheAppliedState`). And its subject is the FLATTENED DOCUMENT — every
+//       visible layer — not one mesh address, so a per-address table with a
+//       32-slot eviction cliff answers a question the IPR never asks.
+//
+// WHAT THE ASSERT BELOW PINS, AND WHAT IT DOES NOT — because the difference was
+// measured at the 2e review fold and it is not what this note used to claim.
+// It pins (a)'s PREMISE: widen a watcher until its mask covers the render
+// trigger set and this row's argument has expired, loudly. It does NOT pin the
+// DECISION. Delete the `changeBus.onMeshChanged` registration below, poll
+// `g_displayEpochs.epochFor` in its place, and the premise is untouched, this
+// assert still holds, and `dmd -o- -c -version=WithRender` is still exit 0 —
+// run, and nothing went red. The decision's witness cannot live in this file at
+// all: it is `version (WithRender)`, absent from the modeling build and from
+// both gate lanes, so no routine change ever compiles it. That witness is
+// `tests/unit/render_ipr_bus_witness_test.d`, a text census in the lane that
+// does run, asserting this file registers on the bus and names no epoch TABLE.
+// Keep both. They fail for different reasons and neither implies the other.
+static assert((DisplayEpochMask & kRenderTriggers) != kRenderTriggers
+           && (GeomEpochMask    & kRenderTriggers) != kRenderTriggers
+           && (TopoEpochMask    & kRenderTriggers) != kRenderTriggers,
+    "task 1906 §3.5 row 22: a mesh_dirty watcher mask now COVERS the IPR's "
+  ~ "change-trigger set. The reason this row keeps a plain bus subscription "
+  ~ "instead of an epoch key was that no mask fitted — re-make the argument "
+  ~ "in doc/bus_sync_listeners_plan.md §3.5 before deleting this assert.");
+
+/// Register the IPR's change-notification bus subscriber. Call ONCE at app
+/// startup, on the main thread, from a `version (WithRender)` block (the bus
+/// lives in modeling; this is the render side opting in — render imports
+/// modeling, never the reverse).
+///
+/// The subscriber is set-flag-only: it ORs the mesh-affecting change classes
+/// the renderer cares about (Position | Geometry | Marks | Material) into the
+/// render-side accumulators and touches NOTHING else — no mesh read/mutate, no
+/// bridge call, no re-flush. That honors the bus contract (subscribers are
+/// invalidate-only) and the render-boundary rule (render reacts to a modeling
+/// dirty-signal; it never calls back into modeling). Delivery runs on the main
+/// thread inside `changeBus.deliverMesh` — the EDIT BOUNDARY, since task 1906
+/// stage 3 took the mesh channel off the per-frame `changeBus.flush` entirely —
+/// and the accumulators are read/cleared on the main thread in tick /
+/// updateSceneFromVibe3D. Single-threaded ownership, no synchronisation needed.
+/// The practical difference for the IPR: the flags now arrive DURING the
+/// mutation rather than at the next frame boundary, so the accumulator is
+/// already set by the time the frame's tick reads it.
+void initIPR()
+{
+    import vibe3d.mesh.change.change_bus : changeBus;
+    changeBus.onMeshChanged((size_t, uint flags) {
+        const uint relevant = flags & kRenderTriggers;
+        if (relevant) {
+            g.modelChangedSinceSeen    |= relevant;
+            g.modelChangedSinceApplied |= relevant;
+        }
+    });
+}
+
+/// Draw the panel + tick the backend if running. Call once per frame
+/// after `ImGui.NewFrame`.
+void drawIPRPanel(const(Mesh)* meshSnapshot, View viewSnapshot)
+{
+    if (!g.panelOpen) return;
+
+    // Park the panel in the top-right corner on first appearance so it
+    // doesn't blanket the 3D viewport -mouse events over the panel are
+    // captured by ImGui (WantCaptureMouse) and never reach the viewport,
+    // which would block camera orbit / picking. User can move/resize.
+    {
+        auto io = ImGui.GetIO();
+        const float pad = 12.0f;
+        ImGui.SetNextWindowPos(
+            ImVec2(io.DisplaySize.x - pad, pad),
+            ImGuiCond.FirstUseEver,
+            ImVec2(1.0f, 0.0f));
+        ImGui.SetNextWindowSize(
+            ImVec2(560.0f, 600.0f),
+            ImGuiCond.FirstUseEver);
+    }
+
+    if (ImGui.Begin("IPR Preview", &g.panelOpen)) {
+        // VIBE3D_IPR_AUTOSTART=1 -diagnostic: trigger Start IPR on the
+        // first frame the panel renders. Avoids needing a manual click
+        // when smoke-testing backend boot from a shell.
+        if (g.phase == Phase.idle && !g_iprAutostartChecked) {
+            g_iprAutostartChecked = true;
+            if (environment.get("VIBE3D_IPR_AUTOSTART") !is null)
+                startIPR(meshSnapshot, viewSnapshot);
+        }
+
+        // We draw controls first, then take whatever content area is
+        // left for the image. That gives us a stable per-frame target
+        // resolution; existing inputMoving/needsApply debouncing
+        // smooths out continuous resize-drag (only resyncs when stable).
+        drawControls(meshSnapshot, viewSnapshot);
+        updateFramebufferSizeFromPanel();
+        if (g.phase == Phase.running)
+            tick(meshSnapshot, viewSnapshot);
+        drawImage();
+    }
+    ImGui.End();
+}
+
+private __gshared bool g_iprAutostartChecked;
+
+/// Match `fbW`/`fbH` to the panel's content region (image area), clamped
+/// to sane bounds. Aspect ratio left free -IPR fills whatever space is
+/// available.
+private void updateFramebufferSizeFromPanel()
+{
+    // Diagnostic: VIBE3D_IPR_FIXED_RES=320 → 320x240,  =512x442 → 512x442
+    // (explicit WxH supported). Bypasses panel-derived dynamic sizing.
+    if (auto fixed = environment.get("VIBE3D_IPR_FIXED_RES")) {
+        import std.conv : to;
+        import std.algorithm : findSplit;
+        if (auto parts = fixed.findSplit("x")) {
+            try {
+                g.fbW = parts[0].to!int;
+                g.fbH = parts[2].to!int;
+                return;
+            } catch (Exception) {}
+        }
+        try {
+            const int w = fixed.to!int;
+            g.fbW = w;
+            g.fbH = w * 3 / 4;
+            return;
+        } catch (Exception) {}
+        g.fbW = 320;
+        g.fbH = 240;
+        return;
+    }
+    auto avail = ImGui.GetContentRegionAvail();
+    int w = cast(int)avail.x;
+    int h = cast(int)avail.y;
+    if (w < 64)   w = 64;
+    if (h < 48)   h = 48;
+    if (w > 2048) w = 2048;
+    if (h > 2048) h = 2048;
+    // Round down to even so GL formats that need 2-byte alignment are happy.
+    w &= ~1;
+    h &= ~1;
+    g.fbW = w;
+    g.fbH = h;
+}
+
+/// Tear down. Safe to call multiple times. Run on app exit while the
+/// GL context is still alive (for glDeleteTextures).
+void shutdownIPR() nothrow
+{
+    teardownBridge();
+    if (g.glTex != 0) {
+        try { glDeleteTextures(1, &g.glTex); } catch (Exception) {}
+        g.glTex = 0;
+    }
+    g.phase = Phase.idle;
+}
+
+// ---------------------------------------------------------------------------
+// UI
+// ---------------------------------------------------------------------------
+
+// Flat list of (backend, device) pairs shown in the single IPR dropdown.
+// Each entry maps to a concrete `(backendName, cfg.device)` combination
+// the bridge knows how to construct. Two gating layers:
+//
+//   1. `platforms` — host OS filter. NVIDIA-only paths (CUDA, OPTIX,
+//      Auto) hide on macOS because Apple dropped CUDA; the "Auto"
+//      device-chain on macOS would degenerate to plain CPU anyway.
+//      A platform-aware filter avoids shipping dropdown entries that
+//      can't possibly succeed on the host — see
+//      doc/render_support_matrix.md for the full grid.
+//   2. `VIBE3D_RPR_ALLOW_GPU=1` env — opt-in for RPR's HIP / OpenCL
+//      device flags. Northstar's GPU init segfaults inside
+//      `adl::DeviceHIP::initialize` on NVIDIA hosts (doc/
+//      renderer_choice_plan.md Phase 0 status); a dropdown entry that
+//      kills the process is worse than no entry. AMD or HIP-on-CUDA
+//      hosts can opt in. Recoverable RPR init failures (HybridPro
+//      returning RPR_ERROR_INTERNAL on NVIDIA) fall back to CPU via
+//      RPRBackend.init's soft-fallback path.
+private enum PlatBit : uint {
+    LINUX   = 1 << 0,
+    OSX     = 1 << 1,
+    WIN     = 1 << 2,
+    ALL     = LINUX | OSX | WIN,
+    NO_OSX  = LINUX | WIN,
+}
+
+private struct BackendDeviceOption
+{
+    string backend;
+    string device;
+    string label;
+    uint   platforms;   // bitmask of PlatBit values
+}
+
+private __gshared BackendDeviceOption[] BACKEND_OPTIONS_BASE = [
+    BackendDeviceOption("cycles", "cpu",   "Cycles - CPU",                  PlatBit.ALL),
+    // CUDA / OPTIX / Auto are NVIDIA-only paths. macOS has no CUDA;
+    // hide them so the user doesn't pick a guaranteed-to-fall-back
+    // entry. Linux + Windows keep all four Cycles entries.
+    BackendDeviceOption("cycles", "cuda",  "Cycles - CUDA",                  PlatBit.NO_OSX),
+    BackendDeviceOption("cycles", "optix", "Cycles - OPTIX",                 PlatBit.NO_OSX),
+    BackendDeviceOption("cycles", "auto",  "Cycles - Auto (CUDA -> CPU)",    PlatBit.NO_OSX),
+    BackendDeviceOption("rpr",    "cpu",   "RPR - CPU",                      PlatBit.ALL),
+];
+
+private __gshared BackendDeviceOption[] BACKEND_OPTIONS_GPU = [
+    // HIP + OpenCL require AMD / HIP-on-CUDA on Linux or Windows.
+    // macOS has neither (Apple dropped OpenCL deprecation + no HIP
+    // runtime). The future RPR-Metal entry would live alongside but
+    // isn't wired in `rpr_backend.d` yet.
+    BackendDeviceOption("rpr", "gpu",    "RPR - GPU (HIP)", PlatBit.NO_OSX),
+    BackendDeviceOption("rpr", "opencl", "RPR - OpenCL",     PlatBit.NO_OSX),
+];
+
+// Cycles GPU entries gated on a SEPARATE env var
+// (VIBE3D_CYCLES_ALLOW_GPU) from the RPR ones — different backends,
+// different crash modes. Metal on Apple Silicon is the only entry
+// here today; Linux/Windows CUDA + OPTIX are in BASE because they're
+// proven stable. Once Metal IPR has burned in across Start/Stop/
+// switch/restart cycles, this entry should move to BASE too.
+private __gshared BackendDeviceOption[] BACKEND_OPTIONS_GPU_CYCLES = [
+    BackendDeviceOption("cycles", "metal", "Cycles - Metal", PlatBit.OSX),
+];
+
+private __gshared BackendDeviceOption[] BACKEND_OPTIONS;
+private __gshared string[]              BACKEND_OPTION_LABELS;
+
+/// Bitmask matching the host platform at build time. Filter logic
+/// reads this once.
+private enum uint HOST_PLATFORM = {
+    version (linux)        return PlatBit.LINUX;
+    else version (OSX)     return PlatBit.OSX;
+    else version (Windows) return PlatBit.WIN;
+    else                   return PlatBit.LINUX;
+}();
+
+/// Build the dropdown's flat option list. Filters entries by host
+/// platform (NVIDIA-only Cycles paths hide on macOS, HIP/OpenCL hide
+/// universally on macOS), then appends opt-in GPU entries when their
+/// gate env var is set:
+///   * `VIBE3D_RPR_ALLOW_GPU=1`    — RPR HIP / OpenCL
+///   * `VIBE3D_CYCLES_ALLOW_GPU=1` — Cycles Metal
+/// Idempotent — only the first call does real work.
+private void initBackendOptions()
+{
+    if (BACKEND_OPTIONS.length > 0) return;
+
+    foreach (ref opt; BACKEND_OPTIONS_BASE)
+        if (opt.platforms & HOST_PLATFORM)
+            BACKEND_OPTIONS ~= opt;
+
+    bool gateOpen(string envVar)
+    {
+        auto v = environment.get(envVar);
+        return v !is null && v != "0";
+    }
+
+    if (gateOpen("VIBE3D_RPR_ALLOW_GPU")) {
+        foreach (ref opt; BACKEND_OPTIONS_GPU)
+            if (opt.platforms & HOST_PLATFORM)
+                BACKEND_OPTIONS ~= opt;
+    }
+
+    if (gateOpen("VIBE3D_CYCLES_ALLOW_GPU")) {
+        foreach (ref opt; BACKEND_OPTIONS_GPU_CYCLES)
+            if (opt.platforms & HOST_PLATFORM)
+                BACKEND_OPTIONS ~= opt;
+    }
+
+    BACKEND_OPTION_LABELS.length = BACKEND_OPTIONS.length;
+    foreach (i, ref opt; BACKEND_OPTIONS)
+        BACKEND_OPTION_LABELS[i] = opt.label;
+}
+
+/// Resolve which backend the next IPR session should use. UI choice is
+/// authoritative; `VIBE3D_IPR_BACKEND` env var seeds the initial value
+/// once per process so smoke-test scripts keep working unchanged. When
+/// env forces RPR, also reset the device to "cpu" since the default
+/// "cuda" only makes sense for Cycles.
+private string selectedBackendName()
+{
+    if (!g.selectedBackendInitialized) {
+        auto v = environment.get("VIBE3D_IPR_BACKEND");
+        if (v !is null && (v == "rpr" || v == "RPR")) {
+            g.selectedBackend   = "rpr";
+            g.pendingCfg.device = "cpu";
+        } else if (v !is null && (v == "cycles" || v == "Cycles")) {
+            g.selectedBackend = "cycles";
+        }
+        g.selectedBackendInitialized = true;
+    }
+    return g.selectedBackend;
+}
+
+private void drawControls(const(Mesh)* m, View v)
+{
+    final switch (g.phase) {
+        case Phase.idle:
+            if (ImGui.Button("Start IPR"))
+                startIPR(m, v);
+            ImGui.SameLine();
+            ImGui.TextDisabled("(progressive, snapshots mesh + view)");
+            drawCfgControls();
+            break;
+
+        case Phase.running:
+            if (ImGui.Button("Stop IPR"))
+                stopIPR();
+            ImGui.SameLine();
+            ImGui.TextDisabled("backend: %s",
+                               g.bridge !is null ? g.bridge.activeName() : "—");
+            drawCfgControls();
+            const float p = g.bridge !is null ? g.bridge.progress() : 0.0f;
+            auto overlay = format("%d%%", cast(int)(p * 100.0f));
+            ImGui.ProgressBar(p, ImVec2(-1, 0), overlay);
+            break;
+
+        case Phase.error:
+            if (ImGui.Button("Retry")) {
+                teardownBridge();
+                g.phase = Phase.idle;
+            }
+            ImGui.SameLine();
+            ImGui.TextColored(ImVec4(1.0f, 0.4f, 0.4f, 1.0f), g.errorMsg);
+            break;
+    }
+}
+
+/// Unified backend+device dropdown plus a samples slider. Editing the
+/// dropdown picks a `(backend, device)` pair and triggers
+/// `applyCfgChangeIfRunning` (full `switchTo` if either changed,
+/// live `setSamples` otherwise).
+private void drawCfgControls()
+{
+    // Make sure selectedBackend has been seeded from env (idempotent).
+    selectedBackendName();
+
+    // Lazy-init the dropdown's flat option list (includes opt-in GPU
+    // entries when VIBE3D_RPR_ALLOW_GPU=1 / VIBE3D_CYCLES_ALLOW_GPU=1).
+    initBackendOptions();
+
+    int idx = 0;
+    foreach (i, ref opt; BACKEND_OPTIONS) {
+        if (opt.backend == g.selectedBackend && opt.device == g.pendingCfg.device) {
+            idx = cast(int)i;
+            break;
+        }
+    }
+    // BeginCombo/Selectable, not the C-style `Combo(label, &idx, char*[])`:
+    // the binding's Combo takes `const(char*)[]`, our labels are `string[]`,
+    // and this is the idiom the rest of the tree already uses.
+    if (ImGui.BeginCombo("Backend",
+                         idx >= 0 && idx < BACKEND_OPTION_LABELS.length
+                             ? BACKEND_OPTION_LABELS[idx] : "?")) {
+        foreach (i, ref label; BACKEND_OPTION_LABELS) {
+            const bool selected = (cast(int)i == idx);
+            if (ImGui.Selectable(label, selected)) {
+                idx = cast(int)i;
+                g.selectedBackend   = BACKEND_OPTIONS[idx].backend;
+                g.pendingCfg.device = BACKEND_OPTIONS[idx].device;
+                applyCfgChangeIfRunning();
+            }
+            if (selected) ImGui.SetItemDefaultFocus();
+        }
+        ImGui.EndCombo();
+    }
+
+    // Samples slider -log scale; applies on slider release.
+    int samples = g.pendingCfg.samples;
+    ImGui.SliderInt("Samples", &samples, 100, 10_000_000, "%d",
+                    ImGuiSliderFlags.Logarithmic);
+    g.pendingCfg.samples = samples;
+    if (ImGui.IsItemDeactivatedAfterEdit())
+        applyCfgChangeIfRunning();
+}
+
+/// Apply pending config change to the live bridge -only meaningful in
+/// `running` phase (idle picks up cfg on Start). Distinguishes:
+///   - samples-only change: live ccl::Session::set_samples, NO destroy
+///     and NO scene resync. Avoids tearing down CUDA-GL interop (which
+///     occasionally got stuck after rapid Samples-slider commits, with
+///     the new session's progress freezing partway through).
+///   - device change: full switchTo (destroy+recreate backend, fresh
+///     Scene upload, fresh interop bind).
+private void applyCfgChangeIfRunning()
+{
+    if (g.phase != Phase.running) return;
+    if (g.bridge is null || g.scene is null) return;
+
+    const bool backendChanged = g.selectedBackend != g.bridge.activeName();
+    const bool deviceChanged  = g.pendingCfg.device != g.bridge.config.device;
+
+    // Sample-only edits go through the live setSamples fast path -no
+    // teardown, no scene resync. Backend or device changes require a
+    // full switchTo (different RPR/Cycles context altogether).
+    if (!backendChanged && !deviceChanged) {
+        trace("applyCfgChange: samples="
+              ~ g.pendingCfg.samples.to!string ~ " (live)");
+        if (!g.bridge.setSamples(g.pendingCfg.samples)) {
+            // Backend can't do it live -fall back to full switchTo.
+            trace("applyCfgChange: setSamples not supported, falling back");
+        } else {
+            return;
+        }
+    }
+
+    trace("applyCfgChange: switchTo " ~ g.selectedBackend ~ "/" ~ g.pendingCfg.device
+          ~ " samples=" ~ g.pendingCfg.samples.to!string);
+
+    if (!g.bridge.switchTo(selectedBackendName(), g.pendingCfg, g.scene)) {
+        setError("switchTo: " ~ g.bridge.lastError());
+        return;
+    }
+
+    // Clear the texture before the new session starts producing -the
+    // previous session may have left bottom-up interop content in
+    // there, and the new session (especially if it falls to CPU) takes
+    // hundreds of ms to deliver its first sample. Without this the
+    // user sees stale flipped content during that gap.
+    clearGlTex();
+    g.lastBlitVersion = 0;
+
+    g.bridge.resize(g.fbW, g.fbH);
+
+    // Re-record interop intent before the new session boots
+    // (see startIPR for rationale).
+    g.interopActive = g.bridge.tryBindGLTexture(g.glTex, g.fbW, g.fbH);
+
+    if (!g.bridge.resetAccumulation()) {
+        setError("bridge.resetAccumulation: " ~ g.bridge.lastError());
+        return;
+    }
+
+    trace(g.interopActive ? "switchTo: GL interop bound"
+                          : "switchTo: CPU readback path");
+}
+
+private void drawImage()
+{
+    if (g.phase == Phase.running && g.glTex != 0) {
+        // CPU path: copy_pixels flips bottom-up → top-down in C shim, so
+        // UV = (0,0)..(1,1).
+        // Interop path: PBO contains raw Cycles half4, bottom-up -flip
+        // vertically via UV = (0,1)..(1,0).
+        const bool flip = g.bridge !is null && g.bridge.usingInterop();
+        ImVec2 uv0 = flip ? ImVec2(0, 1) : ImVec2(0, 0);
+        ImVec2 uv1 = flip ? ImVec2(1, 0) : ImVec2(1, 1);
+
+        // Letterbox the texture inside the panel so a render lagging
+        // behind a panel resize doesn't get stretched. Cycles' destroy+
+        // recreate path takes ~200 ms; during a fast resize the texture
+        // sits at the previous aspect until the new session catches up.
+        // Showing the actual texture aspect (with black bars) keeps the
+        // image undistorted; once the backend resyncs the new render
+        // fills the panel exactly.
+        float displayW = cast(float)g.fbW;
+        float displayH = cast(float)g.fbH;
+        if (g.glTexW > 0 && g.glTexH > 0) {
+            const float panelAspect = displayW / displayH;
+            const float texAspect   = cast(float)g.glTexW / cast(float)g.glTexH;
+            if (texAspect > panelAspect) {
+                // Texture wider than panel — fit horizontally.
+                displayH = displayW / texAspect;
+            } else {
+                // Texture taller (or equal) — fit vertically.
+                displayW = displayH * texAspect;
+            }
+        }
+
+        // Center the image inside the panel's content area for letterbox.
+        const float padX = (cast(float)g.fbW - displayW) * 0.5f;
+        const float padY = (cast(float)g.fbH - displayH) * 0.5f;
+        auto cur = ImGui.GetCursorPos();
+        ImGui.SetCursorPos(ImVec2(cur.x + padX, cur.y + padY));
+
+        ImGui.Image(cast(ImGui.ImTextureID) g.glTex,
+                    ImVec2(displayW, displayH),
+                    uv0, uv1);
+    } else {
+        ImGui.Dummy(ImVec2(cast(float)g.fbW, cast(float)g.fbH));
+    }
+}
+
+/// Lazily allocate or resize `g.glTex` so it can hold the current
+/// fbW×fbH render. Idempotent -safe to call every frame; only the
+/// initial create is non-trivial, glTexImage2D from the CPU or PBO
+/// paths handles per-frame contents.
+private void ensureGlTex()
+{
+    if (g.glTex != 0) return;
+    glGenTextures(1, &g.glTex);
+    glBindTexture(GL_TEXTURE_2D, g.glTex);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
+    glBindTexture(GL_TEXTURE_2D, 0);
+}
+
+/// Wipe the IPR texture to opaque black. Used on backend switchTo so
+/// the user doesn't see stale (often wrong-orientation) content during
+/// the gap between the old session shutting down and the new one
+/// producing its first sample.
+private void clearGlTex()
+{
+    if (g.glTex == 0) return;
+    glBindTexture(GL_TEXTURE_2D, g.glTex);
+    glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA32F, g.fbW, g.fbH, 0,
+                 GL_RGBA, GL_FLOAT, null);
+    glBindTexture(GL_TEXTURE_2D, 0);
+}
+
+// ---------------------------------------------------------------------------
+// Start / Stop
+// ---------------------------------------------------------------------------
+
+private void startIPR(const(Mesh)* m, View v)
+{
+    trace("startIPR");
+
+    teardownBridge();
+    g.bridge = new BackendBridge();
+    g.scene  = new Scene();
+
+    if (!g.bridge.init(selectedBackendName(), g.pendingCfg)) {
+        setError("bridge.init: " ~ g.bridge.lastError());
+        return;
+    }
+
+    if (!updateSceneFromVibe3D(m, v)) return;
+    if (!g.bridge.sync(g.scene)) {
+        setError("bridge.sync: " ~ g.bridge.lastError());
+        return;
+    }
+    g.bridge.resize(g.fbW, g.fbH);
+
+    // Record interop intent BEFORE resetAccumulation so the backend can
+    // bind the PBO + interop callbacks inside its first bootLiveSession
+    // (between cyc_session_create and cyc_session_start) -Cycles' render
+    // worker checks should_use_graphics_interop on its first display
+    // tick and caches the result; if our callback isn't registered by
+    // then it falls back to naive permanently.
+    ensureGlTex();
+    g.interopActive = g.bridge.tryBindGLTexture(g.glTex, g.fbW, g.fbH);
+    g.interopProbed = true;
+
+    if (!g.bridge.resetAccumulation()) {
+        setError("bridge.resetAccumulation: " ~ g.bridge.lastError());
+        return;
+    }
+    trace(g.interopActive
+        ? "startIPR: GL interop bound (zero-copy)"
+        : "startIPR: CPU readback path");
+
+    cacheAppliedState(m, v);
+    g.phase = Phase.running;
+    trace("startIPR: running on " ~ g.bridge.activeName());
+}
+
+private void stopIPR()
+{
+    trace("stopIPR");
+    teardownBridge();
+    g.phase = Phase.idle;
+}
+
+private void teardownBridge() nothrow
+{
+    if (g.bridge !is null) {
+        try { g.bridge.shutdown(); } catch (Exception) {}
+        g.bridge = null;
+    }
+    g.scene = null;
+    g.sceneMeshIds      = null;
+    g.sceneMaterialIds  = null;
+    g.sceneLightId      = 0;
+    // Force a full re-sync on the next session: a pending mesh change on both
+    // baselines, plus NaN camera baselines (any real camera value differs).
+    g.modelChangedSinceSeen    = MeshChangeAll;
+    g.modelChangedSinceApplied = MeshChangeAll;
+    g.lastSeenAzimuth         = float.nan;
+    g.appliedAzimuth          = float.nan;
+    // Reset the shadow fingerprints too so the cross-check restarts clean.
+    g_shadowLastSeenHash = ulong.max;
+    g_shadowLastSeenVer  = ulong.max;
+    g_shadowAppliedHash  = ulong.max;
+    g_shadowAppliedVer   = ulong.max;
+    g.lastBlitVersion         = 0;
+    g.interopActive           = false;
+    g.interopProbed           = false;
+}
+
+// ---------------------------------------------------------------------------
+// Per-frame tick
+// ---------------------------------------------------------------------------
+
+private void tick(const(Mesh)* m, View v)
+{
+    if (g.bridge is null) return;
+
+    auto now = MonoTime.currTime;
+
+    const moving = inputMoving(m, v);
+    const apply  = needsApply(m, v);
+    const idleMs = (now - g.lastInputChange).total!"msecs";
+
+    // Phase 1: detect input movement (vs lastSeen) → bumps lastInputChange
+    if (moving) {
+        captureLastSeen(m, v);
+        g.lastInputChange = now;
+    }
+
+    // DEBUG: state heartbeat (rate-limited to every ~250ms).
+    static MonoTime lastStateTrace;
+    if ((now - lastStateTrace).total!"msecs" >= 250) {
+        import std.format : format;
+        trace(format("state: moving=%s apply=%s idleMs=%d "
+                     ~ "az=%.3f/%.3f el=%.3f/%.3f dist=%.3f/%.3f "
+                     ~ "focus=(%.2f,%.2f,%.2f)/(%.2f,%.2f,%.2f) "
+                     ~ "fb=%dx%d/%dx%d  chg=seen%x/appl%x",
+                     moving, apply, idleMs,
+                     v.azimuth, g.appliedAzimuth,
+                     v.elevation, g.appliedElevation,
+                     v.distance, g.appliedDistance,
+                     v.focus.x, v.focus.y, v.focus.z,
+                     g.appliedFocus.x, g.appliedFocus.y, g.appliedFocus.z,
+                     g.fbW, g.fbH, g.appliedFbW, g.appliedFbH,
+                     g.modelChangedSinceSeen, g.modelChangedSinceApplied));
+        lastStateTrace = now;
+    }
+
+    // Phase 2: if backend is behind AND input has been stable, restart
+    if (apply && (now - g.lastInputChange) >= restartIdleThreshold) {
+        if (!updateSceneFromVibe3D(m, v)) return;
+        if (!g.bridge.sync(g.scene)) {
+            setError("bridge.sync: " ~ g.bridge.lastError());
+            return;
+        }
+        g.bridge.resize(g.fbW, g.fbH);
+        // resetAccumulation may return false on soft fail (scene mutex
+        // held by worker mid-update). Don't cache applied state -the
+        // next tick will re-trigger and try_lock should succeed then.
+        // Hard errors flip the phase to error via setError on the
+        // backend side; we'd see that on subsequent tick().
+        if (g.bridge.resetAccumulation()) {
+            cacheAppliedState(m, v);
+            trace("tick: synced scene + reset");
+        } else {
+            trace("tick: try_lock missed, retrying next tick");
+        }
+    }
+
+    // Backend.tick() handles its own interop-side PBO→glTex blit
+    // (no-op on CPU path or fallback).  Always poll grabPixels —
+    // it returns false when interop is providing pixels directly.
+    g.bridge.tick();
+
+    float[] buf;
+    int rw, rh;
+    bool grabbed = g.bridge.grabPixels(buf, rw, rh);
+    if (grabbed) {
+        uploadFramebufferToGL(buf, rw, rh);
+        g.lastBlitVersion = g.bridge.frameVersion();
+    } else if (g.bridge.usingInterop()) {
+        // Interop is live; tick() already wrote into glTex.
+        g.lastBlitVersion = g.bridge.frameVersion();
+        grabbed = g.lastBlitVersion != 0;
+    }
+
+    // DEBUG: grab/blit heartbeat (rate-limited to every ~500ms).
+    static MonoTime lastGrabTrace;
+    if ((now - lastGrabTrace).total!"msecs" >= 500) {
+        import std.format : format;
+        trace(format("grab: ok=%s ver=%d progress=%.2f",
+                     grabbed, g.bridge.frameVersion(), g.bridge.progress()));
+        lastGrabTrace = now;
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Stage-4 shadow cross-check (debug, opt-in via VIBE3D_RENDER_HASH_CHECK=1).
+//
+// The change bus replaced the per-frame O(N) vertex hash with two flag bits.
+// To prove the bus matches the hash during burn-in, keep the hash alive ONLY
+// behind this env gate: when set, recompute the hash + a shadow lastSeen/applied
+// fingerprint and warn to stderr whenever the bus flag and the hash disagree
+// about whether the mesh changed. When the env is UNSET (the default), the hash
+// is NOT computed — that is the perf win. Deleted in Stage 6.
+//
+// All of this runs on the main thread alongside the flag consumers, so the
+// shadow fingerprints need no synchronisation.
+private __gshared bool g_hashCheck;
+private __gshared bool g_hashCheckEnvRead;
+private bool hashCheckEnabled()
+{
+    if (!g_hashCheckEnvRead) {
+        g_hashCheck = environment.get("VIBE3D_RENDER_HASH_CHECK") !is null;
+        g_hashCheckEnvRead = true;
+    }
+    return g_hashCheck;
+}
+
+private __gshared ulong g_shadowLastSeenHash = ulong.max;
+private __gshared ulong g_shadowLastSeenVer  = ulong.max;
+private __gshared ulong g_shadowAppliedHash  = ulong.max;
+private __gshared ulong g_shadowAppliedVer   = ulong.max;
+private __gshared bool  g_hashMismatchWarned;
+
+/// Cheap FNV-1a-flavoured fingerprint over the mesh's vertex positions.
+/// Only invoked under the VIBE3D_RENDER_HASH_CHECK shadow gate now — in the
+/// default path the bus supplies the dirty signal and this is never called.
+private ulong vertsHash(const(Mesh)* m)
+{
+    ulong h = m.vertices.length;
+    foreach (ref const vert; m.vertices) {
+        h ^= *cast(const(uint)*)&vert.x;  h = (h << 7) | (h >> 57);
+        h ^= *cast(const(uint)*)&vert.y;  h = (h << 7) | (h >> 57);
+        h ^= *cast(const(uint)*)&vert.z;  h = (h << 7) | (h >> 57);
+    }
+    return h;
+}
+
+/// Shadow comparison: `busSaysChanged` is what the bus flag reports for this
+/// baseline; `hashChanged` is what the hash+version compare would report. Warn
+/// once if they ever disagree. `label` names the baseline (seen / applied).
+private void shadowCheckMeshChanged(const(Mesh)* m, bool busSaysChanged,
+                                    ref ulong shadowHash, ref ulong shadowVer,
+                                    string label)
+{
+    if (!hashCheckEnabled()) return;
+    // recorded remainder (1906 §3.6): `mutationVersion` owns this read, and it
+    // is DIAGNOSTIC ONLY — the whole function is behind
+    // `VIBE3D_RENDER_HASH_CHECK` and exists to warn when the bus signal and the
+    // old (hash + version) answer disagree. Migrating it to an epoch would
+    // make the shadow read the same channel it is shadowing, which is the one
+    // thing a shadow must not do.
+    const ulong h  = vertsHash(m);
+    const ulong mv = m.mutationVersion;
+    const bool hashChanged = (h != shadowHash) || (mv != shadowVer);
+    if (hashChanged != busSaysChanged && !g_hashMismatchWarned) {
+        import vibe3d.util.log.log        : logWarn;
+        import std.format : format;
+        logWarn("render", format(
+            "ipr: RENDER_HASH_CHECK MISMATCH (%s): bus=%s hash=%s "
+            ~ "(hash %x/%x ver %d/%d) — change-bus signal diverged from the "
+            ~ "vertex-hash shadow.",
+            label, busSaysChanged, hashChanged, h, shadowHash, mv, shadowVer));
+        g_hashMismatchWarned = true;
+    }
+}
+
+private bool inputMoving(const(Mesh)* m, View v)
+{
+    const bool meshChanged = g.modelChangedSinceSeen != 0;
+    shadowCheckMeshChanged(m, meshChanged,
+        g_shadowLastSeenHash, g_shadowLastSeenVer, "seen");
+    return meshChanged ||
+           v.azimuth   != g.lastSeenAzimuth   ||
+           v.elevation != g.lastSeenElevation ||
+           v.distance  != g.lastSeenDistance  ||
+           v.roll      != g.lastSeenRoll      ||
+           v.fovY      != g.lastSeenFovY      ||
+           v.focus     != g.lastSeenFocus     ||
+           g.fbW != g.lastSeenFbW || g.fbH != g.lastSeenFbH;
+}
+
+private bool needsApply(const(Mesh)* m, View v)
+{
+    const bool meshChanged = g.modelChangedSinceApplied != 0;
+    shadowCheckMeshChanged(m, meshChanged,
+        g_shadowAppliedHash, g_shadowAppliedVer, "applied");
+    return meshChanged ||
+           v.azimuth   != g.appliedAzimuth   ||
+           v.elevation != g.appliedElevation ||
+           v.distance  != g.appliedDistance  ||
+           v.roll      != g.appliedRoll      ||
+           v.fovY      != g.appliedFovY      ||
+           v.focus     != g.appliedFocus     ||
+           g.fbW != g.appliedFbW || g.fbH != g.appliedFbH;
+}
+
+private void captureLastSeen(const(Mesh)* m, View v)
+{
+    // Mesh changes up to now are "seen" — clear the debounce accumulator.
+    g.modelChangedSinceSeen = 0;
+    if (hashCheckEnabled()) {
+        g_shadowLastSeenHash = vertsHash(m);
+        g_shadowLastSeenVer  = m.mutationVersion;
+    }
+    g.lastSeenAzimuth   = v.azimuth;
+    g.lastSeenElevation = v.elevation;
+    g.lastSeenDistance  = v.distance;
+    g.lastSeenRoll      = v.roll;
+    g.lastSeenFovY      = v.fovY;
+    g.lastSeenFocus     = v.focus;
+    g.lastSeenFbW       = g.fbW;
+    g.lastSeenFbH       = g.fbH;
+}
+
+private void cacheAppliedState(const(Mesh)* m, View v)
+{
+    // We just pushed the current mesh to the worker — both baselines are now
+    // up to date, so clear both accumulators.
+    g.modelChangedSinceApplied = 0;
+    if (hashCheckEnabled()) {
+        g_shadowAppliedHash = vertsHash(m);
+        g_shadowAppliedVer  = m.mutationVersion;
+    }
+    g.appliedAzimuth   = v.azimuth;
+    g.appliedElevation = v.elevation;
+    g.appliedDistance  = v.distance;
+    g.appliedRoll      = v.roll;
+    g.appliedFovY      = v.fovY;
+    g.appliedFocus     = v.focus;
+    g.appliedFbW       = g.fbW;
+    g.appliedFbH       = g.fbH;
+
+    // Mirror into lastSeen so the next tick doesn't see a stale diff
+    // immediately after we just pushed.
+    captureLastSeen(m, v);
+    g.lastInputChange = MonoTime.currTime;
+}
+
+// ---------------------------------------------------------------------------
+// Scene update -vibe3d state → Scene IR diff
+// ---------------------------------------------------------------------------
+
+/// Patch the persistent Scene from current vibe3d modeling state.
+/// On first call (empty Scene), seeds mesh-buckets + light + camera +
+/// environment. On subsequent calls, drops + re-adds the mesh-buckets
+/// whenever geometry/surfaces change, and always updates the camera
+/// (cheap; upstream debounce gates on stable input).
+///
+/// MG4 — Material Groups multi-material split. The source mesh is
+/// partitioned into one (CompiledMaterial, sub-mesh) bucket per used
+/// `faceMaterial` index. Each bucket emits the FULL `xyz` array plus
+/// the subset of triangles whose owning face indexes into that
+/// surface, with `assignMaterial` wiring them together. Backends see
+/// N mesh handles + N material handles instead of one of each — but
+/// the existing RenderBackend interface stays unchanged.
+private bool updateSceneFromVibe3D(const(Mesh)* m, View v)
+{
+    const bool firstTime   = (g.sceneLightId == 0);
+    // Mesh-affecting change since the last worker push? The bus accumulator
+    // mirrors the old (vertsHash || mutationVersion) compare against the
+    // applied baseline; it is cleared by cacheAppliedState after this push.
+    const bool meshChanged = !firstTime && (g.modelChangedSinceApplied != 0);
+
+    // Pick the source mesh -subdivided when any face is flagged subpatch,
+    // raw cage otherwise. IPR-owned SubpatchPreview rebuilds lazily; it
+    // returns early if cage version + depth match its cached state.
+    const(Mesh)* sourceMesh = m;
+    bool anySubpatch = m.hasAnySubpatch();
+    if (anySubpatch) {
+        // Task 0401 passed a `positionsDirty` flag derived from
+        // `g.modelChangedSinceApplied` (the render-side bus accumulator set up
+        // in initIPR) because the preview's own key was `mutationVersion`,
+        // which a gizmo drag never moves. TASK 1906 STAGE 2d retired that
+        // argument: `rebuildIfStale` reads the bus's per-mesh epoch itself, so
+        // the IPR path gets the same freshness as the editor path without the
+        // caller having to remember to hand it over.
+        g.iprSubpatch.rebuildIfStale(*m, g.iprSubdivDepth, null);
+        sourceMesh = &g.iprSubpatch.mesh;
+    }
+
+    if (firstTime) {
+        // Sun light ~5 units up.
+        LightDesc ld;
+        ld.kind      = LightDesc.Kind.Sun;
+        ld.transform = [
+            1, 0, 0, 0,
+            0, 1, 0, 5,
+            0, 0, 1, 0,
+            0, 0, 0, 1,
+        ];
+        ld.color     = Vec3(1, 1, 1);
+        ld.intensity = 3.0f;
+        ld.sunAngle  = 0.009f;
+        g.sceneLightId = g.scene.addLight(ld);
+
+        if (!rebuildSceneMaterialBuckets(sourceMesh)) return false;
+
+        // Environment -default Solid (black). Backend may apply own default
+        // (Cycles uses grey).
+        EnvDesc ed;
+        ed.kind  = EnvDesc.Kind.Solid;
+        ed.color = Vec3(0);
+        g.scene.setEnvironment(ed);
+    } else if (meshChanged) {
+        if (!rebuildSceneMaterialBuckets(sourceMesh)) return false;
+    }
+
+    // Camera -always patched when this function runs (we only run after
+    // debounce caught a real change anyway).
+    CameraDesc cd;
+    cd.kind   = CameraDesc.Kind.Perspective;
+    // Viewport camera single-source (0181): no eye/view/proj mirror on View
+    // anymore — derive the camera from the current transform inputs directly.
+    //
+    // The ORIENTATION is supplied explicitly. `viewportWith` deliberately has
+    // no two-argument overload (see its docstring in `view.d`): one that
+    // defaulted to `this.orientation` would also compile where a FOLLOWER cell
+    // resolves the MASTER's rotation, and would render two linked cells with
+    // mutually rotated horizons. That hazard does not exist here — the camera
+    // being mirrored into the scene IS `v` — so `v.orientation` is the right
+    // operand, and passing it rather than defaulting it is what keeps the
+    // overload gone.
+    const Viewport vp = v.viewportWith(v.focus, v.distance, v.orientation);
+    cd.eye    = vp.eye;
+    cd.target = v.focus;
+    // READ screen-up off the view matrix instead of reconstructing it from a
+    // hard-coded world up. `Vec3(0, 1, 0)` was correct only while every
+    // viewport was built `lookAt(eye, focus, +Y)`; a banked viewport's up is
+    // not +Y, and hard-coding it renders a banked cell LEVEL — the offline
+    // image and the GL viewport would disagree about the horizon by exactly
+    // `roll`. Row layout is the tree's standard read: screen-up is
+    // `view[1]/[5]/[9]` (`view.d`, "Camera BANK" section).
+    cd.up     = Vec3(vp.view[1], vp.view[5], vp.view[9]);
+    cd.aspect              = cast(float)g.fbW / cast(float)g.fbH;
+    cd.fovRadiansVertical  = v.projKind == ProjKind.Ortho ? View.defaultFovY : v.fovY;
+    cd.nearClip = 0.001f;
+    cd.farClip  = 100.0f;
+    g.scene.setCamera(cd);
+
+    return true;
+}
+
+/// MG4 — split the source mesh into N (CompiledMaterial, sub-mesh)
+/// buckets keyed by `mesh.faceMaterial[fi]`, removing any prior
+/// scene-side mesh/material handles. Each bucket emits the full
+/// vertex array (shared, lets us avoid remapping) and the subset of
+/// triangles whose owning face indexes that surface. A bucket with
+/// zero matching triangles is skipped — RPR rejects empty meshes.
+private bool rebuildSceneMaterialBuckets(const(Mesh)* sourceMesh)
+{
+    if (sourceMesh is null || sourceMesh.vertices.length == 0) {
+        setError("rebuildSceneMaterialBuckets: empty mesh");
+        return false;
+    }
+
+    // Drop any existing buckets so backend sees a fresh upload chain.
+    foreach (id; g.sceneMeshIds)     g.scene.removeMesh(id);
+    foreach (id; g.sceneMaterialIds) g.scene.removeMaterial(id);
+    g.sceneMeshIds      = null;
+    g.sceneMaterialIds  = null;
+
+    // Shared vertex array — same xyz uploaded for every bucket so we
+    // don't have to remap indices. Wasteful (N copies on the backend)
+    // but trivial and correct; a future MG-perf pass can introduce
+    // per-bucket vert subsetting if a profile shows it matters.
+    float[] xyz;
+    xyz.length = sourceMesh.vertices.length * 3;
+    foreach (i, ref vert; sourceMesh.vertices) {
+        xyz[i * 3 + 0] = vert.x;
+        xyz[i * 3 + 1] = vert.y;
+        xyz[i * 3 + 2] = vert.z;
+    }
+
+    // Bucket face indices by surface index, preserving first-seen
+    // order so the bucket list is stable across rebuilds (helps the
+    // bridge avoid spurious destroy+upload churn on Cycles).
+    size_t[]            usedMatIdx;
+    size_t[][size_t]    facesByMat;
+    foreach (fi, face; sourceMesh.faces) {
+        if (face.length < 3) continue;
+        const uint mi = (fi < sourceMesh.faceMaterial.length)
+            ? sourceMesh.faceMaterial[fi] : 0u;
+        if (mi !in facesByMat) usedMatIdx ~= mi;
+        facesByMat[mi] ~= fi;
+    }
+
+    if (usedMatIdx.length == 0) {
+        setError("rebuildSceneMaterialBuckets: no faces");
+        return false;
+    }
+
+    // One CompiledMaterial + one Scene mesh per used surface.
+    foreach (mi; usedMatIdx) {
+        Surface s;
+        if (mi < sourceMesh.surfaces.length) s = sourceMesh.surfaces[mi];
+        const ulong sceneMatId = g.scene.addMaterial(surfaceToCompiledMaterial(s));
+
+        // Fan-triangulate only this bucket's faces.
+        size_t total = 0;
+        foreach (fi; facesByMat[mi])
+            total += sourceMesh.faces[fi].length - 2;
+        int[] tris;
+        tris.length = total * 3;
+        size_t ti = 0;
+        foreach (fi; facesByMat[mi]) {
+            auto face = sourceMesh.faces[fi];
+            for (size_t i = 1; i + 1 < face.length; i++) {
+                tris[ti++] = cast(int) face[0];
+                tris[ti++] = cast(int) face[i];
+                tris[ti++] = cast(int) face[i + 1];
+            }
+        }
+
+        const ulong sceneMeshId = g.scene.addMesh(xyz, /*normals*/[], /*uv*/[], tris);
+        g.scene.assignMaterial(sceneMeshId, sceneMatId);
+        g.sceneMeshIds     ~= sceneMeshId;
+        g.sceneMaterialIds ~= sceneMatId;
+    }
+    return true;
+}
+
+/// MG4 — Surface → CompiledMaterial mapping. Diffuse-only for now:
+/// `glossiness` modulates both diffuse and specular roughness equally,
+/// `opacity` drives transmission as its complement. Specular amount
+/// and metallic are captured upstream but not yet routed into the
+/// Principled BRDF — that lands when ShaderTree IR (Phase 3) compiles
+/// directly to UberV2 / Cycles Principled.
+private CompiledMaterial surfaceToCompiledMaterial(in Surface s)
+{
+    import std.algorithm : clamp;
+    CompiledMaterial cm;
+    const float rough     = 1.0f - clamp(s.glossiness, 0.0f, 1.0f);
+    cm.baseColor          = s.baseColor;
+    cm.diffuseRoughness   = rough;
+    cm.specularRoughness  = rough;
+    cm.metallic           = 0.0f;
+    cm.specularIOR        = 1.45f;
+    cm.opacity            = s.opacity;
+    cm.transmission       = 1.0f - s.opacity;
+    return cm;
+}
+
+// ---------------------------------------------------------------------------
+// GL framebuffer blit
+// ---------------------------------------------------------------------------
+
+private void uploadFramebufferToGL(in float[] pixels, int w, int h)
+{
+    if (g.glTex == 0) {
+        glGenTextures(1, &g.glTex);
+        glBindTexture(GL_TEXTURE_2D, g.glTex);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
+    } else {
+        glBindTexture(GL_TEXTURE_2D, g.glTex);
+    }
+    glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA32F, w, h, 0, GL_RGBA, GL_FLOAT, pixels.ptr);
+    glBindTexture(GL_TEXTURE_2D, 0);
+    g.glTexW = w;
+    g.glTexH = h;
+}
+
+// ---------------------------------------------------------------------------
+// Error helper
+// ---------------------------------------------------------------------------
+
+private void setError(string msg)
+{
+    g.errorMsg = msg;
+    g.phase = Phase.error;
+    teardownBridge();
+    trace("ERROR: " ~ msg);
+}
+
+unittest { // private inputMoving/needsApply/captureLastSeen/cacheAppliedState
+    auto saved = g; scope(exit) g = saved;
+    g = PanelState.init;
+    Mesh m; auto v = new View(0,0,650,544);
+    g.scene = new Scene;g.sceneLightId=1;g.fbW=650;g.fbH=544;
+    assert(updateSceneFromVibe3D(&m,v),"IPR_LENS_DESCRIPTOR_DEFAULT_APPLIES");
+    assert(g.scene.camera.desc.fovRadiansVertical==45.0f*cast(float)(PI/180.0),"IPR_LENS_DESCRIPTOR_DEFAULT_EXACT");
+    cacheAppliedState(&m,v);
+    assert(!inputMoving(&m,v) && !needsApply(&m,v),"IPR_LENS_SETTLED_A");
+    v.setFovY(.9026584025557545);
+    assert(updateSceneFromVibe3D(&m,v)&&g.scene.camera.desc.fovRadiansVertical==v.fovY,"IPR_LENS_ACTUAL_DESCRIPTOR");
+    assert(inputMoving(&m,v),"IPR_LENS_SEEN_CHANGE");
+    captureLastSeen(&m,v);
+    assert(!inputMoving(&m,v),"IPR_LENS_SEEN_STAMP");
+    assert(needsApply(&m,v),"IPR_LENS_APPLIED_INDEPENDENT");
+    cacheAppliedState(&m,v);
+    assert(!needsApply(&m,v),"IPR_LENS_APPLIED_STAMP");
+    v.setFovY(View.defaultFovY);
+    assert(inputMoving(&m,v) && needsApply(&m,v),"IPR_LENS_CONSUMED_ABA");
+    cacheAppliedState(&m,v);
+    v.setFovY(.9026584025557545);v.setFovY(View.defaultFovY);
+    assert(!inputMoving(&m,v) && !needsApply(&m,v),"IPR_LENS_UNCONSUMED_ABA");
+    v.setFovY(v.fovY);assert(!inputMoving(&m,v)&&!needsApply(&m,v),"IPR_LENS_SAME_VALUE");
+    v.projKind=ProjKind.Ortho;v.setFovY(.9026584025557545);
+    assert(updateSceneFromVibe3D(&m,v)&&g.scene.camera.desc.fovRadiansVertical==View.defaultFovY,"IPR_LENS_ORTHO_DESCRIPTOR_HISTORICAL");
+}

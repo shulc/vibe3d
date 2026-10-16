@@ -40,10 +40,10 @@ version (Posix) {
 }
 
 import vibe3d.mesh.core.mesh : Mesh, MeshMap, MapDomain, kUvMapName;
-import io.scene_ir  : ImportedScene, ImportedPart, flattenToMesh;
-import io.lwo_export : exportLwo;
-import io.lwo_import : sceneFromLwo;
-import math : Vec3;
+import vibe3d.documents.interchange.io.scene_ir  : ImportedScene, ImportedPart, flattenToMesh;
+import vibe3d.documents.interchange.io.lwo_export : exportLwo;
+import vibe3d.documents.interchange.io.lwo_import : sceneFromLwo;
+import vibe3d.util.math.math : Vec3;
 
 void main() {}
 

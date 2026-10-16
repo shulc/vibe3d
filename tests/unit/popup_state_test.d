@@ -5,8 +5,8 @@ module tests.unit.popup_state_test;
 
 import std.algorithm : canFind;
 import std.array     : split;
-import buttonset : Checked;
-import popup_state;
+import vibe3d.ui.editor.buttonset : Checked;
+import vibe3d.ui.editor.popup_state;
 
 /// Resolve a Checked block against the current registry. False when
 /// the block is absent (`!chk.present`) or when neither comparison
@@ -60,7 +60,7 @@ unittest {
 
 // Task 20262020: the desktop alias and lower producer share one registry.
 unittest {
-    import toolpipe.state_paths : lowerSet = setStatePath, lowerGet = getStatePath,
+    import vibe3d.editing.pipeline.evaluation.toolpipe.state_paths : lowerSet = setStatePath, lowerGet = getStatePath,
         lowerInstall = installPreparedStatePath, lowerClear = clearAllState;
     static assert(&setStatePath == &lowerSet);
     static assert(&installPreparedStatePath == &lowerInstall);

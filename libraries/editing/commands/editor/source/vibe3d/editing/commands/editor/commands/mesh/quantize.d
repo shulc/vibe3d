@@ -1,0 +1,177 @@
+module vibe3d.editing.commands.editor.commands.mesh.quantize;
+
+import vibe3d.editing.commands.runtime.command;
+import vibe3d.mesh.core.mesh;
+import vibe3d.viewport.camera.view;
+import vibe3d.editing.contracts.editmode;
+import vibe3d.util.math.math : Vec3;
+import vibe3d.util.spatial.spatial : Viewport, AimViewport, aimSpace;
+import vibe3d.documents.model.document : primaryModelSpace;
+import vibe3d.editing.params.params : Param;
+import vibe3d.mesh.change.change_bus : MeshEditScope;
+import vibe3d.editing.commands.editor.commands.mesh.position_undo : PositionUndo;
+import vibe3d.editing.commands.editor.commands.mesh.vertex_position_result : VertexPositionResult,
+    VertexPositionResultBuilder;
+import vibe3d.editing.pipeline.contracts.toolpipe.packets : FalloffPacket, SubjectPacket;
+import vibe3d.editing.pipeline.runtime.falloff : evaluateFalloff, IFalloffAware, FalloffInput,
+    weightedLerp;
+import vibe3d.editing.pipeline.contracts.operator : Operator, Task, VectorStack, PacketKind, OperatorActrCommon;
+
+import std.math : floor;
+
+/// Snap each selected vertex to a regular grid: pos = round(pos / step) * step
+/// per axis. The `mesh.quantize` deform command uses this operation.
+///
+/// Selection-aware via the same edit-mode mask `MeshTransform` uses:
+/// vertex mode → selected verts; edge/polygon mode → verts of the selected
+/// edges/faces. Empty selection falls through to the whole mesh —
+/// "no selection ⇒ act on everything".
+class MeshQuantize : Command, Operator, IFalloffAware,
+                     VertexPositionResultBuilder {
+    // Per-axis grid spacing (`X/Y/Z` attrs). vibe3d used a single
+    // isotropic `step` earlier — hard rename, no back-compat alias.
+    private float            stepX_ = 0.1f;
+    private float            stepY_ = 0.1f;
+    private float            stepZ_ = 0.1f;
+    // Optional falloff — when enabled, each vert lerps between its
+    // original and quantised position by the per-vert weight.
+    mixin FalloffInput;
+
+    // Recorded `Kind.SetPos` undo (task 1903 L0-d4).
+    private PositionUndo undo_;
+    version (unittest) {
+        /// TEST-ONLY read-only view of the recorded undo (task 1903 §L0-d,
+        /// witness W-d3a). The op-log SHAPE is not derivable from the outside:
+        /// a command that records nothing answers `true` from the BASE
+        /// `Command.revert` (task 2500) and the mesh is already where the undo
+        /// wants it, so every result-shaped assertion — the plane diff, the
+        /// redo cell, the parity cell — is GREEN over a deleted recorder. Only
+        /// reading the log itself is not.
+        /// `version (unittest)`, so this is not a door in a shipped build; both
+        /// gate lanes compile the sources with `-unittest`. `public` on the
+        /// declaration and NOT a `public:` section — a section marker here
+        /// would silently change the protection of every member below it.
+        public ref const(PositionUndo) recordedUndo() const return { return undo_; }
+    }
+
+    this(Mesh* mesh, ref View view, EditMode editMode) {
+        super(mesh, view, editMode);
+    }
+
+    override string name()  const { return "mesh.quantize"; }
+    override string label() const { return "Quantize"; }
+
+    override Param[] params() {
+        // Schema is three per-axis float attrs. U/V (UV-space quantize)
+        // and `lockUV` / `morph` remain deferred (need UV / morph-map
+        // subsystems).
+        return [
+            Param.float_("X", "Step X", &stepX_, 0.1f).min(1e-6f),
+            Param.float_("Y", "Step Y", &stepY_, 0.1f).min(1e-6f),
+            Param.float_("Z", "Step Z", &stepZ_, 0.1f).min(1e-6f),
+        ];
+    }
+
+    // Setters for XfrmQuantizeTool's drag-modulates-attrs path.
+    void setStepXYZ(float x, float y, float z) {
+        stepX_ = x; stepY_ = y; stepZ_ = z;
+    }
+
+    // Operator interface.
+    mixin OperatorActrCommon;
+    bool evaluate(ref VectorStack vts) {
+        auto subj = vts.get!SubjectPacket();
+        if (subj is null) return false;
+        captureFalloff(vts);
+        // §2.4 — the step guard is resolved BEFORE the batch is opened. A
+        // `return` out of an open batch leaves `~MeshEditBatch` to pop the
+        // frame and tick `changeBus.batchLeaks`, asserted 0 by the suite.
+        VertexPositionResult result;
+        if (!buildVertexPositionResult(mesh.vertices, vts, result)) return false;
+
+        // REDO: re-run the kernel UNRECORDED and keep the first delta.
+        if (undo_.armed()) {
+            auto ed = MeshEditBatch.unrecorded(*mesh, MeshEditScope.Position);
+            applyResult(ed, result);
+            ed.close();
+            return true;
+        }
+        auto ed = MeshEditBatch(*mesh, MeshEditScope.Position);
+        applyResult(ed, result);
+        undo_.arm(this, ed.close());
+        return true;
+    }
+
+    override bool buildVertexPositionResult(const(Vec3)[] source,
+                                            ref VectorStack vts,
+                                            out VertexPositionResult result) {
+        result.clear();
+        auto subj = vts.get!SubjectPacket();
+        if (subj is null || subj.mesh is null || source.length != subj.mesh.vertices.length)
+            return false;
+        const resultFalloff = inputFalloff(vts);
+        if (stepX_ <= 0 || stepY_ <= 0 || stepZ_ <= 0) return false;
+
+        // Task 0619: Screen/Lasso falloff needs the subject's real viewport.
+        const auto aim = aimSpace(subj.viewport, primaryModelSpace());
+
+        // Build affected-vertex mask the same way MeshTransform does.
+        //
+        // Perf (task 0388): `mesh.selectedX` is a @property that rebuilds a
+        // whole `bool[]` per read — indexing it inside these loops was
+        // O(mesh²). Iterate the lock-step `*Marks.length` and test via the
+        // non-allocating `isXSelected(i)` scalar accessor instead.
+        // L1 funnel (task 0613, S5): the modal fan-in this used to open-code,
+        // with the whole-mesh fallback narrowed to the VISIBLE vertices.
+        bool[] vmask = subj.mesh.operandVertexMask(editMode);
+        result.indices.reserve(source.length);
+        result.before.reserve(source.length);
+        result.after.reserve(source.length);
+        // Task 0619: cursorless — see jitter.d. No viewport, by design.
+        foreach (i; 0 .. source.length) {
+            if (!vmask[i]) continue;
+            // Snap with floor(pos/step + 0.5) — round-half-toward-+∞ — but
+            // evaluate the ratio in DOUBLE precision. In float, a coord like
+            // 0.45f (stored as 0.44999998807907104, genuinely below 0.45)
+            // divided by 0.1f rounds to *exactly* 4.5 because both operands'
+            // float error conspires; floor(4.5+0.5) then snaps it a whole
+            // grid cell too far (0.5 instead of 0.4). In double the true ratio
+            // is 4.4999998, which floors to the correct cell. Only the
+            // precision changes — the tie-break stays floor(x+0.5).
+            Vec3 v = source[i];
+            float qx = cast(float)(floor(cast(double)v.x / cast(double)stepX_ + 0.5) * cast(double)stepX_);
+            float qy = cast(float)(floor(cast(double)v.y / cast(double)stepY_ + 0.5) * cast(double)stepY_);
+            float qz = cast(float)(floor(cast(double)v.z / cast(double)stepZ_ + 0.5) * cast(double)stepZ_);
+            // Falloff blend: lerp between original and quantised pos.
+            // Weight is evaluated at the original (pre-quantise) pos
+            // so the per-vert weight is deterministic regardless of
+            // step granularity.
+            float fw = resultFalloff.enabled
+                ? evaluateFalloff(resultFalloff, source[i], cast(int)i, aim)
+                : 1.0f;
+            Vec3 orig = source[i];
+            Vec3 nv = weightedLerp(orig, Vec3(qx, qy, qz), fw);
+            if (nv == orig) continue;
+            result.indices ~= cast(uint)i;
+            result.before ~= orig;
+            result.after ~= nv;
+        }
+        return true;
+    }
+
+    private static void applyResult(ref MeshEditBatch ed,
+                                    ref const VertexPositionResult result) {
+        ed.setVertexPositions(result.indices, result.after);
+        ed.commitChange(MeshEditScope.Position);
+    }
+
+    protected override void revertImpl() {
+        // Armed by construction (task 2500): `RecordedUndo.arm` raises the flag
+        // only for a NON-EMPTY delta, and `Command.revert` answers both the
+        // empty-edit case and the never-applied case before this body runs. The
+        // hand-rolled `setVertexPositions(touchedIdx, touchedPrev)` fallback that
+        // used to sit under this line was reachable ONLY on `!armed()`, so it is
+        // gone with the predicate that reached it.
+        undo_.revert(*mesh);
+    }
+}

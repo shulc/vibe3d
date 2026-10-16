@@ -20,14 +20,14 @@ module test_history_insession;
 // pulls in + runs the imported modules' unittest blocks too.
 // ---------------------------------------------------------------------------
 
-import command;
-import command : CmdFlags;
-import command_history;
-import commands.mesh.vertex_edit : MeshVertexEdit;
+import vibe3d.editing.commands.runtime.command;
+import vibe3d.editing.commands.runtime.command : CmdFlags;
+import vibe3d.editing.commands.runtime.command_history;
+import vibe3d.editing.commands.editor.commands.mesh.vertex_edit : MeshVertexEdit;
 import vibe3d.mesh.core.mesh : Mesh;
 import vibe3d.viewport.camera.view : View;
 import vibe3d.editing.contracts.editmode : EditMode;
-import math : Vec3;
+import vibe3d.util.math.math : Vec3;
 import std.conv : to;
 
 void main() {}

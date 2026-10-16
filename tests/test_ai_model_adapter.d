@@ -2,7 +2,7 @@
 
 import vibe3d.editing.interaction.data.ai.interaction : AiCandidate, AiCandidateKind,
     AiInteractionContext, AiInteractionPhase, AiIntent;
-import ai.model_adapter : AiModelAdapter, AiModelAdapterConfig,
+import vibe3d.runtime.ai_advisor.ai.model_adapter : AiModelAdapter, AiModelAdapterConfig,
     AiModelAvailability, AiModelBackend, AiModelBackendPrediction,
     AiModelFallbackMode, AiModelStatus;
 

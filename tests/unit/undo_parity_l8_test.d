@@ -114,21 +114,21 @@ module tests.unit.undo_parity_l8_test;
 import std.format : format;
 
 import vibe3d.mesh.change.change_bus : changeBus;
-import command;
+import vibe3d.editing.commands.runtime.command;
 import vibe3d.mesh.core.mesh;
-import math    : Vec3;
+import vibe3d.util.math.math    : Vec3;
 import vibe3d.viewport.camera.view;
 import vibe3d.editing.contracts.editmode;
-import http_json : meshPlanesJson, PlaneDumpMeta;
+import vibe3d.runtime.application_core.http_json : meshPlanesJson, PlaneDumpMeta;
 
 import tests.unit.fixtures            : makeTaggedGridBent;
 import tests.unit.undo_parity_l0_test : ParityCell, compareOrCapture,
                                         setF, setV;
 
-import commands.mesh.face_extrude   : MeshFaceExtrude;
-import commands.mesh.smooth_shift   : MeshSmoothShift;
-import commands.mesh.stroke_extrude : MeshStrokeExtrude;
-import commands.mesh.vertex_extrude : MeshVertexExtrude;
+import vibe3d.editing.commands.editor.commands.mesh.face_extrude   : MeshFaceExtrude;
+import vibe3d.editing.commands.editor.commands.mesh.smooth_shift   : MeshSmoothShift;
+import vibe3d.editing.commands.editor.commands.mesh.stroke_extrude : MeshStrokeExtrude;
+import vibe3d.editing.commands.editor.commands.mesh.vertex_extrude : MeshVertexExtrude;
 
 enum string kL8Family = "extrude_extend";
 enum string kL8Stand  = "makeTaggedGridBent(3)";

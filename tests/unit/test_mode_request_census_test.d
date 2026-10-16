@@ -4,7 +4,7 @@
 // rather than from a copied route list. The task baseline has nine members.
 module tests.unit.test_mode_request_census_test;
 
-import http_server : HttpRequestContext;
+import vibe3d.runtime.http.http_server : HttpRequestContext;
 import std.algorithm : count;
 import std.file : readText;
 import std.format : format;

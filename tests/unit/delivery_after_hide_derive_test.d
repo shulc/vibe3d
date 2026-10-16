@@ -71,7 +71,7 @@
 // would pass over a rig that no longer discriminates.
 module tests.unit.delivery_after_hide_derive_test;
 
-import command;
+import vibe3d.editing.commands.runtime.command;
 import vibe3d.editing.pipeline.contracts.operator : Operator, Task, VectorStack, PacketKind, OperatorActrCommon;
 import vibe3d.mesh.core.mesh;
 import vibe3d.viewport.camera.view;

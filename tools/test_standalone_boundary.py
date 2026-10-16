@@ -29,10 +29,9 @@ class BoundaryControls(unittest.TestCase):
             target = cls.project / relative / 'dub.json'
             target.parent.mkdir(parents=True, exist_ok=True)
             shutil.copyfile(actual / relative / 'dub.json', target)
-            result = subprocess.run(['dub', 'describe', '--root=' + str(actual / relative),
-                '--config=' + ('modeling-noai' if relative in ('packages/command-runtime', 'packages/application-core') else 'core'
-                               if relative == 'tests/core' else 'application'),
-                '--compiler=dmd', '--quiet'], text=True, capture_output=True, check=True)
+            config = ('modeling-noai' if relative in ('libraries/editing/commands/runtime', 'libraries/runtime/application-core') else 'core' if relative == 'tests/core' else 'application')
+            result = subprocess.run(boundary.describe_arguments(actual / relative, config, 'dmd'),
+                text=True, capture_output=True, check=True)
             cls.descriptions[relative] = json.loads(result.stdout.replace(str(actual), str(cls.project)))
         for spec in support.SPECS.values():
             target=cls.project/spec['root']/'dub.json'
@@ -100,12 +99,18 @@ class BoundaryControls(unittest.TestCase):
         with tempfile.TemporaryDirectory(prefix='boundary-coordinate-') as directory:
             root = Path(directory)
             for owner, old, new, spans in census._WAVE19_COORDINATES:
+                if owner in ("desktop", "desktop-tests", "cli"):
+                    continue
                 old_root, new_root = next(row[1:] for row in census._WAVE19_OWNERS
                                           if row[0] == owner)
                 for moved in (False, True):
                     recipe = root / (new_root if moved else old_root) / 'dub.json'
                     recipe.parent.mkdir(parents=True, exist_ok=True)
-                    recipe.write_text(json.dumps({'name': owner if moved else 'vibe3d-' + owner}))
+                    value = {'name': owner if moved else 'vibe3d-' + owner}
+                    if owner == 'cli' and moved:
+                        value.update(targetName='vibe3d-cli', targetPath='../..',
+                                     mainSourceFile='source/vibe3d/apps/cli/main.d')
+                    recipe.write_text(json.dumps(value))
                     physical = root / (new if moved else old)
                     physical.parent.mkdir(parents=True, exist_ok=True)
                     offset, current, original = spans[0]
@@ -154,9 +159,216 @@ class BoundaryControls(unittest.TestCase):
                                 census._wave19_coordinate(root / old, root)
                     physical.unlink()
                     recipe.unlink()
-        self.assertEqual(len(census._WAVE19_CLIENT_IMPORTS), 943)
-        self.assertEqual(sum(map(len, census._WAVE19_CLIENT_IMPORTS.values())), 5098)
-        # Approved27 non-import identities: both referenced-owner states use
+        # The distinct root/CLI/stationary roles use the actual final selected
+        # inputs. The same strict scanner must refuse their own raw duplicate.
+        for role in ('desktop', 'cli', 'desktop-tests'):
+            row = next(row for row in census._WAVE19_COORDINATES if row[0] == role)
+            owner, old, new, spans = row
+            physical, selected = census._wave19_coordinate(actual / old, actual)
+            self.assertEqual((physical, selected), (actual / new, spans))
+            read = Path.read_text
+            raw = read(physical)
+            def changed(path, *args, **kwargs):
+                return raw + '\nmodule wrong;\n' if path == physical else read(path, *args, **kwargs)
+            with self.subTest(selected_role=role), patch.object(Path, 'read_text', changed):
+                with self.assertRaisesRegex(ValueError, 'Wave19 real declaration identity:'):
+                    census._wave19_coordinate(actual / old, actual)
+        # Four desktop stages reach the actual coordinate/target callers. The
+        # six peers select rows, not the unrelated desktop or containing owner.
+        with tempfile.TemporaryDirectory(prefix='boundary-final-roles-') as directory:
+            root = Path(directory)
+            rows = [row for row in census._WAVE19_COORDINATES if row[0] == 'desktop']
+            self.assertEqual(len(rows), 79)
+            peers = sum(census._WAVE19_APP_PEER_GROUPS, [])
+            def put(relative, raw):
+                path = root / relative
+                path.parent.mkdir(parents=True, exist_ok=True)
+                path.write_text(raw)
+            def desktop(stage):
+                selected = set(peers[:stage]) if stage != 79 else {row[2] for row in rows}
+                recipe = dict(name='vibe3d', sourcePaths=['apps/desktop/source' if stage == 79 else 'source'],
+                    mainSourceFile='apps/desktop/source/vibe3d/apps/desktop/app.d' if stage == 79 else 'source/app.d',
+                    sourceFiles=[] if stage == 79 else peers[:stage],
+                    importPaths=['apps/desktop/source'] if stage else [])
+                put('dub.json', json.dumps(recipe))
+                for owner, old, new, spans in rows:
+                    for relative in (old, new):
+                        (root / relative).unlink(missing_ok=True)
+                    offset, current, original = spans[0]
+                    moved = new in selected
+                    put(new if moved else old, ' ' * (offset - 7) + 'module '
+                        + (current if moved else original) + ';\n')
+                return recipe, selected
+            target = next(row for row in rows if row[2] == peers[0])
+            unrelated = next(row for row in rows if row[2] not in peers)
+            for stage in (0, 3, 6, 79):
+                recipe, selected = desktop(stage)
+                for row in (target, unrelated):
+                    moved = row[2] in selected
+                    self.assertEqual(census._wave19_coordinate(root / row[1], root),
+                        (root / (row[2] if moved else row[1]), row[3] if moved else ()),
+                        'desktop selected row caller stage=' + str(stage))
+                    self.assertEqual(census._wave19_target_moved(root, row[1]), moved,
+                        'exact referenced desktop row, independent of other selected peers')
+                # ID394 follows the early6 viewport definition, while the
+                # containing desktop root is still old at that stage.
+                identity = next(row for row in census._WAVE19_IDENTITIES if row[0] == 'ID394')
+                viewport = next(row for row in rows if row[1] == identity[3])
+                moved = viewport[2] in selected
+                anchor, at, before, after = identity[4:8]
+                raw = anchor[:at] + (after if moved else before) + anchor[at + len(before):] + '\n'
+                census._wave19_identity_intact(root / identity[1], raw, root)
+                wrong = anchor[:at] + (before if moved else after) + anchor[at + len(before):] + '\n'
+                with self.assertRaisesRegex(ValueError, 'Wave19 raw approved identity anchor: ID394'):
+                    census._wave19_identity_intact(root / identity[1], wrong, root)
+                changes = [
+                    ('name', 'other', 'root application identity'),
+                    ('sourcePaths', ['source', 'apps/desktop/source'], 'desktop selected root coordinates'),
+                    ('mainSourceFile', 'other.d', 'desktop selected root coordinates'),
+                    ('sourceFiles', [peers[0], peers[0]], 'duplicate root explicit source'),
+                    ('sourceFiles', ['outside.d'], 'unauthorized root explicit'),
+                    ('sourceFiles', peers[:1], 'duplicate final desktop source ownership' if stage == 79
+                     else 'incomplete coupled desktop peer stage')]
+                if stage:
+                    changes.append(('importPaths', ['source'], 'duplicate final desktop source ownership'
+                                    if stage == 79 else 'selected desktop peer import root'))
+                if stage != 79:
+                    changes.extend(('sourceFiles', peers[3:6] if index == 3 else
+                                    [peers[3] if position == index else peers[position] for position in range(3)],
+                                    'incomplete coupled desktop peer stage') for index in range(4))
+                for field, value, reason in changes:
+                    changed = dict(recipe, **{field: value})
+                    put('dub.json', json.dumps(changed))
+                    with self.subTest(stage=stage, field=field, value=value):
+                        with self.assertRaisesRegex(ValueError, 'Wave19 ' + reason):
+                            census._wave19_coordinate(root / target[1], root)
+                    put('dub.json', json.dumps(recipe))
+                physical = root / (target[2] if target[2] in selected else target[1])
+                saved = physical.read_text()
+                physical.unlink()
+                with self.assertRaisesRegex(ValueError, 'Wave19 real source identity:'):
+                    census._wave19_target_moved(root, target[1])
+                physical.write_text(saved)
+                other = root / (target[1] if target[2] in selected else target[2])
+                put(other.relative_to(root), saved)
+                with self.assertRaisesRegex(ValueError, 'Wave19 real source identity:'):
+                    census._wave19_target_moved(root, target[1])
+                other.unlink()
+                physical.write_text(saved + 'module wrong;\n')
+                with self.assertRaisesRegex(ValueError, 'Wave19 real declaration identity:'):
+                    census._wave19_target_moved(root, target[1])
+                physical.write_text(saved)
+                # This production import-operand caller must select the named
+                # module, rather than the containing desktop state.
+                for row in (target, unrelated):
+                    # spans[0] is (offset,current,original).
+                    spelling = row[3][0][1] if row[2] in selected else row[3][0][2]
+                    text = 'import ' + spelling + ';'
+                    self.assertEqual(census._wave19_special_operand_moved(root, text, 7,
+                        row[3][0][1], row[3][0][2], 'desktop'), row[2] in selected)
+                with self.assertRaisesRegex(ValueError, 'Wave19 exact special-role client target'):
+                    census._wave19_special_operand_moved(root, 'import absent;', 7, 'absent', 'absent', 'desktop')
+            # Frozen-table malformed populations still reach the actual caller.
+            saved_rows = census._WAVE19_COORDINATES
+            other = next(row for row in rows if row[1] not in (target[1], unrelated[1]))
+            for label, replacement in (
+                    ('missing79', tuple(row for row in saved_rows if row != other)),
+                    ('duplicate-old79', tuple((row[0], unrelated[1], row[2], row[3]) if row == other else row for row in saved_rows)),
+                    ('duplicate-new79', tuple((row[0], row[1], unrelated[2], row[3]) if row == other else row for row in saved_rows))):
+                with self.subTest(desktop_table=label), patch.object(census, '_WAVE19_COORDINATES', replacement):
+                    with self.assertRaisesRegex(ValueError, 'Wave19 desktop frozen79 coordinate population'):
+                        census._wave19_coordinate(root / target[1], root)
+            groups = census._WAVE19_APP_PEER_GROUPS
+            for replacement in (groups[:1], [groups[0][1:], groups[1]], [groups[0], [groups[0][0], *groups[1][1:]]]):
+                with patch.object(census, '_WAVE19_APP_PEER_GROUPS', replacement):
+                    with self.assertRaisesRegex(ValueError, 'Wave19 desktop six coupled-peer population'):
+                        census._wave19_coordinate(root / target[1], root)
+            with self.assertRaisesRegex(ValueError, 'Wave19 exact referenced target coordinate'):
+                census._wave19_target_moved(root, 'source/absent.d')
+            # Stationary host peers follow their own library recipe even when
+            # the desktop has the opposite selected state.
+            host = next(row for row in census._WAVE19_COORDINATES if row[0] == 'desktop-tests')
+            owner = census._WAVE19_HOST_PEER_OWNERS[host[1]]
+            old_root, new_root = next(row[1:] for row in census._WAVE19_OWNERS if row[0] == owner)
+            for moved in (False, True):
+                desktop(0 if moved else 79)
+                for relative in (old_root, new_root):
+                    (root / relative / 'dub.json').unlink(missing_ok=True)
+                put((new_root if moved else old_root) + '/dub.json', json.dumps(dict(name=owner if moved else 'vibe3d-' + owner)))
+                offset, current, original = host[3][0]
+                put(host[1], ' ' * (offset - 7) + 'module ' + (current if moved else original) + ';\n')
+                self.assertEqual(census._wave19_target_moved(root, host[1]), moved,
+                                 'stationary host selects its referenced library, independent of desktop')
+                put(host[1], ' ' * (offset - 7) + 'module ' + (original if moved else current) + ';\n')
+                with self.assertRaisesRegex(ValueError, 'Wave19 real declaration identity:'):
+                    census._wave19_target_moved(root, host[1])
+            cli = next(row for row in census._WAVE19_COORDINATES if row[0] == 'cli')
+            cli_recipe = dict(name='cli', targetName='vibe3d-cli', targetPath='../..', mainSourceFile='source/vibe3d/apps/cli/main.d')
+            put('apps/cli/dub.json', json.dumps(cli_recipe))
+            offset, current, original = cli[3][0]
+            put(cli[2], ' ' * (offset - 7) + 'module ' + current + ';\n')
+            self.assertTrue(census._wave19_target_moved(root, cli[1]), 'CLI actual target positive')
+            for field in ('targetName', 'targetPath', 'mainSourceFile'):
+                put('apps/cli/dub.json', json.dumps(dict(cli_recipe, **{field: 'wrong'})))
+                with self.subTest(cli_field=field), self.assertRaisesRegex(ValueError, 'Wave19 CLI output/source root identity'):
+                    census._wave19_target_moved(root, cli[1])
+                put('apps/cli/dub.json', json.dumps(cli_recipe))
+        # The actual read chain validates a raw locator before applying syntax
+        # or historical inverses. A legitimate full source is the control.
+        locator = next(row for row in census._WAVE19_LOCATORS if row[0] == 'L05-oblique-root-fixture')
+        ident, relative, owner, original, current = locator
+        coordinate = next(row for row in census._WAVE19_COORDINATES if row[1] == relative)
+        old_root, new_root = next(row[1:] for row in census._WAVE19_OWNERS if row[0] == owner)
+        with tempfile.TemporaryDirectory(prefix='boundary-locator-caller-') as directory:
+            root = Path(directory)
+            recipe = root / new_root / 'dub.json'
+            recipe.parent.mkdir(parents=True, exist_ok=True)
+            recipe.write_text(json.dumps(dict(name=owner)))
+            physical = root / coordinate[2]
+            physical.parent.mkdir(parents=True, exist_ok=True)
+            good = (actual / coordinate[2]).read_text()
+            physical.write_text(good)
+            self.assertIn(original, census.read_source_text(root / relative, root=root),
+                          'locator caller reaches complete original inverse')
+            for label, raw in (
+                    ('missing', good.replace(current, '0')),
+                    ('malformed', good.replace(current, current.replace('kFixtureName', 'wrongFixture'))),
+                    ('duplicate', good + '\n' + current + '\n'),
+                    ('comment', good.replace(current, '/*' + current + '*/')),
+                    ('string', good.replace(current, '`' + current + '`')),
+                    ('wrong-state', good.replace(current, original))):
+                physical.write_text(raw)
+                with self.subTest(locator_case=label), self.assertRaisesRegex(ValueError, 'Wave19 raw whole locator: L05'):
+                    census.read_source_text(root / relative, root=root)
+            physical.write_text(good)
+        # L02 is the sole original __FILE__ locator arm. Keep the owner old
+        # and call the real reader so this also covers its no-inversion path.
+        locator = next(row for row in census._WAVE19_LOCATORS if row[0] == 'L02-pen-owner-fixture')
+        ident, relative, owner, original, current = locator
+        coordinate = next(row for row in census._WAVE19_COORDINATES if row[1] == relative)
+        old_root, new_root = next(row[1:] for row in census._WAVE19_OWNERS if row[0] == owner)
+        old_source = census.read_source_text(actual / relative, root=actual)
+        self.assertIn(original, old_source)
+        with tempfile.TemporaryDirectory(prefix='boundary-old-locator-caller-') as directory:
+            root = Path(directory)
+            recipe = root / old_root / 'dub.json'
+            recipe.parent.mkdir(parents=True, exist_ok=True)
+            recipe.write_text(json.dumps(dict(name='vibe3d-' + owner)))
+            physical = root / relative
+            physical.parent.mkdir(parents=True, exist_ok=True)
+            physical.write_text(old_source)
+            self.assertEqual(census.read_source_text(physical, root=root), old_source,
+                             'old __FILE__ locator actual caller preserves unmoved complete body')
+            for label, changed in (
+                    ('old macro in comment', old_source.replace(original, '/*' + original + '*/')),
+                    ('wrong current state', old_source.replace(original, current))):
+                physical.write_text(changed)
+                with self.subTest(old_locator=label), self.assertRaisesRegex(ValueError, 'Wave19 raw whole locator: L02'):
+                    census.read_source_text(physical, root=root)
+            physical.write_text(old_source)
+        self.assertEqual(len(census._WAVE19_CLIENT_IMPORTS), 390)
+        self.assertEqual(sum(map(len, census._WAVE19_CLIENT_IMPORTS.values())), 3359)
+        # Approved454 non-import identities: both referenced-owner states use
         # the real production raw guard with the ordinary native lexer.
         def identity_fixture(relative, moved, *, literal_context=True):
             parts = []
@@ -179,10 +391,18 @@ class BoundaryControls(unittest.TestCase):
         with tempfile.TemporaryDirectory(prefix='boundary-identity-') as directory:
             root = Path(directory)
             for moved in (False, True):
+                (root / 'dub.json').write_text(json.dumps(dict(name='vibe3d',
+                    sourcePaths=['apps/desktop/source' if moved else 'source'],
+                    mainSourceFile='apps/desktop/source/vibe3d/apps/desktop/app.d' if moved else 'source/app.d',
+                    sourceFiles=[], importPaths=['apps/desktop/source'] if moved else [])))
                 for owner, old_root, new_root in census._WAVE19_OWNERS:
                     recipe = root / (new_root if moved else old_root) / 'dub.json'
                     recipe.parent.mkdir(parents=True, exist_ok=True)
-                    recipe.write_text(json.dumps({'name': owner if moved else 'vibe3d-' + owner}))
+                    value = {'name': owner if moved else 'vibe3d-' + owner}
+                    if owner == 'cli' and moved:
+                        value.update(targetName='vibe3d-cli', targetPath='../..',
+                                     mainSourceFile='source/vibe3d/apps/cli/main.d')
+                    recipe.write_text(json.dumps(value))
                 for owner, old, new, spans in census._WAVE19_COORDINATES:
                     offset, current, original = spans[0]
                     physical = root / (new if moved else old)
@@ -237,7 +457,7 @@ class BoundaryControls(unittest.TestCase):
                     with self.assertRaisesRegex(ValueError, 'Wave19 raw approved identity anchor:'):
                         census.read_source_text(root / logical, root=root)
                     target.write_text(raw)
-                    relative = 'packages/interactive-tools/tests/source/tests/unit/prepared_tool_transition_test.d'
+                    relative = 'tests/unit/mesh_thicken_surface_test.d'
                     raw = (actual / relative).read_text()
                     expected = census._wave19_import_original(actual / relative, raw, actual)
                     self.assertEqual(census._wave19_import_original(root / relative, raw, root), expected)
@@ -290,21 +510,24 @@ class BoundaryControls(unittest.TestCase):
         source = actual / 'tools/dspans/census_contracts.py'
         tree = ast.parse(source.read_text())
         names = ('_WAVE19_OWNERS', '_WAVE19_COORDINATES', '_WAVE19_CLIENT_IMPORTS',
-                 '_WAVE19_COORDINATE_PRIOR_IMPORTS', '_WAVE19_IDENTITIES', '_WAVE19_IDENTITY_PIN')
+                 '_WAVE19_COORDINATE_PRIOR_IMPORTS', '_WAVE19_IDENTITIES', '_WAVE19_IDENTITY_PIN',
+                 '_WAVE19_APP_PEER_GROUPS', '_WAVE19_HOST_PEER_OWNERS', '_WAVE19_LOCATORS')
         namespace = {'_source_validity': [], 'dspans_client': census.dspans_client}
         for node in tree.body:
             if (isinstance(node, ast.Assign) and isinstance(node.targets[0], ast.Name)
                     and node.targets[0].id in names):
                 namespace[node.targets[0].id] = ast.literal_eval(node.value)
         functions = ('_wave19_moved', '_wave19_original', '_wave19_coordinate',
-                     '_wave19_identity_intact', '_wave19_import_original')
+                     '_wave19_identity_intact', '_wave19_import_original', '_wave19_app_state',
+                     '_wave19_row_moved', '_wave19_target_moved', '_wave19_special_operand_moved',
+                     '_wave19_locator_intact')
         nodes = [node for node in tree.body
                  if isinstance(node, ast.FunctionDef) and node.name in functions]
         self.assertEqual({node.name for node in nodes}, set(functions))
         exec(compile(ast.Module(body=nodes, type_ignores=[]), str(source), 'exec'), namespace)
         clients = namespace['_WAVE19_CLIENT_IMPORTS']
-        self.assertEqual(len(clients), 943)
-        self.assertEqual(sum(map(len, clients.values())), 5098)
+        self.assertEqual(len(clients), 390)
+        self.assertEqual(sum(map(len, clients.values())), 3359)
         inverse = namespace['_wave19_import_original']
         hashes = []
         for relative in sorted(clients):
@@ -315,8 +538,8 @@ class BoundaryControls(unittest.TestCase):
         # reviewed D1 body deltas and three finite D2 reader/control transforms.
         # Expected construction never reads candidate client source for hashes.
         digest = hashlib.sha256(json.dumps(hashes, separators=(',', ':')).encode()).hexdigest()
-        self.assertEqual(digest, '3dad8e2d2b297d5fba38d1507547f67d5629a87a558c50cf8dc50aba9eaa105f',
-                         'Wave19 all943 current logical client bodies')
+        self.assertEqual(digest, '90297c51262a5d32a5b86d1d4bcfa0a887534abe9558348052507da8e25f3bef',
+                         'Wave19 all390 current logical client bodies')
         # Newly owned sources retain their prior-D1 imported spelling only
         # while the D2 owner itself remains at the old coordinate. Exercise the
         # actual read_source_text old-coordinate branch for every37 source/84
@@ -397,13 +620,80 @@ class BoundaryControls(unittest.TestCase):
  'mesh-ops',
  'mesh-preview',
  'mesh-snapshot',
- 'pipe-contracts')
+ 'pipe-contracts',
+ 'display-policy',
+ 'document-channels',
+ 'interaction-query',
+ 'interchange',
+ 'pipe-runtime',
+ 'remesh-runtime',
+ 'render-backends',
+ 'selection-model',
+ 'tool-state',
+ 'document-io',
+ 'pipe-evaluation',
+ 'viewport-gpu',
+ 'ai-advisor',
+ 'ai3d-runtime',
+ 'alignment-ops',
+ 'creation-ops',
+ 'scene-query',
+ 'subpatch-preview',
+ 'transform-ops',
+ 'command-runtime',
+ 'application-core',
+ 'editor-commands',
+ 'interactive-tools',
+ 'forms-model',
+ 'http-runtime',
+ 'platform-file',
+ 'viewport-host',
+ 'document-actions',
+ 'editor-ui')
         enabled = {'tests.unit.fixtures',
  'tests.unit.mesh_by_value_gate',
+ 'vibe3d.documents.channels.tests.unit.document_channels_population_test',
+ 'vibe3d.documents.channels.tests.unit.layer_params_test',
  'vibe3d.documents.image_codec.tests.unit.image_codec_population_test',
  'vibe3d.documents.image_codec.tests.unit.io.image_decode_source_cells_test',
  'vibe3d.documents.image_codec.tests.unit.io.image_decode_test',
+ 'vibe3d.documents.interchange.io.lwo_import',
+ 'vibe3d.documents.interchange.io.scene_import',
+ 'vibe3d.documents.interchange.io.scene_ir',
+ 'vibe3d.documents.interchange.tests.unit.assimp_wire_test',
+ 'vibe3d.documents.interchange.tests.unit.io.lwo_export_ptag_census_test',
+ 'vibe3d.documents.interchange.tests.unit.io.lwo_export_test',
+ 'vibe3d.documents.interchange.tests.unit.io.lwo_import_test',
+ 'vibe3d.documents.io.io.native',
+ 'vibe3d.documents.io.tests.unit.document_io_population_test',
+ 'vibe3d.documents.io.tests.unit.io.image_path_test',
+ 'vibe3d.documents.io.tests.unit.io.native_source_cells_test',
+ 'vibe3d.documents.io.tests.unit.io.native_test',
  'vibe3d.documents.model.tests.unit.document_test',
+ 'vibe3d.editing.commands.editor.commands.mesh.edge_crease',
+ 'vibe3d.editing.commands.editor.tests.unit.commands.layer.xform_edit_source_public_test',
+ 'vibe3d.editing.commands.editor.tests.unit.commands.mesh.edge_crease_source_public_test',
+ 'vibe3d.editing.commands.editor.tests.unit.commands.mesh.remove_source_public_test',
+ 'vibe3d.editing.commands.editor.tests.unit.commands.mesh.symmetrize_source_public_test',
+ 'vibe3d.editing.commands.editor.tests.unit.commands.mesh.vertex_set_source_public_test',
+ 'vibe3d.editing.commands.editor.tests.unit.commands.select.boundary_source_public_test',
+ 'vibe3d.editing.commands.editor.tests.unit.commands.select.by_stat_source_public_test',
+ 'vibe3d.editing.commands.editor.tests.unit.commands.select.by_tag_source_public_test',
+ 'vibe3d.editing.commands.editor.tests.unit.commands.select.type_from_source_public_test',
+ 'vibe3d.editing.commands.editor.tests.unit.editor_commands_population_test',
+ 'vibe3d.editing.commands.runtime.command_history',
+ 'vibe3d.editing.commands.runtime.command_registry',
+ 'vibe3d.editing.commands.runtime.tests.unit.base_revert_flag_test',
+ 'vibe3d.editing.commands.runtime.tests.unit.command_apply_anchor_test',
+ 'vibe3d.editing.commands.runtime.tests.unit.command_bindargs_test',
+ 'vibe3d.editing.commands.runtime.tests.unit.command_history_source_public_test',
+ 'vibe3d.editing.commands.runtime.tests.unit.command_registry_test',
+ 'vibe3d.editing.commands.runtime.tests.unit.command_runtime_population_test',
+ 'vibe3d.editing.commands.runtime.tests.unit.command_source_public_test',
+ 'vibe3d.editing.commands.runtime.tests.unit.commands.mesh.session_edit_source_public_test',
+ 'vibe3d.editing.commands.runtime.tests.unit.commands.select.element_source_public_test',
+ 'vibe3d.editing.commands.runtime.tests.unit.record_observer_hub_source_public_test',
+ 'vibe3d.editing.commands.runtime.tests.unit.session_edit_payload_test',
  'vibe3d.editing.contracts.tests.unit.seltype_test',
  'vibe3d.editing.interaction.data.tests.unit.ai.advisor_test',
  'vibe3d.editing.interaction.data.tests.unit.ai.debug_trace_test',
@@ -414,6 +704,184 @@ class BoundaryControls(unittest.TestCase):
  'vibe3d.editing.params.tests.unit.params_test',
  'vibe3d.editing.pipeline.contracts.tests.unit.operator_test',
  'vibe3d.editing.pipeline.contracts.tests.unit.toolpipe.packets_test',
+ 'vibe3d.editing.pipeline.evaluation.tests.unit.falloff_screen_default_test',
+ 'vibe3d.editing.pipeline.evaluation.tests.unit.toolpipe.obbox_regression_test',
+ 'vibe3d.editing.pipeline.evaluation.tests.unit.toolpipe.obbox_test',
+ 'vibe3d.editing.pipeline.evaluation.tests.unit.toolpipe.pipeline_order_test',
+ 'vibe3d.editing.pipeline.evaluation.tests.unit.toolpipe.prepared_stage_regression_test',
+ 'vibe3d.editing.pipeline.evaluation.tests.unit.toolpipe.snap_stage_regression_test',
+ 'vibe3d.editing.pipeline.evaluation.tests.unit.toolpipe.stages.actcenter_test',
+ 'vibe3d.editing.pipeline.evaluation.tests.unit.toolpipe.stages.axis_test',
+ 'vibe3d.editing.pipeline.evaluation.tests.unit.toolpipe.stages.falloff_test',
+ 'vibe3d.editing.pipeline.evaluation.tests.unit.toolpipe.stages.snap_test',
+ 'vibe3d.editing.pipeline.evaluation.tests.unit.toolpipe.stages.symmetry_test',
+ 'vibe3d.editing.pipeline.evaluation.tests.unit.toolpipe.stages.workplane_test',
+ 'vibe3d.editing.pipeline.evaluation.toolpipe.stages.actcenter',
+ 'vibe3d.editing.pipeline.evaluation.toolpipe.stages.axis',
+ 'vibe3d.editing.pipeline.evaluation.toolpipe.stages.constrain',
+ 'vibe3d.editing.pipeline.evaluation.toolpipe.stages.falloff',
+ 'vibe3d.editing.pipeline.evaluation.toolpipe.stages.snap',
+ 'vibe3d.editing.pipeline.runtime.tests.unit.falloff_selection_bake_test',
+ 'vibe3d.editing.pipeline.runtime.tests.unit.falloff_test',
+ 'vibe3d.editing.pipeline.runtime.tests.unit.toolpipe.pipeline_registration_test',
+ 'vibe3d.editing.pipeline.runtime.tests.unit.toolpipe.required_packets_witness_test',
+ 'vibe3d.editing.pipeline.runtime.tests.unit.toolpipe.view_only_subject_pin_test',
+ 'vibe3d.editing.selection.model.tests.unit.selection_model_population_test',
+ 'vibe3d.editing.selection.model.tests.unit.selection_product_source_public_test',
+ 'vibe3d.editing.selection.model.tests.unit.selection_projection_algorithm_cells_test',
+ 'vibe3d.editing.selection.query.snap',
+ 'vibe3d.editing.selection.query.symmetry',
+ 'vibe3d.editing.selection.query.tests.unit.constraint_regression_test',
+ 'vibe3d.editing.selection.query.tests.unit.constraint_test',
+ 'vibe3d.editing.selection.query.tests.unit.path_test',
+ 'vibe3d.editing.selection.query.tests.unit.snap_election_corpus_test',
+ 'vibe3d.editing.selection.query.tests.unit.snap_regression_test',
+ 'vibe3d.editing.selection.query.tests.unit.snap_test',
+ 'vibe3d.editing.selection.query.tests.unit.symmetry_regression_test',
+ 'vibe3d.editing.selection.query.tests.unit.viewgrid_regression_test',
+ 'vibe3d.editing.selection.query.tests.unit.viewgrid_test',
+ 'vibe3d.editing.selection.query.tests.unit.workplane_fit_test',
+ 'vibe3d.editing.selection.scene_query.bvh_pick',
+ 'vibe3d.editing.selection.scene_query.tests.unit.bvh_pick_test',
+ 'vibe3d.editing.selection.scene_query.tests.unit.scene_query_population_test',
+ 'vibe3d.editing.tools.alignment.tests.unit.alignment_ops_population_test',
+ 'vibe3d.editing.tools.alignment.tests.unit.tools.alignment.align_kernels_test',
+ 'vibe3d.editing.tools.alignment.tools.alignment.align_kernels',
+ 'vibe3d.editing.tools.creation.tests.unit.tools.create.pen_geometry_population_test',
+ 'vibe3d.editing.tools.creation.tests.unit.tools.create.pen_geometry_test',
+ 'vibe3d.editing.tools.interactive.drag',
+ 'vibe3d.editing.tools.interactive.drag_identity',
+ 'vibe3d.editing.tools.interactive.drag_source_cells',
+ 'vibe3d.editing.tools.interactive.edit_session',
+ 'vibe3d.editing.tools.interactive.falloff_rmb_discipline_test',
+ 'vibe3d.editing.tools.interactive.handles.arbiter_source_cells',
+ 'vibe3d.editing.tools.interactive.handles.gizmo_metrics',
+ 'vibe3d.editing.tools.interactive.handles.gl_util',
+ 'vibe3d.editing.tools.interactive.handles.gl_util_source_cells',
+ 'vibe3d.editing.tools.interactive.handles.shapes',
+ 'vibe3d.editing.tools.interactive.overlay_space_source_cells',
+ 'vibe3d.editing.tools.interactive.prepared_bridge_activation_source_cells',
+ 'vibe3d.editing.tools.interactive.prepared_command_wrapper_activation_source_cells',
+ 'vibe3d.editing.tools.interactive.prepared_edge_bevel_activation_source_cells',
+ 'vibe3d.editing.tools.interactive.prepared_edge_extend_deactivate_source_cells',
+ 'vibe3d.editing.tools.interactive.prepared_edge_extend_tool_activation_source_cells',
+ 'vibe3d.editing.tools.interactive.prepared_edge_extrude_activation_source_cells',
+ 'vibe3d.editing.tools.interactive.prepared_edge_slice_activation_source_cells',
+ 'vibe3d.editing.tools.interactive.prepared_edge_slice_deactivate_source_cells',
+ 'vibe3d.editing.tools.interactive.prepared_inherited_noop_source_cells',
+ 'vibe3d.editing.tools.interactive.prepared_loop_slice_activation_source_cells',
+ 'vibe3d.editing.tools.interactive.prepared_loop_slice_deactivate_source_cells',
+ 'vibe3d.editing.tools.interactive.prepared_mirror_activation_source_cells',
+ 'vibe3d.editing.tools.interactive.prepared_move_update_source_cells',
+ 'vibe3d.editing.tools.interactive.prepared_pipe_activation_source_cells',
+ 'vibe3d.editing.tools.interactive.prepared_poly_bevel_activation_source_cells',
+ 'vibe3d.editing.tools.interactive.prepared_poly_extrude_activation_source_cells',
+ 'vibe3d.editing.tools.interactive.prepared_poly_inset_activation_source_cells',
+ 'vibe3d.editing.tools.interactive.prepared_private_state',
+ 'vibe3d.editing.tools.interactive.prepared_private_state_source_cells',
+ 'vibe3d.editing.tools.interactive.prepared_radial_array_transition_source_cells',
+ 'vibe3d.editing.tools.interactive.prepared_radial_sweep_transition_source_cells',
+ 'vibe3d.editing.tools.interactive.prepared_record_context',
+ 'vibe3d.editing.tools.interactive.prepared_record_context_source_cells',
+ 'vibe3d.editing.tools.interactive.prepared_rotate_update_source_cells',
+ 'vibe3d.editing.tools.interactive.prepared_scale_update_source_cells',
+ 'vibe3d.editing.tools.interactive.prepared_selection_profile_source_cells',
+ 'vibe3d.editing.tools.interactive.prepared_slice_activation_source_cells',
+ 'vibe3d.editing.tools.interactive.prepared_slice_deactivate_source_cells',
+ 'vibe3d.editing.tools.interactive.prepared_smooth_shift_activation_source_cells',
+ 'vibe3d.editing.tools.interactive.prepared_stroke_extrude_activation_source_cells',
+ 'vibe3d.editing.tools.interactive.prepared_tack_activation_source_cells',
+ 'vibe3d.editing.tools.interactive.prepared_topology_pen_activation_source_cells',
+ 'vibe3d.editing.tools.interactive.prepared_topology_pen_deactivate_source_cells',
+ 'vibe3d.editing.tools.interactive.prepared_topology_pen_update_source_cells',
+ 'vibe3d.editing.tools.interactive.prepared_transform_activation_source_cells',
+ 'vibe3d.editing.tools.interactive.prepared_transform_product_activation_source_cells',
+ 'vibe3d.editing.tools.interactive.prepared_vertex_bevel_activation_source_cells',
+ 'vibe3d.editing.tools.interactive.prepared_vertex_extrude_activation_source_cells',
+ 'vibe3d.editing.tools.interactive.prepared_vertex_merge_activation_source_cells',
+ 'vibe3d.editing.tools.interactive.prepared_xfrm_activation_session_source_cells',
+ 'vibe3d.editing.tools.interactive.registry',
+ 'vibe3d.editing.tools.interactive.registry_source_cells',
+ 'vibe3d.editing.tools.interactive.snap_render',
+ 'vibe3d.editing.tools.interactive.snap_render_source_cells',
+ 'vibe3d.editing.tools.interactive.snap_render_source_helpers',
+ 'vibe3d.editing.tools.interactive.tests.unit.close_reason_table_test',
+ 'vibe3d.editing.tools.interactive.tests.unit.command_history_test',
+ 'vibe3d.editing.tools.interactive.tests.unit.command_wrapper_result_test',
+ 'vibe3d.editing.tools.interactive.tests.unit.commands.mesh.edge_slide_result_builder_test',
+ 'vibe3d.editing.tools.interactive.tests.unit.commands.mesh.jitter_result_builder_test',
+ 'vibe3d.editing.tools.interactive.tests.unit.constraint_surface_at_test',
+ 'vibe3d.editing.tools.interactive.tests.unit.deform_magnet_test',
+ 'vibe3d.editing.tools.interactive.tests.unit.drag_gain_oblique_test',
+ 'vibe3d.editing.tools.interactive.tests.unit.edge_slice_locate_base_test',
+ 'vibe3d.editing.tools.interactive.tests.unit.edit_session_test',
+ 'vibe3d.editing.tools.interactive.tests.unit.gesture_carrier_interface_test',
+ 'vibe3d.editing.tools.interactive.tests.unit.gesture_record_belt_test',
+ 'vibe3d.editing.tools.interactive.tests.unit.handles.gl_util_test',
+ 'vibe3d.editing.tools.interactive.tests.unit.mesh_ops.bridge_frozen_kernel_test',
+ 'vibe3d.editing.tools.interactive.tests.unit.model_preview_test',
+ 'vibe3d.editing.tools.interactive.tests.unit.overlay_space_test',
+ 'vibe3d.editing.tools.interactive.tests.unit.quad_overlay_eligibility_test',
+ 'vibe3d.editing.tools.interactive.tests.unit.shared_hover_record_test',
+ 'vibe3d.editing.tools.interactive.tests.unit.tool_gesture_runopen_test',
+ 'vibe3d.editing.tools.interactive.tests.unit.tool_single_operation_equivalence_test',
+ 'vibe3d.editing.tools.interactive.tests.unit.toolpipe.local_component_frame_test',
+ 'vibe3d.editing.tools.interactive.tests.unit.tools.alignment.mirror_test',
+ 'vibe3d.editing.tools.interactive.tests.unit.tools.create.arc_test',
+ 'vibe3d.editing.tools.interactive.tests.unit.tools.create.box_test',
+ 'vibe3d.editing.tools.interactive.tests.unit.tools.create.create_common_test',
+ 'vibe3d.editing.tools.interactive.tests.unit.tools.create.tube_test',
+ 'vibe3d.editing.tools.interactive.tests.unit.tools.edit.preview_topology_churn_test',
+ 'vibe3d.editing.tools.interactive.tests.unit.tools.edit.smooth_relax_test',
+ 'vibe3d.editing.tools.interactive.tests.unit.tools.edit.tack_test',
+ 'vibe3d.editing.tools.interactive.tests.unit.tools.slice.edge_slice_tool_test',
+ 'vibe3d.editing.tools.interactive.tests.unit.tools.slice.loop_slice_tool_test',
+ 'vibe3d.editing.tools.interactive.tests.unit.tools.slice.slice_tool_test',
+ 'vibe3d.editing.tools.interactive.tests.unit.tools.transform.rotate_test',
+ 'vibe3d.editing.tools.interactive.tests.unit.tools.transform.transform_test',
+ 'vibe3d.editing.tools.interactive.tests.unit.topology_step_mixin_test',
+ 'vibe3d.editing.tools.interactive.tests.unit.wrapper_shift_apply_inheritance_test',
+ 'vibe3d.editing.tools.interactive.tool',
+ 'vibe3d.editing.tools.interactive.tool_disarm_source_cells',
+ 'vibe3d.editing.tools.interactive.tool_presets_source_cells',
+ 'vibe3d.editing.tools.interactive.tools.alignment.mirror',
+ 'vibe3d.editing.tools.interactive.tools.common.command_wrapper',
+ 'vibe3d.editing.tools.interactive.tools.create.arc',
+ 'vibe3d.editing.tools.interactive.tools.create.box',
+ 'vibe3d.editing.tools.interactive.tools.create.create_common_source_cells',
+ 'vibe3d.editing.tools.interactive.tools.create.pen',
+ 'vibe3d.editing.tools.interactive.tools.create.sphere',
+ 'vibe3d.editing.tools.interactive.tools.edit.bridge_tool',
+ 'vibe3d.editing.tools.interactive.tools.edit.bridge_tool_source_cells',
+ 'vibe3d.editing.tools.interactive.tools.edit.edge_extend_source_cells',
+ 'vibe3d.editing.tools.interactive.tools.edit.edge_extrude',
+ 'vibe3d.editing.tools.interactive.tools.edit.poly_bevel',
+ 'vibe3d.editing.tools.interactive.tools.edit.poly_extrude',
+ 'vibe3d.editing.tools.interactive.tools.edit.tack',
+ 'vibe3d.editing.tools.interactive.tools.edit.topology_pen.move_protocol_test',
+ 'vibe3d.editing.tools.interactive.tools.edit.topology_pen.press_compatibility_test',
+ 'vibe3d.editing.tools.interactive.tools.slice.slice_tool',
+ 'vibe3d.editing.tools.interactive.tools.transform.rotate',
+ 'vibe3d.editing.tools.interactive.tools.transform.transform',
+ 'vibe3d.editing.tools.interactive.tools.transform.xfrm_transform',
+ 'vibe3d.editing.tools.interactive.unit.bevel_cold_arm_param_image_test',
+ 'vibe3d.editing.tools.interactive.unit.prepared_param_update_test',
+ 'vibe3d.editing.tools.interactive.unit.prepared_tool_transition_test',
+ 'vibe3d.editing.tools.state.tests.unit.session_mesh_key_stamp_as_test',
+ 'vibe3d.editing.tools.state.tests.unit.tool_state_population_test',
+ 'vibe3d.editing.tools.state.tests.unit.tools.common.session_mesh_key_test',
+ 'vibe3d.editing.tools.state.tests.unit.tools.edit.preview_rebuild_test',
+ 'vibe3d.editing.tools.state.tools.common.session_mesh_key',
+ 'vibe3d.editing.tools.transform.tests.unit.ortho_relocate_prior_test',
+ 'vibe3d.editing.tools.transform.tests.unit.tools.transform.arcball_regression_test',
+ 'vibe3d.editing.tools.transform.tests.unit.tools.transform.arcball_test',
+ 'vibe3d.editing.tools.transform.tests.unit.tools.transform.item_xform_kernels_test',
+ 'vibe3d.editing.tools.transform.tests.unit.tools.transform.item_xform_regression_test',
+ 'vibe3d.editing.tools.transform.tests.unit.tools.transform.morph_route_test',
+ 'vibe3d.editing.tools.transform.tests.unit.tools.transform.scale_input_test',
+ 'vibe3d.editing.tools.transform.tests.unit.tools.transform.transform_ops_population_test',
+ 'vibe3d.editing.tools.transform.tests.unit.tools.transform.xform_kernels_test',
+ 'vibe3d.editing.tools.transform.tools.transform.relocate_plane_test',
  'vibe3d.mesh.change.mesh_dirty',
  'vibe3d.mesh.contracts.mesh_corner_maps',
  'vibe3d.mesh.contracts.tests.unit.mesh_plane_types_test',
@@ -441,6 +909,7 @@ class BoundaryControls(unittest.TestCase):
  'vibe3d.mesh.ops.tests.unit.mesh_ops.bridge_test',
  'vibe3d.mesh.ops.tests.unit.mesh_ops.cleanup_test',
  'vibe3d.mesh.ops.tests.unit.mesh_ops.connected_mask_test',
+ 'vibe3d.mesh.ops.tests.unit.mesh_ops.cut_test',
  'vibe3d.mesh.ops.tests.unit.mesh_ops.extrude_test',
  'vibe3d.mesh.ops.tests.unit.mesh_ops.face_alignment_test',
  'vibe3d.mesh.ops.tests.unit.mesh_ops.face_merge_test',
@@ -465,6 +934,7 @@ class BoundaryControls(unittest.TestCase):
  'vibe3d.mesh.snapshot.tests.unit.mesh_wire_snapshot_test',
  'vibe3d.mesh.snapshot.tests.unit.snapshot_test',
  'vibe3d.mesh.topology.mesh_topo',
+ 'vibe3d.platform.file.io.file_dialog',
  'vibe3d.platform.input.eventlog',
  'vibe3d.platform.input.tests.unit.binding_resolve_test',
  'vibe3d.platform.input.tests.unit.eventlog_parser_test',
@@ -473,7 +943,48 @@ class BoundaryControls(unittest.TestCase):
  'vibe3d.platform.input.tests.unit.sdl_error_test',
  'vibe3d.platform.input.tests.unit.tool_input_test',
  'vibe3d.platform.input.tool_input',
+ 'vibe3d.render.backends.render_backends_population_test',
  'vibe3d.render.model.render_model_population_test',
+ 'vibe3d.runtime.ai3d.ai3d.worker_manager',
+ 'vibe3d.runtime.ai3d.tests.unit.ai3d.event_queue_source_public_test',
+ 'vibe3d.runtime.ai3d.tests.unit.ai3d.event_queue_test',
+ 'vibe3d.runtime.ai3d.tests.unit.ai3d.job_controller_test',
+ 'vibe3d.runtime.ai3d.tests.unit.ai3d.scene_validator_test',
+ 'vibe3d.runtime.ai3d.tests.unit.ai3d.stage_artifact_test',
+ 'vibe3d.runtime.ai3d.tests.unit.ai3d.worker_manager_source_public_test',
+ 'vibe3d.runtime.ai3d.tests.unit.ai3d.worker_manager_test',
+ 'vibe3d.runtime.ai_advisor.tests.unit.ai.analysis_test',
+ 'vibe3d.runtime.ai_advisor.tests.unit.ai.element_candidates_test',
+ 'vibe3d.runtime.ai_advisor.tests.unit.ai.exploration_source_public_test',
+ 'vibe3d.runtime.ai_advisor.tests.unit.ai.exploration_test',
+ 'vibe3d.runtime.ai_advisor.tests.unit.ai.interaction_log_test',
+ 'vibe3d.runtime.ai_advisor.tests.unit.ai.interaction_log_writer_test',
+ 'vibe3d.runtime.ai_advisor.tests.unit.ai.mode_candidates_test',
+ 'vibe3d.runtime.ai_advisor.tests.unit.ai.model_adapter_test',
+ 'vibe3d.runtime.ai_advisor.tests.unit.ai.ranker_schema_test',
+ 'vibe3d.runtime.ai_advisor.tests.unit.ai.support_loop_candidates_test',
+ 'vibe3d.runtime.ai_advisor.tests.unit.ai.training_dataset_test',
+ 'vibe3d.runtime.application_core.tests.unit.application_core_population_test',
+ 'vibe3d.runtime.application_core.tests.unit.command_invocation_test',
+ 'vibe3d.runtime.application_core.tests.unit.standalone_application_test',
+ 'vibe3d.runtime.document_actions.commands.image.commands',
+ 'vibe3d.runtime.document_actions.commands.layer.commands',
+ 'vibe3d.runtime.document_actions.tests.unit.commands.image.commands_test',
+ 'vibe3d.runtime.document_actions.tests.unit.commands.layer.add_injection_range_test',
+ 'vibe3d.runtime.document_actions.tests.unit.commands.layer.commands_source_public_test',
+ 'vibe3d.runtime.http.http_server',
+ 'vibe3d.runtime.remesh.remesh.region_stitch',
+ 'vibe3d.runtime.remesh.remesh.remesh_job',
+ 'vibe3d.runtime.remesh.tests.unit.remesh.remesh_job_source_public_test',
+ 'vibe3d.ui.editor.tests.unit.ui.channel_rows_test',
+ 'vibe3d.ui.editor.tests.unit.ui.command_notice_test',
+ 'vibe3d.ui.editor.tests.unit.ui.stat_rows_test',
+ 'vibe3d.ui.editor.ui.availability_source_test',
+ 'vibe3d.ui.editor.ui.image_rows',
+ 'vibe3d.ui.editor.ui.item_click_source_test',
+ 'vibe3d.ui.editor.ui.item_rows',
+ 'vibe3d.ui.editor.ui.viewport_render',
+ 'vibe3d.ui.forms.forms_source_test',
  'vibe3d.util.json_number.tests.unit.json_num_test',
  'vibe3d.util.log.log',
  'vibe3d.util.math.math_geometry',
@@ -486,20 +997,64 @@ class BoundaryControls(unittest.TestCase):
  'vibe3d.util.spatial.trackball',
  'vibe3d.viewport.camera.tests.unit.camera_model_population_test',
  'vibe3d.viewport.camera.tests.unit.view_source_cells_test',
- 'vibe3d.viewport.camera.tests.unit.view_test'}
-        self.assertEqual(len(enabled), 89)
+ 'vibe3d.viewport.camera.tests.unit.view_test',
+ 'vibe3d.viewport.display_policy.tests.unit.camera_stamp_test',
+ 'vibe3d.viewport.display_policy.tests.unit.display_policy_population_test',
+ 'vibe3d.viewport.display_policy.tests.unit.retopology_display_model_test',
+ 'vibe3d.viewport.display_policy.tests.unit.retopology_dot_cull_test',
+ 'vibe3d.viewport.display_policy.tests.unit.retopology_line_shade_algorithm_cells_test',
+ 'vibe3d.viewport.display_policy.tests.unit.retopology_order_algorithm_cells_test',
+ 'vibe3d.viewport.display_policy.tests.unit.select_visibility_test',
+ 'vibe3d.viewport.display_policy.tests.unit.vertex_normals_test',
+ 'vibe3d.viewport.display_policy.tests.unit.viewport_scheme_test',
+ 'vibe3d.viewport.display_policy.tests.unit.weightmap_state_test',
+ 'vibe3d.viewport.gpu.gl_thread_guard',
+ 'vibe3d.viewport.gpu.mesh_gpu',
+ 'vibe3d.viewport.gpu.tests.unit.viewport_env_test',
+ 'vibe3d.viewport.gpu.tests.unit.viewport_gpu_population_test',
+ 'vibe3d.viewport.host.bg_gpu_cache',
+ 'vibe3d.viewport.host.image_plane_source_cells',
+ 'vibe3d.viewport.host.tests.unit.camera_intrinsics_test',
+ 'vibe3d.viewport.host.tests.unit.dirty_key_camera_stamp_test',
+ 'vibe3d.viewport.host.tests.unit.dirty_key_tool_preview_test',
+ 'vibe3d.viewport.host.tests.unit.dirty_key_weightmap_test',
+ 'vibe3d.viewport.host.tests.unit.image_cache_test',
+ 'vibe3d.viewport.host.tests.unit.image_plane_test',
+ 'vibe3d.viewport.host.tests.unit.viewport_plane_turn_test',
+ 'vibe3d.viewport.host.tests.unit.viewport_test',
+ 'vibe3d.viewport.subpatch.tests.unit.subpatch_key_fold_test',
+ 'vibe3d.viewport.subpatch.tests.unit.subpatch_level_policy_test',
+ 'vibe3d.viewport.subpatch.tests.unit.subpatch_osd_test',
+ 'vibe3d.viewport.subpatch.tests.unit.subpatch_preview_population_test'}
+        self.assertEqual(len(enabled), 376)
+        modules = {support.compiler_module(path) for owner in owners
+                   for field in ('sources', 'testSources', 'testHelpers', 'transitionalSources')
+                   for path in support.SPECS[owner].get(field, []) if path.endswith('.d')}
+        root_only = {'vibe3d.mesh.ops.tests.unit.mesh_ops.cut_test',
+                     'vibe3d.ui.editor.ui.viewport_render'}
+        self.assertEqual(root_only & modules, set(),
+                         'isolated support excludes approved cut carrier and desktop viewport peer')
+        isolated_enabled = enabled - root_only
+        self.assertEqual(len(isolated_enabled), 374)
+        self.assertEqual(modules & support.ENABLED_MODULES, isolated_enabled,
+                         'final isolated support identities, independent global376 retained')
         self.assertEqual(support.compiler_module('../../../../tests/unit/fixtures.d'),
                          'tests.unit.fixtures')
         self.assertEqual(support.compiler_module('../../../../tests/unit/mesh_by_value_gate.d'),
                          'tests.unit.mesh_by_value_gate')
-        modules = {support.compiler_module(path) for owner in owners
-                   for field in ('sources', 'testSources', 'testHelpers', 'transitionalSources')
-                   for path in support.SPECS[owner].get(field, []) if path.endswith('.d')}
-        self.assertEqual(modules & support.ENABLED_MODULES, enabled,
-                         'D1+D2 independently frozen enabled module identity')
+        self.assertEqual(support.compiler_module('../../../../../tests/unit/fixtures.d'),
+                         'tests.unit.fixtures')
+        self.assertEqual(support.compiler_module('../../../../../tests/unit/mesh_by_value_gate.d'),
+                         'tests.unit.mesh_by_value_gate')
+        self.assertEqual(support.compiler_module('../../../tests/unit/fixtures.d'),
+                         'tests.unit.fixtures')
+        self.assertEqual(support.compiler_module('../../../tests/unit/mesh_by_value_gate.d'),
+                         'tests.unit.mesh_by_value_gate')
+        self.assertNotEqual(support.compiler_module('../../../../tests/unit/fixtures_extra.d'),
+                            'tests.unit.fixtures', 'neighboring helper cannot acquire the retained declaration')
         output = ''.join('PKG-MODULE name=' + name + ' unittest='
-                         + str(int(name in enabled)) + '\n' for name in sorted(modules))
-        output += '89 modules passed unittests\n'
+                         + str(int(name in isolated_enabled)) + '\n' for name in sorted(modules))
+        output += '374 modules passed unittests\n'
         output += 'MeshSnapshotFixtures: adjacency restore and keep-selection cells passed\n'
         for owner in owners:
             with self.subTest(owner=owner):
@@ -630,7 +1185,7 @@ class BoundaryControls(unittest.TestCase):
                              and any(isinstance(a,ast.Constant) and isinstance(a.value,str)
                                      and 'required active WithRender' in a.value for a in ast.walk(n)))
             role_check=compile(ast.Module(body=[with_render],type_ignores=[]),support.__file__,'exec')
-            for name in ('render-model','vibe3d:render-model','vibe3d-render-backends'):
+            for name in ('render-model','vibe3d:render-model','render-backends','vibe3d:render-backends'):
                 namespace=dict(support.__dict__,target={'rootPackage':name},label='fixture-role',
                                settings={'versions':['WithRender']})
                 exec(role_check,namespace)
@@ -645,7 +1200,7 @@ class BoundaryControls(unittest.TestCase):
             for name,recipe,archive in (
                     ('render-model',{'name':'render-model','targetName':'vibe3d-render-model'},
                      'libvibe3d-render-model.a'),
-                    ('vibe3d-render-backends',{'name':'vibe3d-render-backends'},
+                    ('render-backends',{'name':'render-backends','targetName':'vibe3d-render-backends'},
                      'libvibe3d-render-backends.a')):
                 self.assertEqual(eval(archive_check,dict(support.__dict__,root=root,raw=recipe,
                                      target={'rootPackage':name},package={'targetType':'staticLibrary'})),
@@ -665,7 +1220,9 @@ class BoundaryControls(unittest.TestCase):
             self.assertIn('dub.json',namespace['members'],'parent path dependency retains the real root recipe')
             self.assertIn('libraries/viewport/camera/dub.json',namespace['members'],
                           'root registration retains unselected real descriptor metadata')
-            self.assertNotIn('source/app.d',namespace['members'],'metadata never grants desktop source')
+            self.assertNotIn('apps/desktop/source/vibe3d/apps/desktop/app.d',namespace['members'],'metadata never grants desktop source')
+            self.assertIn('apps/cli/dub.json',namespace['members'],'root registration retains the current CLI descriptor')
+            self.assertNotIn('tools/cli/dub.json',namespace['members'],'retired CLI descriptor is absent')
             app_namespace=dict(support.__dict__,project=actual,owner='app')
             exec(compile(ast.Module(body=archive_setup,type_ignores=[]),support.__file__,'exec'),app_namespace)
             self.assertEqual(app_namespace['members'],[],'app retains the full-tree archive sentinel')
@@ -788,6 +1345,65 @@ class BoundaryControls(unittest.TestCase):
                     exec(check,namespace)
 
     def test_raw_descriptor_grants(self):
+        roles = (
+            ('libraries/editing/commands/runtime', 'vibe3d:command-runtime', 'modeling-noai'),
+            ('libraries/runtime/application-core', 'vibe3d:application-core', 'modeling-noai'),
+            ('tests/core', 'vibe3d-core-tests', 'core'),
+            ('apps/cli', 'vibe3d:cli', 'application'))
+        for relative, owner, config in roles:
+            root = self.project / relative
+            self.assertEqual(boundary.descriptor_context(root), (self.project, relative, owner),
+                             'standalone exact physical role and selected root ID')
+            self.assertEqual(boundary.describe_arguments(root, config, 'dmd'),
+                ['dub', 'describe'] + ([] if relative == 'tests/core' else [owner])
+                + ['--root=' + str(root if relative == 'tests/core' else self.project),
+                   '--config=' + config, '--compiler=dmd', '--quiet'],
+                'standalone role selects project root or independent CORE root')
+        for relative in ('packages/command-runtime', 'packages/application-core', 'tools/cli',
+                         'libraries/editing/runtime', 'tests/core/source', 'apps/cli/source'):
+            with self.subTest(wrong_coordinate=relative), self.assertRaisesRegex(
+                    boundary.BoundaryError, 'unexpected root package coordinate'):
+                boundary.descriptor_context(self.project / relative)
+        roots = boundary.validate_package_settings(self.descriptions['tests/core'], self.project / 'tests/core')
+        self.assertEqual(tuple(path.name for path in roots), boundary.CORE_ROOTS,
+                         'independent CORE retains its five mapped root identities')
+        cli_roots = boundary.validate_package_settings(self.descriptions['apps/cli'], self.project / 'apps/cli')
+        self.assertEqual(cli_roots, [self.project / 'apps/cli/source/vibe3d/apps/cli/main.d'],
+                         'CLI source belongs to its actual deep application role')
+        # Mock only process/receipt boundaries: main itself must select the
+        # role, actual validator, command cwd, and fresh output coordinate.
+        with tempfile.TemporaryDirectory(prefix='boundary-main-role-') as directory:
+            evidence = Path(directory)
+            calls = []
+            original = self.descriptions['apps/cli']
+            def run(command, cwd, env, destination, label):
+                calls.append((command, cwd, label))
+                return subprocess.CompletedProcess(command, 0,
+                    json.dumps(original) if label == 'describe' else '', '')
+            binary = self.project / 'vibe3d-cli'
+            binary.write_bytes(b'CLI role output witness\n')
+            try:
+                with patch.object(boundary, 'run', side_effect=run), patch.object(boundary.shutil, 'which', return_value='/compiler/dmd'), \
+                     patch.object(support, 'compiler_commands', return_value=[]), \
+                     patch.object(boundary.subprocess, 'run', return_value=subprocess.CompletedProcess([], 0, 'fixture-revision\n', '')):
+                    boundary.main(['--root=' + str(self.project / 'apps/cli'), '--evidence-dir=' + str(evidence)])
+                    self.assertEqual(calls, [
+                        (['dub', 'describe', 'vibe3d:cli', '--root=' + str(self.project), '--config=application', '--compiler=/compiler/dmd', '--quiet'], self.project, 'describe'),
+                        (['dub', 'build', 'vibe3d:cli', '--root=' + str(self.project), '--config=application', '--compiler=/compiler/dmd', '--force', '--verbose'], self.project, 'build-run')],
+                        'CLI main uses root subpackage selection and project cwd')
+                    witness = json.loads((evidence / 'witness.json').read_text())
+                    self.assertEqual(witness['sources'], list(map(str, cli_roots)))
+                    binary.unlink()
+                    wrong = self.project / 'apps/cli/vibe3d-cli'
+                    wrong.write_bytes(b'wrong staging witness\n')
+                    try:
+                        with self.assertRaisesRegex(boundary.BoundaryError,
+                                'fresh DUB output missing: ' + re.escape(str(binary))):
+                            boundary.main(['--root=' + str(self.project / 'apps/cli'), '--evidence-dir=' + str(evidence)])
+                    finally:
+                        wrong.unlink()
+            finally:
+                binary.unlink(missing_ok=True)
         for relative, description in self.descriptions.items():
             root = self.project / relative
             boundary.validate_package_settings(description, root)
@@ -834,7 +1450,7 @@ class BoundaryControls(unittest.TestCase):
                 alias.symlink_to(Path(image['path']).resolve(), target_is_directory=True)
                 try:
                     affected=[t['rootPackage'] for t in original['targets'] if t['buildSettings'].get('lflags')]
-                    self.assertEqual(set(affected), {'vibe3d-cli','vibe3d-document-io',support.SPECS['image-codec']['name'],'d-stb-image'})
+                    self.assertEqual(set(affected), {'vibe3d:cli',support.SPECS['document-io']['name'],support.SPECS['image-codec']['name'],'d-stb-image'})
                     canonical=copy.deepcopy(original)
                     for target in canonical['targets']:
                         if target['rootPackage'] in affected:
@@ -862,11 +1478,11 @@ class BoundaryControls(unittest.TestCase):
                     reject(lambda d: d['packages'][index].setdefault(field, []).append('echo changed'), 'package hook')
 
     def test_owner_source_inventory_is_live(self):
-        for relative in ('packages/command-runtime', 'packages/application-core'):
+        for relative in ('libraries/editing/commands/runtime', 'libraries/runtime/application-core'):
             root = self.project / relative
             path = root / 'source/additional_model.d'
             original = self.descriptions[relative]
-            owner = json.loads((root / 'dub.json').read_text())['name']
+            owner = boundary.descriptor_context(root)[2]
             path.write_text('module additional_model;')
             try:
                 with self.assertRaisesRegex(boundary.BoundaryError, 'resolved sourceFiles'):
@@ -913,9 +1529,8 @@ class BoundaryControls(unittest.TestCase):
     def test_ldc_mesh_ops_archive_flag_scope(self):
         compiler = str(Path.home() / '.local/dlang/ldc2-1.42.0-linux-x86_64/bin/ldc2')
         actual = Path(__file__).resolve().parents[1]
-        for relative, config in (('packages/command-runtime', 'modeling-noai'), ('packages/application-core', 'modeling-noai'), ('tests/core', 'core')):
-            result = subprocess.run(['dub', 'describe', '--root=' + str(actual / relative),
-                '--config=' + config, '--compiler=' + compiler, '--quiet'],
+        for relative, config in (('libraries/editing/commands/runtime', 'modeling-noai'), ('libraries/runtime/application-core', 'modeling-noai'), ('tests/core', 'core')):
+            result = subprocess.run(boundary.describe_arguments(actual / relative, config, compiler),
                 text=True, capture_output=True)
             self.assertEqual(result.returncode, 0,
                 'LDC dub describe failed: ' + repr(result.args) + '\nstdout:\n' + result.stdout
@@ -924,7 +1539,7 @@ class BoundaryControls(unittest.TestCase):
             root = self.project / relative
             boundary.validate_package_settings(description, root, compiler)
             if relative != 'tests/core':
-                owner = json.loads((root / 'dub.json').read_text())['name']
+                owner = boundary.descriptor_context(root)[2]
                 for name in (owner, support.SPECS['mesh-ops']['name']):
                     changed = copy.deepcopy(description)
                     target = next(t for t in changed['targets'] if t['rootPackage'] == name)

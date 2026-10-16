@@ -10,7 +10,7 @@
 // guard, and the two cache-invalidation sites.
 module tests.unit.edge_crease_weight_test;
 
-import subpatch_preview : SubpatchPreview;
+import vibe3d.viewport.subpatch.subpatch_preview : SubpatchPreview;
 
 import std.json;
 import std.file      : readText;
@@ -19,10 +19,10 @@ import std.format    : format;
 import std.algorithm : sort, map;
 import std.array     : array;
 
-import math  : Vec3;
+import vibe3d.util.math.math  : Vec3;
 import vibe3d.mesh.core.mesh;
 import osd.c;
-import subpatch_osd;
+import vibe3d.viewport.subpatch.subpatch_osd;
 
 // ---------------------------------------------------------------------------
 // Fixture plumbing

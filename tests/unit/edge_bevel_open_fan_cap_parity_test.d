@@ -106,7 +106,7 @@ import std.math   : sqrt;
 
 import vibe3d.mesh.core.mesh;
 import vibe3d.mesh.ops.mesh_ops.edge_bevel;
-import math;
+import vibe3d.util.math.math;
 
 private enum string kFixture = "tests/fixtures/edge_bevel_open_fan_cap.json";
 

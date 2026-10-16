@@ -13,20 +13,20 @@ import std.format : format;
 import std.json : JSONValue, JSONType, parseJSON;
 import std.math : fabs, sqrt;
 
-import commands.mesh.smooth : MeshSmooth, SurfaceLineIndex, preserveProjectsAt,
+import vibe3d.editing.commands.editor.commands.mesh.smooth : MeshSmooth, SurfaceLineIndex, preserveProjectsAt,
     projectOntoSurfaceBrute;
-version (PerfProbe) import commands.mesh.smooth : surfaceHitTests;
-import commands.mesh.vertex_position_result : VertexPositionResult;
+version (PerfProbe) import vibe3d.editing.commands.editor.commands.mesh.smooth : surfaceHitTests;
+import vibe3d.editing.commands.editor.commands.mesh.vertex_position_result : VertexPositionResult;
 import vibe3d.documents.model.document : primaryModelSpaceResolver;
 import vibe3d.editing.contracts.editmode : EditMode;
-import falloff : evaluateFalloff;
-import math : Vec3;
+import vibe3d.editing.pipeline.runtime.falloff : evaluateFalloff;
+import vibe3d.util.math.math : Vec3;
 import vibe3d.util.spatial.spatial : ModelSpace, aimSpace;
 import vibe3d.mesh.core.mesh : Mesh;
 import vibe3d.editing.pipeline.contracts.operator : VectorStack;
 import vibe3d.editing.params.params : Param, ParamProvider;
 import vibe3d.editing.pipeline.contracts.toolpipe.packets : FalloffPacket, FalloffShape, FalloffType, SubjectPacket;
-import tools.edit.smooth_relax : RelaxVec3;
+import vibe3d.editing.tools.interactive.tools.edit.smooth_relax : RelaxVec3;
 import vibe3d.viewport.camera.view : View;
 
 private JSONValue fixture() {
@@ -404,8 +404,8 @@ version (PerfProbe) unittest { // preserve on a 40k-face surface tests a bounded
 unittest {
     import std.file : mkdirRecurse, rmdirRecurse, tempDir, write;
     import std.path : buildPath;
-    import prefs : loadPrefs;
-    import toolpipe.attr_cache : PipelineAttrCache, kToolNode, recallNodeAttrs;
+    import vibe3d.apps.desktop.prefs : loadPrefs;
+    import vibe3d.editing.pipeline.evaluation.toolpipe.attr_cache : PipelineAttrCache, kToolNode, recallNodeAttrs;
     const dir = buildPath(tempDir(), "vibe3d_smooth_prefs_9484");
     mkdirRecurse(dir);
     scope(exit) rmdirRecurse(dir);
@@ -436,7 +436,7 @@ unittest {
 
     // Only the retired (preset, node, attribute) rows of a version-1 file go,
     // the legacy `toolDefaults` section included; a saved file keeps them.
-    import prefs : Prefs, savePrefs;
+    import vibe3d.apps.desktop.prefs : Prefs, savePrefs;
     write(buildPath(dir, "prefs.json"), `{"version":1,`
         ~ `"toolDefaults":{"xfrm.smooth":{"sharpThreshold":"-1","iter":"3"}},`
         ~ `"toolAttrCache":{"bevel":{"tool":{"sharpThreshold":"-1"}},`

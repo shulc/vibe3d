@@ -20,10 +20,10 @@ import std.conv   : to;
 import std.format : format;
 
 import vibe3d.mesh.change.change_bus : changeBus;
-import command;
+import vibe3d.editing.commands.runtime.command;
 import vibe3d.mesh.core.mesh;
 import vibe3d.mesh.ops.mesh_ops.extrude;
-import math    : Vec3;
+import vibe3d.util.math.math    : Vec3;
 import vibe3d.viewport.camera.view;
 import vibe3d.editing.contracts.editmode;
 import vibe3d.mesh.edit_log.mesh_edit_delta : MeshEditDelta, MeshOpEntry;
@@ -31,12 +31,12 @@ import vibe3d.mesh.edit_log.mesh_edit_delta : MeshEditDelta, MeshOpEntry;
 import tests.unit.fixtures : makeTaggedGridBent, dumpMeshPlanes,
                              diffMeshPlanes, explainMeshPlaneDiff;
 
-import commands.mesh.edge_extend    : MeshEdgeExtend;
-import commands.mesh.edge_extrude   : MeshEdgeExtrude;
-import commands.mesh.face_extrude   : MeshFaceExtrude;
-import commands.mesh.smooth_shift   : MeshSmoothShift;
-import commands.mesh.stroke_extrude : MeshStrokeExtrude;
-import commands.mesh.vertex_extrude : MeshVertexExtrude;
+import vibe3d.editing.commands.editor.commands.mesh.edge_extend    : MeshEdgeExtend;
+import vibe3d.editing.commands.editor.commands.mesh.edge_extrude   : MeshEdgeExtrude;
+import vibe3d.editing.commands.editor.commands.mesh.face_extrude   : MeshFaceExtrude;
+import vibe3d.editing.commands.editor.commands.mesh.smooth_shift   : MeshSmoothShift;
+import vibe3d.editing.commands.editor.commands.mesh.stroke_extrude : MeshStrokeExtrude;
+import vibe3d.editing.commands.editor.commands.mesh.vertex_extrude : MeshVertexExtrude;
 
 private Mesh* stand()
 {

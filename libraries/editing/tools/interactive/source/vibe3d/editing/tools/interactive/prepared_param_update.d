@@ -1,0 +1,116 @@
+module vibe3d.editing.tools.interactive.prepared_param_update;
+
+import core.atomic : atomicOp;
+import vibe3d.documents.model.document : Layer;
+import vibe3d.mesh.core.mesh : Mesh;
+import vibe3d.mesh.snapshot.snapshot : MeshSnapshot;
+
+struct PreparedParamToken { @disable this(this); private: ulong owner, generation; }
+struct ValidatedParamToken { @disable this(this); private: ulong owner, generation; }
+private shared ulong nextParamOwner;
+
+/// The fresh-candidate parameter door keeps exact projected state and a live
+/// mesh witness (9515; check_prepared_protocol.py pins its twelve clients).
+struct PreparedStateParamImage(ProjectionT, KindT) {
+    mixin DefaultParamEffectKind!KindT;
+    bool valid;
+    ProjectionT expected;
+    MeshSnapshot expectedLive;
+    static PreparedStateParamImage prepare(ProjectionT projection, ref const Mesh live) {
+        PreparedStateParamImage image;
+        image.valid = true;
+        image.expected = projection;
+        image.expectedLive = MeshSnapshot.capture(live);
+        return image;
+    }
+    bool matches(in ProjectionT projection, ref const Mesh live) const nothrow @nogc {
+        return valid && expected == projection && expectedLive.matches(live);
+    }
+    void clear() nothrow @nogc { this = PreparedStateParamImage.init; }
+}
+
+/// One closed owner for a tool's interactive parameter-preview transition.
+/// The tool is data: `ownsPreparedLayer`, `buildPreparedParamUpdate`,
+/// `preparedParamUpdateMatches`, `installPreparedParamUpdate` and an image with
+/// `valid` / `effectKind` / `clear`. A door param write reaches this owner only
+/// on an unarmed candidate, so no image carries a mesh.
+final class PreparedParamUpdateOwner(ToolT, ImageT, KindT) {
+    alias Kind = KindT;
+private:
+    ToolT target_; Mesh* source_;
+    ImageT image_;
+    immutable ulong owner_; ulong generation_;
+    bool pending_, validated_, consumed_;
+    PreparedParamToken prepared_;
+    ValidatedParamToken validatedToken_;
+public:
+    @disable this();
+    static PreparedParamUpdateOwner prepare(ToolT target, Layer layer, string pname) {
+        if (target is null || target.classinfo !is ToolT.classinfo ||
+            layer is null || !target.ownsPreparedLayer(layer)) return null;
+        auto owner = new PreparedParamUpdateOwner(target, layer);
+        owner.image_ = target.buildPreparedParamUpdate(pname, layer.meshRef());
+        return owner.image_.valid ? owner : null;
+    }
+    @property KindT effectKind() const nothrow @nogc { return image_.effectKind(); }
+    ref const(ImageT) image() const return scope nothrow @nogc { return image_; }
+    bool begin() nothrow @nogc {
+        if (pending_ || consumed_ || target_ is null || source_ is null || !image_.valid)
+            return false;
+        ++generation_; pending_ = true; prepared_.owner = owner_;
+        prepared_.generation = generation_; return true;
+    }
+    bool validate() nothrow @nogc {
+        if (!pending_ || validated_ || consumed_ || target_ is null || source_ is null ||
+            prepared_.owner != owner_ || prepared_.generation != generation_ ||
+            !target_.preparedParamUpdateMatches(image_, *source_)) return false;
+        validated_ = true; validatedToken_.owner = owner_;
+        validatedToken_.generation = generation_;
+        prepared_.owner = prepared_.generation = 0; return true;
+    }
+    void install() nothrow @nogc {
+        if (!pending_ || !validated_ || consumed_ || target_ is null ||
+            validatedToken_.owner != owner_ ||
+            validatedToken_.generation != generation_) return;
+        target_.installPreparedParamUpdate(image_); consume();
+    }
+    void abort() nothrow @nogc { if (!consumed_) { image_.clear(); consume(); } }
+private:
+    this(ToolT target, Layer layer) {
+        target_ = target; source_ = &layer.meshRef();
+        owner_ = atomicOp!"+="(nextParamOwner, 1UL);
+    }
+    void consume() nothrow @nogc {
+        image_.clear(); pending_ = validated_ = false; consumed_ = true;
+        target_ = null; source_ = null;
+        prepared_.owner = prepared_.generation = 0;
+        validatedToken_.owner = validatedToken_.generation = 0;
+    }
+}
+
+/// An image's effect kind when the write has no tool-specific effect: no image
+/// is `None`, anything else `Noop`.
+mixin template DefaultParamEffectKind(KindT) {
+    KindT effectKind() const nothrow @nogc {
+        return valid ? KindT.Noop : KindT.None;
+    }
+}
+
+/// The tool's `prepareParamChanged`: the owner's slot, then NoHistory; any
+/// refusal discards the whole transaction. Expanded in the tool's scope (it
+/// reads `preparedToolStateOwner` there).
+mixin template PreparedParamUpdateProducer(OwnerT, EffectT) {
+    final EffectT prepareParamChanged(string pname, PreparedRecordContext context,
+            Layer layer, GpuUploadOwner) {
+        alias KindT = OwnerT.Kind;
+        if (context is null) return EffectT(preparedToolStateOwner, KindT.None, false);
+        scope(failure) context.discard();
+        auto owner = OwnerT.prepare(this, layer, pname);
+        auto kind = owner is null ? KindT.None : owner.effectKind;
+        bool ok = owner !is null;
+        if (ok) ok = context.prepareParamUpdate(owner);
+        if (ok) ok = context.markNoHistoryInstall();
+        if (!ok) context.discard();
+        return EffectT(preparedToolStateOwner, kind, ok);
+    }
+}

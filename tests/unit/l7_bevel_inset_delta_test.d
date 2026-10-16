@@ -18,7 +18,7 @@ import vibe3d.mesh.edit_replay.mesh_edit_replay : apply, revert;
 import std.conv   : to;
 import std.format : format;
 
-import command;
+import vibe3d.editing.commands.runtime.command;
 import vibe3d.mesh.core.mesh;
 import vibe3d.mesh.edit_log.mesh_edit_delta : MeshEditDelta;
 import vibe3d.viewport.camera.view;
@@ -26,8 +26,8 @@ import vibe3d.editing.contracts.editmode;
 import vibe3d.mesh.change.change_bus : changeBus;
 
 import tests.unit.fixtures : makeTaggedGridFull, dumpMeshPlanes, diffMeshPlanes;
-import commands.mesh.poly_inset : MeshPolygonInset;
-import commands.mesh.bevel      : MeshBevel;
+import vibe3d.editing.commands.editor.commands.mesh.poly_inset : MeshPolygonInset;
+import vibe3d.editing.commands.editor.commands.mesh.bevel      : MeshBevel;
 
 private Mesh* stand()
 {

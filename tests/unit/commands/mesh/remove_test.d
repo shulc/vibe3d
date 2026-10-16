@@ -4,7 +4,7 @@
 module tests.unit.commands.mesh.remove_test;
 import vibe3d.mesh.edit_replay.mesh_edit_replay : captureSelectedEdgeEnds, restoreSelectedEdgeEnds, apply, revert;
 
-import command;
+import vibe3d.editing.commands.runtime.command;
 import vibe3d.editing.pipeline.contracts.operator : Operator, Task, VectorStack, PacketKind, OperatorActrCommon;
 import vibe3d.mesh.core.mesh;
 import vibe3d.viewport.camera.view;
@@ -15,10 +15,10 @@ import vibe3d.mesh.snapshot.snapshot : MeshSnapshot, SelectionSnapshot;
 // path now, so importing the toggle here would suggest these blocks select
 // between two of them.
 import vibe3d.mesh.edit_log.mesh_edit_delta : MeshEditDelta, MeshEditTracker, MeshEditScope;
-import commands.mesh.delete_ : MeshDelete;
-import math : Vec3;
+import vibe3d.editing.commands.editor.commands.mesh.delete_ : MeshDelete;
+import vibe3d.util.math.math : Vec3;
 import vibe3d.mesh.core.mesh : makeGridPlane;
-import commands.mesh.remove_;
+import vibe3d.editing.commands.editor.commands.mesh.remove_;
 
 // task 0693 — undo of a remove/delete must bring the UV map BACK.
 //

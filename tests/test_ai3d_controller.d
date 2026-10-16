@@ -14,8 +14,8 @@ import std.stdio : stderr;
 import core.time : MonoTime, seconds;
 
 import ai3d_worker_helpers;
-import ai3d.job_controller : Ai3dJobController;
-import ai3d.job_events : Ai3dEvent, Ai3dEventKind;
+import vibe3d.runtime.ai3d.ai3d.job_controller : Ai3dJobController;
+import vibe3d.runtime.ai3d.ai3d.job_events : Ai3dEvent, Ai3dEventKind;
 
 // ---------------------------------------------------------------------------
 // Scenario 1: probeHealth() posts exactly one `health` event and creates no

@@ -17,15 +17,15 @@ import std.json : JSONType, parseJSON;
 import std.path : buildNormalizedPath, buildPath;
 import std.process : thisProcessID;
 
-import command : g_testMode;
-import commands.file.save : FileSave, FileSaveMode;
-import commands.image.commands : ImageLoad;
+import vibe3d.editing.commands.runtime.command : g_testMode;
+import vibe3d.apps.desktop.commands.file.save : FileSave, FileSaveMode;
+import vibe3d.runtime.document_actions.commands.image.commands : ImageLoad;
 import vibe3d.documents.model.document : Document;
 import vibe3d.editing.contracts.editmode : EditMode;
-import io.browser_pick_resume : setWorkRootForTest;
-import io.doc_state : clearCurrentDoc, currentDocPath, hasCurrentDoc;
-import io.file_dialog : selectBrowserBackendForTest, setDeliverSavedFileForTest;
-import io.image_path : firstCollidingImageName, imageCollisionReadsForTest,
+import vibe3d.platform.file.io.browser_pick_resume : setWorkRootForTest;
+import vibe3d.runtime.application_core.io.doc_state : clearCurrentDoc, currentDocPath, hasCurrentDoc;
+import vibe3d.platform.file.io.file_dialog : selectBrowserBackendForTest, setDeliverSavedFileForTest;
+import vibe3d.documents.io.io.image_path : firstCollidingImageName, imageCollisionReadsForTest,
                        resolveStoredPath, storePathFor, writeTestBmp;
 import vibe3d.mesh.core.mesh : makeCube;
 import vibe3d.viewport.camera.view : View;
@@ -43,7 +43,7 @@ private void dropRoot(string r) {
 }
 
 private void loadImage(ref Document doc, View v, string path) {
-    import command_args : bindArgs;
+    import vibe3d.editing.commands.runtime.command_args : bindArgs;
     import std.json : JSONValue;
     auto ld = new ImageLoad(doc.activeMesh(), v, EditMode.Vertices, &doc, null);
     auto j = JSONValue(["path": JSONValue(path)]);

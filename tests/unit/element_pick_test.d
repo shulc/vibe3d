@@ -17,7 +17,7 @@ import std.path      : buildPath, dirName;
 import std.regex     : matchFirst, regex;
 import std.string    : indexOf;
 
-import hover_state : PickGather, cascadeClassWins, electElement, kCascadeVertex,
+import vibe3d.editing.selection.query.hover_state : PickGather, cascadeClassWins, electElement, kCascadeVertex,
     kCascadeEdge, kCascadePolygon, kElementPickRadiusPx;
 import tests.unit.census_symbols : blankNonCode, blankUnittestBodies, countIdent,
     enclosingSymbols, isIdentChar, lineOf, symbolAt;
@@ -176,10 +176,10 @@ import tests.unit.census_symbols : exists = wave15Exists;
 
 // Tool-press facing is source-aware and independent of ordinary click selection.
 unittest {
-    import hover_state : ToolPressSource, toolPressAt, toolPressEdgeAdmitted,
+    import vibe3d.editing.selection.query.hover_state : ToolPressSource, toolPressAt, toolPressEdgeAdmitted,
         toolPressVertexAdmitted, toolPressFaceAdmitted;
     import vibe3d.mesh.core.mesh : Mesh, makeGridPlane;
-    import math : Vec3, lookAt, orthographicMatrix;
+    import vibe3d.util.math.math : Vec3, lookAt, orthographicMatrix;
 import vibe3d.util.spatial.spatial : Viewport, ModelSpace, projectToWindowFull;
     import std.math : round;
     import std.algorithm : reverse;
@@ -252,9 +252,9 @@ import vibe3d.util.spatial.spatial : Viewport, ModelSpace, projectToWindowFull;
 }
 
 unittest {
-    import hover_state : ToolPressSource, toolPressAt, toolPressSupport;
+    import vibe3d.editing.selection.query.hover_state : ToolPressSource, toolPressAt, toolPressSupport;
     import vibe3d.mesh.core.mesh : makeGridPlane;
-    import math : Vec3, lookAt, orthographicMatrix;
+    import vibe3d.util.math.math : Vec3, lookAt, orthographicMatrix;
 import vibe3d.util.spatial.spatial : Viewport, ModelSpace;
     import std.algorithm : reverse;
     import core.time : MonoTime;

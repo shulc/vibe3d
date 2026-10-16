@@ -694,7 +694,7 @@ version (PerfProbe) {
 
     unittest { // SP3 refusal paths: GL-free, no timer sample
         import vibe3d.mesh.core.mesh : Mesh, makeCube;
-        import mesh_gpu : GpuMesh;
+        import vibe3d.viewport.gpu.mesh_gpu : GpuMesh;
         g_perf.reset();
         Mesh cube = makeCube();
         GpuMesh g;                                   // never init'ed: no GL names
@@ -714,7 +714,7 @@ version (PerfProbe) {
         import bindbc.opengl;
         import bindbc.sdl;
         import vibe3d.mesh.core.mesh : Mesh, makeCube;
-        import mesh_gpu : GpuMesh;
+        import vibe3d.viewport.gpu.mesh_gpu : GpuMesh;
         import std.conv : to;
         import std.process : environment;
 

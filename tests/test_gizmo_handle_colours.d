@@ -28,9 +28,9 @@
 
 import std.math : abs;
 
-import handler : MoveHandler, RotateHandler, ScaleHandler;
-import math : Vec3;
-import viewport_scheme : handleColor, planeRingColor, planeFillColor,
+import vibe3d.editing.tools.interactive.handler : MoveHandler, RotateHandler, ScaleHandler;
+import vibe3d.util.math.math : Vec3;
+import vibe3d.viewport.display_policy.viewport_scheme : handleColor, planeRingColor, planeFillColor,
     kPlaneFillScale, HandlePaint;
 
 void main() {}

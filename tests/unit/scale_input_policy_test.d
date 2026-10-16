@@ -1,6 +1,6 @@
 module tests.unit.scale_input_policy_test;
-import tools.transform.scale_input;
-import math : Vec3;
+import vibe3d.editing.tools.transform.tools.transform.scale_input;
+import vibe3d.util.math.math : Vec3;
 import std.math : abs;
 
 unittest {
@@ -22,7 +22,7 @@ import tests.unit.census_symbols : readText = wave15ReadText;
 }
 
 unittest {
-    import tool_presets : loadToolPresets;
+    import vibe3d.editing.tools.interactive.tool_presets : loadToolPresets;
     import std.file : write, remove;
 import tests.unit.census_symbols : readText = wave15ReadText;
     import std.string : indexOf;
@@ -69,11 +69,11 @@ import tests.unit.census_symbols : readText = wave15ReadText;
         alternate[0].scaleInput.ticksPerUnit == 80 && alternate[0].scaleInput.factorPerTick == .01,
         "generic numeric scale policy parser");
     assert(alternate[1].scaleInput == alternate[0].scaleInput, "alias copies entire scale input policy");
-    import registry : Registry, typedToolFactory;
-    import tool_presets : ToolPreset, registerToolPresets;
-    import tools.transform.xfrm_transform : XfrmTransformTool;
+    import vibe3d.editing.tools.interactive.registry : Registry, typedToolFactory;
+    import vibe3d.editing.tools.interactive.tool_presets : ToolPreset, registerToolPresets;
+    import vibe3d.editing.tools.interactive.tools.transform.xfrm_transform : XfrmTransformTool;
     import vibe3d.mesh.core.mesh : Mesh, makeCube;
-    import mesh_gpu : GpuMesh;
+    import vibe3d.viewport.gpu.mesh_gpu : GpuMesh;
     import vibe3d.editing.contracts.editmode : EditMode;
     Mesh mesh = makeCube(); GpuMesh gpu; EditMode mode = EditMode.Polygons;
     auto reused = new XfrmTransformTool(() => &mesh, &gpu, &mode);
@@ -113,9 +113,9 @@ import tests.unit.census_symbols : readText = wave15ReadText;
 }
 
 unittest {
-    import tools.transform.scale : ScaleTool;
+    import vibe3d.editing.tools.interactive.tools.transform.scale : ScaleTool;
     import vibe3d.mesh.core.mesh : Mesh, makeCube;
-    import mesh_gpu : GpuMesh;
+    import vibe3d.viewport.gpu.mesh_gpu : GpuMesh;
     import vibe3d.editing.contracts.editmode : EditMode;
     import vibe3d.editing.pipeline.contracts.operator : VectorStack;
     import bindbc.sdl : SDL_MouseButtonEvent, SDL_BUTTON_LEFT;

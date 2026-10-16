@@ -7,7 +7,7 @@ import core.atomic : atomicLoad, atomicOp, atomicStore;
 import core.thread : Thread;
 import core.time : Duration, MonoTime, msecs, seconds;
 
-import http_server : HttpResponse, HttpServer, InProcessHttpTransport;
+import vibe3d.runtime.http.http_server : HttpResponse, HttpServer, InProcessHttpTransport;
 import std.algorithm : canFind;
 import std.array : join;
 import std.file : readText;

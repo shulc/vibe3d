@@ -121,7 +121,7 @@ cmake -E make_directory "$artifact_root" "$link_root"
 export VIBE3D_WEB_ARTIFACT_ROOT="$artifact_root"
 # Dub has no root-package-only force switch: --force also rebuilds dependency
 # hooks. Advance one real root input so only the final web target is stale.
-cmake -E touch "$repo_root/source/app.d"
+cmake -E touch "$repo_root/apps/desktop/source/vibe3d/apps/desktop/app.d"
 if [[ ${VIBE3D_WEB_OPTIMIZED:-0} == 1 ]]; then
     # Dub documents DFLAGS as the custom-build escape hatch. Keep the exact
     # optimizer level here instead of relying on the built-in release preset

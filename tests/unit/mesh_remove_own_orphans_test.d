@@ -13,7 +13,7 @@ module tests.unit.mesh_remove_own_orphans_test;
 // edges (0, 1), (3, 0), (4, 3); corner 0 keeps its wire, so it stays.
 
 import vibe3d.mesh.change.change_bus : changeBus;
-import math : Vec3;
+import vibe3d.util.math.math : Vec3;
 import vibe3d.mesh.core.mesh : Mesh;
 import vibe3d.mesh.topology.mesh_topo : edgeKey;
 import std.format : format;

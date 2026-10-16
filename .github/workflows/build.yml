@@ -82,7 +82,7 @@ jobs:
       # The released tag must equal the version the binary will report.
       #
       # VERIFICATION, NOT SUBSTITUTION. Nothing here injects the tag into the
-      # build: packages/application-core/source/app_version.d's `appVersion` literal is the only place
+      # build: libraries/runtime/application-core/source/vibe3d/runtime/application_core/app_version.d's `appVersion` literal is the only place
       # the number lives, so a binary cannot be made to claim a version its
       # source did not carry. All this job does is refuse to build when the
       # two disagree — which is the cheapest possible place to catch it, since
@@ -91,20 +91,20 @@ jobs:
       # Skipped for nightlies: their tag is the literal word "nightly" and is
       # not a version. Nightlies still report the real `appVersion` plus their
       # compile date, which is what separates one from the next.
-      - name: Check release tag matches packages/application-core/source/app_version.d
+      - name: Check release tag matches libraries/runtime/application-core/source/vibe3d/runtime/application_core/app_version.d
         if: ${{ steps.decide.outputs.should_run == 'true' && steps.decide.outputs.nightly != 'true' }}
         env:
           TAG: ${{ steps.decide.outputs.tag }}
         run: |
-          src=$(sed -n 's/^enum appVersion = "\(.*\)";$/\1/p' packages/application-core/source/app_version.d)
+          src=$(sed -n 's/^enum appVersion = "\(.*\)";$/\1/p' libraries/runtime/application-core/source/vibe3d/runtime/application_core/app_version.d)
           if [ -z "$src" ]; then
-            echo "::error::could not read appVersion from packages/application-core/source/app_version.d"
+            echo "::error::could not read appVersion from libraries/runtime/application-core/source/vibe3d/runtime/application_core/app_version.d"
             exit 1
           fi
           # Tags are written v<version>; compare on the bare number.
           want="${TAG#v}"
           if [ "$want" != "$src" ]; then
-            echo "::error::release tag '$TAG' does not match packages/application-core/source/app_version.d (appVersion = $src). Bump the constant and dub.json, or retag."
+            echo "::error::release tag '$TAG' does not match libraries/runtime/application-core/source/vibe3d/runtime/application_core/app_version.d (appVersion = $src). Bump the constant and dub.json, or retag."
             exit 1
           fi
           echo "tag $TAG matches appVersion $src"

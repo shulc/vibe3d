@@ -78,7 +78,7 @@ import std.math   : cos, sin, sqrt, abs, PI;
 
 import vibe3d.mesh.core.mesh;
 import vibe3d.mesh.ops.mesh_ops.edge_bevel;
-import math;
+import vibe3d.util.math.math;
 
 private enum float  kWidth   = 0.1f;
 private enum int    kLevel   = 1;

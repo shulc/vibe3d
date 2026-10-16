@@ -67,7 +67,7 @@ import std.file      : readText;
 import std.format    : format;
 import std.json;
 
-import buttonset : ActionKind, Button, Group, loadStatusLine, PopupItem,
+import vibe3d.ui.editor.buttonset : ActionKind, Button, Group, loadStatusLine, PopupItem,
                    PopupItemKind;
 
 private enum string kFixture    = "tests/fixtures/action_center_menu_composition.json";
@@ -247,8 +247,8 @@ unittest
 //     nothing, which is the defect this repository pays for most.
 unittest
 {
-    import toolpipe.stages.actcenter : ActionCenterStage;
-    import toolpipe.stages.axis      : AxisStage;
+    import vibe3d.editing.pipeline.evaluation.toolpipe.stages.actcenter : ActionCenterStage;
+    import vibe3d.editing.pipeline.evaluation.toolpipe.stages.axis      : AxisStage;
 
     auto live = liveProviders();
     assert(kCombinedProvider in live && kCenterProvider in live

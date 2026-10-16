@@ -2,7 +2,7 @@ module tests.unit.ui.dock_drop_over_viewport_test;
 
 import d_imgui.imgui_h : ImVec2;
 import tests.unit.ui.headless_dock : HeadlessDockScene, openScene;
-import ui.imgui_window_class : kDockFlagNoDockingOverMe;
+import vibe3d.ui.editor.ui.imgui_window_class : kDockFlagNoDockingOverMe;
 
 private ImVec2 tabGrab() { return ImVec2(190, 10); }
 

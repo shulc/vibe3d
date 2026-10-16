@@ -68,7 +68,7 @@ import std.json      : JSONType, JSONValue, parseJSON;
 import std.math      : abs;
 import std.path      : buildPath, dirName;
 
-import display_state : BackdropStyle, DisplayState, DisplayStyle, DrawPlan,
+import vibe3d.viewport.display_policy.display_state : BackdropStyle, DisplayState, DisplayStyle, DrawPlan,
                        SurfaceShading, ViewportDisplay, WireOverlay,
                        kBackdropDim, resolveDrawPlan;
 

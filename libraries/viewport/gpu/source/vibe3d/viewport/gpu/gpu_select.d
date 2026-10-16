@@ -1,0 +1,784 @@
+module vibe3d.viewport.gpu.gpu_select;
+
+import bindbc.opengl;
+import std.string : toStringz;
+
+import vibe3d.util.math.math : matMul4;
+import vibe3d.util.spatial.spatial : Viewport, ModelSpace;
+import vibe3d.mesh.core.mesh : Mesh;
+import vibe3d.viewport.gpu.mesh_gpu : GpuMesh, kFaceStride;
+import vibe3d.viewport.gpu.shader : compileShader;
+import vibe3d.util.profiling.perf_probe : g_perf, Cat, g_fc, DrawPass;
+import vibe3d.viewport.display_policy.camera_stamp : CameraStamp;
+
+// ---------------------------------------------------------------------------
+// GpuSelectBuffer — offscreen ID-buffer picker for vertices, edges, faces.
+//
+// Why: per-element heuristic visibility tests (project-and-bbox / midpoint /
+// "both endpoints visible" / centroid raycast) all reject elements the user
+// can clearly see in some configuration and accept ones they can't. Per-
+// pixel GPU depth-test sidesteps all of these.
+//
+// What this does: for the requested edit mode, render every cage element
+// into an offscreen R32UI texture with its index encoded as the colour
+// value (id = elementIndex + 1; 0 means "no element"). A depth pre-pass
+// over faces (vertex/edge passes only — the face pass IS the surface)
+// gives GPU-correct occlusion with polygon-offset matching drawFaces. To
+// pick, read back a small window around the cursor and choose the nearest
+// non-zero ID by manhattan distance.
+//
+// Subpatch preview mode: GpuMesh's VBOs hold PREVIEW geometry, not cage.
+// gl_VertexID / per-vertex face-id attribute yields a preview index; CPU
+// translates back to a cage element via gpu.vertOriginGpu /
+// gpu.edgeOriginGpu / gpu.faceOriginGpu after readback.
+//
+// Cache key: (mode, gpu.uploadVersion, camera stamp, FBO size, occlude).
+// The camera half is ONE term, not two: `CameraStamp` (`camera_stamp.d`)
+// holds the `view` and `proj` matrices the FBO was rasterised under and
+// answers `changed(mv, vp.proj)` at the point of use. It is pinned by
+// `tests/test_gpu_select_slot_camera_key.d` — deleting the compare leaves a
+// parked hover answering out of the pre-orbit ID buffer.
+// One cache slot per mode so flipping edit modes 1/2/3 doesn't churn the
+// buffer; camera and mesh changes invalidate all three slots.
+//
+// `occlude` is the SELECTION-VISIBILITY term (`select_visibility.d`), and it
+// is in the key for a reason that will not announce itself if it is dropped:
+// a display-style flip alone moves NONE of the other five terms — same mesh,
+// same camera, same FBO size — so the slot would stay `valid` and the picker
+// would keep answering out of an FBO rendered under the PREVIOUS policy until
+// something else invalidated it. Two cells with different styles are the same
+// defect in space rather than in time. The guard is spelled ONCE, in
+// `ensureSlot`, for the same reason: it used to be written out verbatim in
+// three entry points, and adding a term to two of the three is invisible —
+// the third path just answers stale.
+//
+// Task 0617: the VBOs hold LOCAL (cage/preview) coordinates and the shaders
+// below carry no model uniform — so the layer's item transform is folded
+// into the VIEW matrix instead (`u_view := view * M`; forward projection
+// composes exactly, `proj*(view*M)*v_local == proj*view*(M*v_local)`, unlike
+// ray construction — see math.d's `projectionSpace` doc comment). Every
+// entry point below takes a REQUIRED `ModelSpace` for this reason; the
+// stored "view" in a cache slot is the COMPOSED `view*M`, not the raw
+// `vp.view` — the key is genuinely `(mode, uploadVersion, view*M, proj,
+// size)` now, not just `(..., view, ...)`. At `ms.isIdentity` this is an
+// exact no-op (§3.5 of doc/picking_item_transform_plan.md) — no `matMul4`,
+// byte-identical to the pre-0617 behaviour.
+//
+// Why `uploadVersion` and not `mesh.mutationVersion`: the transform
+// tools (Move/Rotate/Scale) mutate `mesh.vertices` directly during a
+// drag WITHOUT bumping mutationVersion — that's intentional, keeps
+// symmetry pair-table / falloff caches stable mid-drag. But they DO
+// re-upload the changed verts to GPU via uploadSelectedVertices each
+// frame. uploadVersion catches those partial uploads so the picker
+// FBO is rebuilt against the new VBO contents.
+// ---------------------------------------------------------------------------
+
+enum SelectMode {
+    Vertex,
+    Edge,
+    Face,
+}
+
+version (web) {
+    private enum selectShaderPreamble =
+        "#version 300 es\nprecision highp float;\nprecision highp int;\n";
+} else {
+    private enum selectShaderPreamble = "#version 330 core\n";
+}
+
+private string withSelectShaderPreamble(string body) pure @safe {
+    return selectShaderPreamble ~ body;
+}
+
+// ---- Vertex pass --------------------------------------------------------
+// gl_VertexID + 1 is the ID. GL_POINTS rasterises one pixel per point.
+private immutable string vertVertSrc = withSelectShaderPreamble(q{
+    layout(location = 0) in vec3 aPos;
+    uniform mat4 u_view;
+    uniform mat4 u_proj;
+    flat out uint vID;
+    void main() {
+        vID = uint(gl_VertexID) + 1u;
+        gl_Position = u_proj * u_view * vec4(aPos, 1.0);
+    }
+});
+
+// ---- Edge pass ----------------------------------------------------------
+// GL_LINES: each pair of consecutive verts is one segment, gl_VertexID/2
+// is the segment index.
+private immutable string edgeVertSrc = withSelectShaderPreamble(q{
+    layout(location = 0) in vec3 aPos;
+    uniform mat4 u_view;
+    uniform mat4 u_proj;
+    flat out uint vID;
+    void main() {
+        vID = uint(gl_VertexID / 2) + 1u;
+        gl_Position = u_proj * u_view * vec4(aPos, 1.0);
+    }
+});
+
+// ---- Face pass ----------------------------------------------------------
+// Per-vertex face-index attribute (gpu.faceIdVbo). Same value across all
+// triangle-fan vertices of a face → rasterised polygon fills with one ID.
+private immutable string faceVertSrc = withSelectShaderPreamble(q{
+    layout(location = 0) in vec3 aPos;
+    layout(location = 1) in uint aFaceId;
+    uniform mat4 u_view;
+    uniform mat4 u_proj;
+    flat out uint vID;
+    void main() {
+        vID = aFaceId + 1u;
+        gl_Position = u_proj * u_view * vec4(aPos, 1.0);
+    }
+});
+
+// Depth-only face pass for vertex / edge passes: fills depth, writes 0
+// into colour so picking inside a face surface returns nothing.
+private immutable string depthVertSrc = withSelectShaderPreamble(q{
+    layout(location = 0) in vec3 aPos;
+    uniform mat4 u_view;
+    uniform mat4 u_proj;
+    void main() {
+        gl_Position = u_proj * u_view * vec4(aPos, 1.0);
+    }
+});
+
+private immutable string commonFragSrc = withSelectShaderPreamble(q{
+    flat in uint vID;
+    out uint fragID;
+    void main() {
+        fragID = vID;
+    }
+});
+
+private immutable string zeroFragSrc = withSelectShaderPreamble(q{
+    out uint fragID;
+    void main() {
+        fragID = 0u;
+    }
+});
+
+string gpuSelectShaderSourceForValidation(string name) pure @safe {
+    switch (name) {
+    case "vertVertSrc": return vertVertSrc;
+    case "edgeVertSrc": return edgeVertSrc;
+    case "faceVertSrc": return faceVertSrc;
+    case "depthVertSrc": return depthVertSrc;
+    case "commonFragSrc": return commonFragSrc;
+    case "zeroFragSrc": return zeroFragSrc;
+    default: assert(false, "unknown GPU-select shader source: " ~ name);
+    }
+}
+
+class GpuSelectBuffer {
+private:
+    GLuint fbo;
+    GLuint colorTex;
+    GLuint depthRbo;
+    int    fboW, fboH;
+
+    GLuint vertProgram, edgeProgram, faceProgram, depthProgram;
+    GLint  vertLocView,  vertLocProj;
+    GLint  edgeLocView,  edgeLocProj;
+    GLint  faceLocView,  faceLocProj;
+    GLint  depthLocView, depthLocProj;
+
+    // Selection-only VAOs that combine GpuMesh's VBOs into the attribute
+    // layout our shaders expect. faceSelVao binds faceVbo at attr 0
+    // (skipping the interleaved normal attr 1 used by the main render)
+    // and faceIdVbo at attr 1.
+    GLuint vertSelVao, edgeSelVao, faceSelVao;
+
+    // Per-mode cache slot. Mode-keyed so flipping 1/2/3 doesn't
+    // invalidate; mesh/camera changes invalidate all three. Note
+    // that the FBO itself is SHARED across modes — a slot's
+    // `valid` only means "the FBO had THIS mode's IDs in it at
+    // some point with these matrices / upload version", not "it
+    // still has them now". Whenever renderMode runs for mode X
+    // we invalidate the OTHER slots: the FBO no longer matches
+    // them. Without this, a multi-mode hover frame (pickVertices →
+    // pickEdges → pickFaces in Stage 14.9 Auto-mode flow) would
+    // leave the FBO holding Face IDs, and the next frame's
+    // pickVertices would skip renderMode (its slot still flagged
+    // valid) and read back Face IDs as vert IDs — surfacing as
+    // "hover over edge highlights vertex on opposite side".
+    struct Slot {
+        bool        valid;
+        ulong       uploadVer;
+        /// The camera pose this slot's FBO was rasterised under — the
+        /// `view`/`proj` pair as one value (`camera_stamp.d`).
+        CameraStamp cam;
+        int         w, h;
+        /// Was the face depth pre-pass run into this FBO? Part of the KEY,
+        /// not a note — see the module header.
+        bool      occlude;
+    }
+    Slot[3] slots;
+
+public:
+    void init() {
+        vertProgram  = linkProgram(vertVertSrc,  commonFragSrc);
+        edgeProgram  = linkProgram(edgeVertSrc,  commonFragSrc);
+        faceProgram  = linkProgram(faceVertSrc,  commonFragSrc);
+        depthProgram = linkProgram(depthVertSrc, zeroFragSrc);
+
+        vertLocView  = glGetUniformLocation(vertProgram,  "u_view");
+        vertLocProj  = glGetUniformLocation(vertProgram,  "u_proj");
+        edgeLocView  = glGetUniformLocation(edgeProgram,  "u_view");
+        edgeLocProj  = glGetUniformLocation(edgeProgram,  "u_proj");
+        faceLocView  = glGetUniformLocation(faceProgram,  "u_view");
+        faceLocProj  = glGetUniformLocation(faceProgram,  "u_proj");
+        depthLocView = glGetUniformLocation(depthProgram, "u_view");
+        depthLocProj = glGetUniformLocation(depthProgram, "u_proj");
+
+        glGenFramebuffers(1, &fbo);
+        glGenTextures(1, &colorTex);
+        glGenRenderbuffers(1, &depthRbo);
+        glGenVertexArrays(1, &vertSelVao);
+        glGenVertexArrays(1, &edgeSelVao);
+        glGenVertexArrays(1, &faceSelVao);
+        fboW = 0; fboH = 0;
+        foreach (ref s; slots) s.valid = false;
+    }
+
+    void destroy() {
+        glDeleteFramebuffers(1, &fbo);
+        glDeleteTextures(1, &colorTex);
+        glDeleteRenderbuffers(1, &depthRbo);
+        glDeleteVertexArrays(1, &vertSelVao);
+        glDeleteVertexArrays(1, &edgeSelVao);
+        glDeleteVertexArrays(1, &faceSelVao);
+        glDeleteProgram(vertProgram);
+        glDeleteProgram(edgeProgram);
+        glDeleteProgram(faceProgram);
+        glDeleteProgram(depthProgram);
+    }
+
+    /// Render `mode`'s ID buffer if the per-mode cache is stale, then
+    /// read back a window of radius `r` around the cursor and return
+    /// the nearest non-zero ID translated back to a cage element index.
+    /// Returns -1 when the cursor is outside the viewport, the FBO has
+    /// zero size, or nothing is within reach.
+    /// `occlude` is the resolved selection-visibility occlusion term
+    /// (`select_visibility.resolveSelectVisibility(...).occlusionTerm`).
+    /// REQUIRED, with no default value on purpose: a defaulted parameter lets
+    /// a future call site inherit the old policy silently.
+    int pick(SelectMode mode, int mx, int my, int r,
+             ref const Mesh mesh, ref const GpuMesh gpu, ref const Viewport vp,
+             const ModelSpace ms, bool occlude)
+    {
+        auto z = g_perf.scope_(Cat.hoverPick);
+        g_fc.bumpHoverPick();
+        if (vp.width <= 0 || vp.height <= 0) return -1;
+        ensureSize(vp.width, vp.height);
+
+        // Task 0617 — composed view; slot key stores THIS, not raw vp.view.
+        const float[16] mv = ms.isIdentity ? vp.view : matMul4(vp.view, ms.m);
+
+        ensureSlot(mode, gpu, vp, mv, occlude);
+
+        int gpuId = readbackNearest(mx, my, r, vp);
+        if (gpuId < 0) return -1;
+
+        // VBO index → cage element index. Cage uploads → identity for
+        // verts (vertOriginGpu[k] == k) and empty edge/face maps (we
+        // pass-through). Subpatch uploads populate the maps.
+        //
+        // …and so does a cage upload with something HIDDEN (task 0613 S3):
+        // `edgeOriginGpu.length > 0` means "the edge VBO is not 1:1 with the
+        // mesh's edges", which the subpatch preview is the usual — but no
+        // longer the only — way to become. `mesh_gpu.upload` populates it with
+        // the identity on the cage path in that case, so the map branch below
+        // is taken and stays correct. Faces need nothing: a hidden face keeps
+        // its slot with faceTriCount == 0, so face ids remain cage-valued.
+        //
+        // Final bounds check against the current `mesh` is the safety
+        // net for stale-VBO picks: this code path can fire from a
+        // mid-event-batch pickFaces (handleMouseMotion → doSelectPickAt)
+        // after a tool already mutated `mesh` but BEFORE the once-per-
+        // frame gpu.upload at app.d's main loop catches up. The cache
+        // slot here is keyed by mesh.mutationVersion, so it dutifully
+        // re-renders the FBO — but the source VBOs (faceIdVbo,
+        // faceOriginGpu, edgeOriginGpu, vertOriginGpu) still describe
+        // the previous topology, so the translated ID can exceed the
+        // shrunken mesh. Out-of-range → -1.
+        int cage;
+        final switch (mode) {
+            case SelectMode.Vertex:
+                if (gpuId < gpu.vertOriginGpu.length) {
+                    uint v = gpu.vertOriginGpu[gpuId];
+                    if (v == uint.max) return -1;
+                    cage = cast(int)v;
+                } else {
+                    cage = gpuId;
+                }
+                return (cage >= 0 && cage < cast(int)mesh.vertices.length)
+                       ? cage : -1;
+            case SelectMode.Edge:
+                if (gpu.edgeOriginGpu.length > 0
+                    && gpuId < gpu.edgeOriginGpu.length)
+                {
+                    uint c = gpu.edgeOriginGpu[gpuId];
+                    if (c == uint.max) return -1;
+                    cage = cast(int)c;
+                } else {
+                    cage = gpuId;
+                }
+                return (cage >= 0 && cage < cast(int)mesh.edges.length)
+                       ? cage : -1;
+            case SelectMode.Face:
+                if (gpu.faceOriginGpu.length > 0
+                    && gpuId < gpu.faceOriginGpu.length)
+                {
+                    uint c = gpu.faceOriginGpu[gpuId];
+                    if (c == uint.max) return -1;
+                    cage = cast(int)c;
+                } else {
+                    cage = gpuId;
+                }
+                return (cage >= 0 && cage < cast(int)mesh.faces.length)
+                       ? cage : -1;
+        }
+    }
+
+    /// Force all three cache slots to re-render on the next pick. The
+    /// main loop doesn't need to call this — slots auto-invalidate on
+    /// (uploadVer, view, proj, size) changes — but the FBO resize path
+    /// uses it internally.
+    void invalidate() {
+        foreach (ref s; slots) s.valid = false;
+    }
+
+    // Default window radius for endpointVisibleEdgeFbo.
+    enum RP_DEFAULT = 2;
+
+    /// Probe the Edge ID-FBO in a (2*rp+1)² window centred on the
+    /// window-space point (wx, wy) and return true iff any non-zero
+    /// pixel exists there — i.e. any surviving (un-occluded) edge
+    /// rasterised within `rp` pixels of the endpoint projection.
+    ///
+    /// Used by the lasso STRICT both-endpoints rule: an edge is only
+    /// selected if BOTH endpoint probes return true (the edge FBO
+    /// already holds the depth-pre-pass result from the preceding
+    /// elementVisibility(Edge) call, so this is a cache-hit small
+    /// readback with no extra full render).
+    ///
+    /// The probe asks "any surviving edge pixel near this endpoint",
+    /// NOT "a pixel of THIS specific edge". Under `occlude` this is exact
+    /// for the common case: near a genuinely occluded endpoint, the depth
+    /// pre-pass zeroes the whole neighbourhood so no surviving edge
+    /// pixel exists. A rare false-pass could occur if a DIFFERENT
+    /// visible edge happens to pass within rp pixels of an occluded
+    /// endpoint; that leak is accepted for v1. If it ever bites,
+    /// tighten by matching the VBO segment id (elementVisibility
+    /// semantics already expose per-id pixels).
+    ///
+    /// WITHOUT `occlude` (a style that draws no faces) there is no pre-pass
+    /// and nothing is zeroed, so the probe degenerates to "any edge pixel
+    /// near this point" — which is the ANSWER WE WANT there: with the surface
+    /// not drawn, the far side is on screen and selectable. It also means the
+    /// STRICT both-endpoints rule stops rejecting far edges, i.e. the lasso
+    /// picks through in that style exactly as click does.
+    ///
+    /// `occlude` is REQUIRED and comes BEFORE the defaulted `rp` — see
+    /// `pick`'s comment for why it carries no default of its own.
+    bool endpointVisibleEdgeFbo(int wx, int wy,
+                                ref const GpuMesh gpu, ref const Viewport vp,
+                                const ModelSpace ms, bool occlude,
+                                int rp = RP_DEFAULT)
+    {
+        if (vp.width <= 0 || vp.height <= 0) return false;
+        ensureSize(vp.width, vp.height);
+
+        const float[16] mv = ms.isIdentity ? vp.view : matMul4(vp.view, ms.m);
+
+        // Ensure the Edge ID-FBO slot is current (render if stale).
+        ensureSlot(SelectMode.Edge, gpu, vp, mv, occlude);
+
+        // Map window coords to FBO texel space (same as readbackNearest).
+        int vx    = wx - vp.x;
+        int vyTop = wy - vp.y;
+        if (vx < 0 || vx >= fboW || vyTop < 0 || vyTop >= fboH) return false;
+        int fbY = fboH - 1 - vyTop;
+
+        int x0 = vx  - rp; if (x0 < 0)     x0 = 0;
+        int y0 = fbY - rp; if (y0 < 0)     y0 = 0;
+        int x1 = vx  + rp; if (x1 >= fboW) x1 = fboW - 1;
+        int y1 = fbY + rp; if (y1 >= fboH) y1 = fboH - 1;
+        int rw = x1 - x0 + 1;
+        int rh = y1 - y0 + 1;
+        if (rw <= 0 || rh <= 0) return false;
+
+        uint[] buf = new uint[](rw * rh * 4);
+        glBindFramebuffer(GL_FRAMEBUFFER, fbo);
+        glReadBuffer(GL_COLOR_ATTACHMENT0);
+        readIdPixels(x0, y0, rw, rh, buf);
+        glBindFramebuffer(GL_FRAMEBUFFER, 0);
+
+        for (size_t i = 0; i < buf.length; i += 4) {
+            const px = buf[i];
+            if (px != 0) return true;
+        }
+        return false;
+    }
+
+    /// Per-VBO-entry visibility derived from the cached ID FBO for
+    /// `mode`. `out[k] == true` iff the k-th VBO entry (vertex /
+    /// edge segment / face) has at least one non-zero pixel in the
+    /// FBO — i.e. it survives the depth pre-pass and is rasterised
+    /// somewhere in the viewport. Retained as an ID-buffer query utility;
+    /// region selection deliberately cannot use it because a pixel stores
+    /// only one element ID. Costs one full-viewport
+    /// `glReadPixels` plus an O(viewport-pixels) scan — typically a
+    /// few ms regardless of mesh size.
+    ///
+    /// Under `!occlude` (a style that draws no faces) no pre-pass runs, so
+    /// "visible" means only "rasterised somewhere in the viewport" — which is
+    /// what the user sees there. `occlude` is REQUIRED; see `pick`.
+    ///
+    /// Returns `null` on empty viewport.
+    bool[] elementVisibility(SelectMode mode,
+                              ref const Mesh mesh, ref const GpuMesh gpu,
+                              ref const Viewport vp, const ModelSpace ms,
+                              bool occlude)
+    {
+        if (vp.width <= 0 || vp.height <= 0) return null;
+        ensureSize(vp.width, vp.height);
+
+        const float[16] mv = ms.isIdentity ? vp.view : matMul4(vp.view, ms.m);
+
+        ensureSlot(mode, gpu, vp, mv, occlude);
+
+        size_t maxId;
+        final switch (mode) {
+            case SelectMode.Vertex:
+                maxId = gpu.vertCount;
+                break;
+            case SelectMode.Edge:
+                maxId = gpu.edgeVertCount / 2;
+                break;
+            case SelectMode.Face:
+                // faceIdVbo writes the preview-face index (a 0-based
+                // uint per face-corner; same value across all corners
+                // of a face). Max value = preview-face-count =
+                // gpu.faceTriStart.length.
+                maxId = gpu.faceTriStart.length;
+                break;
+        }
+        bool[] visible = new bool[](maxId);
+
+        uint[] buf = new uint[](fboW * fboH * 4);
+        glBindFramebuffer(GL_FRAMEBUFFER, fbo);
+        glReadBuffer(GL_COLOR_ATTACHMENT0);
+        readIdPixels(0, 0, fboW, fboH, buf);
+        glBindFramebuffer(GL_FRAMEBUFFER, 0);
+
+        for (size_t i = 0; i < buf.length; i += 4) {
+            const px = buf[i];
+            if (px == 0) continue;
+            immutable uint id = px - 1;
+            if (id < maxId) visible[id] = true;
+        }
+        return visible;
+    }
+
+private:
+    /// The ONE cache guard. `pick`, `endpointVisibleEdgeFbo` and
+    /// `elementVisibility` each carried a verbatim copy of this block; they
+    /// agreed, but nothing made them agree, and the key has since grown a
+    /// sixth term (`occlude`). Adding a term to two copies out of three
+    /// produces no crash and no red — the third path just answers out of an
+    /// FBO rendered under the other policy. So there is one copy.
+    ///
+    /// Callers must have run `ensureSize(vp.width, vp.height)` first: `fboW` /
+    /// `fboH` are part of the key this compares.
+    void ensureSlot(SelectMode mode, ref const GpuMesh gpu,
+                    ref const Viewport vp, ref const float[16] mv,
+                    bool occlude)
+    {
+        Slot* slot = &slots[mode];
+        // recorded remainder (1906 §3.6): `GpuMesh.uploadVersion` owns this
+        // term, and it MUST — it is not a mesh change class at all but a
+        // fingerprint of the VBO CONTENT, and this slot caches an FBO
+        // rasterised FROM that buffer (plan §3.2 row 5). A mesh dirty bit
+        // strictly loses here: the mesh can change without the buffer having
+        // been re-uploaded yet, and re-rendering IDs from a stale VBO on the
+        // strength of a fresh mesh is worse than not re-rendering at all. The
+        // bus trigger that stage 3 of task 0401 added on top was DELETED at
+        // stage 2b as redundant under that rule.
+        if (slot.valid
+            && slot.occlude == occlude
+            && slot.uploadVer == gpu.uploadVersion
+            && slot.w == fboW && slot.h == fboH
+            && !slot.cam.changed(mv, vp.proj))
+            return;
+
+        renderMode(mode, gpu, vp, mv, occlude);
+        // The FBO now holds this mode's IDs only — every other slot's cached
+        // state no longer matches the FBO contents. See the Slot struct
+        // comment for the "hover over edge highlights vertex on the opposite
+        // side" symptom this prevents.
+        foreach (mi, ref s; slots) {
+            if (cast(SelectMode)mi != mode) s.valid = false;
+        }
+        slot.valid     = true;
+        slot.uploadVer = gpu.uploadVersion;
+        slot.cam.update(mv, vp.proj);
+        slot.w         = fboW;
+        slot.h         = fboH;
+        slot.occlude   = occlude;
+    }
+
+    // `mv` is the ALREADY-COMPOSED view (`ms.isIdentity ? vp.view :
+    // matMul4(vp.view, ms.m)`) — every one of this method's three callers
+    // computes it first anyway (to compare against the cache slot's stored
+    // key before deciding whether a render is even needed), so it is passed
+    // in rather than recomputed here. Passing the matrix in also collapses
+    // "the key matches what was rendered" from a two-expression invariant
+    // (recompute-and-hope-they-agree) to a single value read twice.
+    //
+    // `occlude` — the resolved selection-visibility occlusion term. It gates
+    // the face depth pre-pass below, which is the ENTIRE occlusion mechanism
+    // for the vertex and edge passes. `SelectMode.Face` never runs the
+    // pre-pass (the face pass IS the surface), so the flag is inert there by
+    // construction, before and after this parameter existed.
+    void renderMode(SelectMode mode, ref const GpuMesh gpu, ref const Viewport vp,
+                    ref const float[16] mv, bool occlude)
+    {
+        // Save state we touch so the main renderer survives unchanged.
+        // pickXxx is called mid-frame between shader.useProgram and
+        // gpu.drawEdges — the latter assumes the program bound when
+        // pick() was invoked is still active when it returns, so we
+        // MUST restore glUseProgram here. Same for VAO bindings.
+        GLint prevFbo;
+        GLint[4] prevVp;
+        GLint prevProgram;
+        GLint prevVao;
+        glGetIntegerv(GL_FRAMEBUFFER_BINDING, &prevFbo);
+        glGetIntegerv(GL_VIEWPORT, prevVp.ptr);
+        glGetIntegerv(GL_CURRENT_PROGRAM, &prevProgram);
+        glGetIntegerv(GL_VERTEX_ARRAY_BINDING, &prevVao);
+        GLboolean prevDepthTest = glIsEnabled(GL_DEPTH_TEST);
+        GLboolean prevPolyOff   = glIsEnabled(GL_POLYGON_OFFSET_FILL);
+        GLboolean prevCull      = glIsEnabled(GL_CULL_FACE);
+
+        glBindFramebuffer(GL_FRAMEBUFFER, fbo);
+        glViewport(0, 0, fboW, fboH);
+        glEnable(GL_DEPTH_TEST);
+        // THE CLICK/HOVER PATH HAS NO FACING TERM — a measured law
+        // (`CLAUDE.md` §Measured laws), and until this line it was true only
+        // by INHERITANCE: nothing here touched culling, so the pre-pass was
+        // two-sided merely because whatever ran before it happened to leave
+        // GL_CULL_FACE off. Three modules do enable it (`handles/gl_util.d`,
+        // `tools/slice/slice_tool.d`, `mesh_gpu.d`'s face-side bracket — the
+        // DISPLAY pass culls back faces by surface, model M6; this pick pass
+        // must not), each restoring it themselves; one
+        // missed restore and a back-facing occluder would silently stop
+        // occluding — a facing rule nobody wrote. `bvh_pick.d` already treats
+        // "the face pass does not cull" as a load-bearing invariant of the
+        // GPU/BVH equivalence. Now it is enforced rather than inherited.
+        glDisable(GL_CULL_FACE);
+
+        GLuint clearId = 0;
+        glClearBufferuiv(GL_COLOR, 0, &clearId);
+        glClear(GL_DEPTH_BUFFER_BIT);
+
+        // Depth pre-pass for vertex / edge: writes 0 to colour + face
+        // depth, so verts / edges behind a face fail the depth test
+        // and stay 0. Face mode skips this — the face pass itself fills
+        // the depth + colour buffers with one draw call.
+        //
+        // `occlude` is the whole selection-visibility wiring: under a display
+        // style that draws NO faces there is no surface on screen to hide
+        // anything, so running this pass would model a scene the user is not
+        // looking at. Skipping it is what makes a vertex or edge behind the
+        // model pickable there. `GL_DEPTH_TEST` stays on either way — points
+        // and lines still depth-test against EACH OTHER, so element-vs-element
+        // ordering is unchanged; only the face surface leaves the buffer.
+        if (occlude && mode != SelectMode.Face && gpu.faceVertCount > 0) {
+            glUseProgram(depthProgram);
+            glUniformMatrix4fv(depthLocView, 1, GL_FALSE, mv.ptr);
+            glUniformMatrix4fv(depthLocProj, 1, GL_FALSE, vp.proj.ptr);
+            glEnable(GL_POLYGON_OFFSET_FILL);
+            glPolygonOffset(1.0f, 1.0f);
+            glBindVertexArray(gpu.faceVao);
+            glDrawArrays(GL_TRIANGLES, 0, gpu.faceVertCount);
+            g_fc.draw(DrawPass.idPick, gpu.faceVertCount);
+            glDisable(GL_POLYGON_OFFSET_FILL);
+        }
+
+        // Element pass writes IDs into the colour buffer wherever the
+        // depth test passes against the pre-pass face surface.
+        final switch (mode) {
+            case SelectMode.Vertex:
+                if (gpu.vertCount > 0) {
+                    setupVertSelVao(gpu);
+                    glUseProgram(vertProgram);
+                    glUniformMatrix4fv(vertLocView, 1, GL_FALSE, mv.ptr);
+                    glUniformMatrix4fv(vertLocProj, 1, GL_FALSE, vp.proj.ptr);
+                    glDrawArrays(GL_POINTS, 0, gpu.vertCount);
+                    g_fc.draw(DrawPass.idPick, gpu.vertCount);
+                }
+                break;
+            case SelectMode.Edge:
+                if (gpu.edgeVertCount > 0) {
+                    setupEdgeSelVao(gpu);
+                    glUseProgram(edgeProgram);
+                    glUniformMatrix4fv(edgeLocView, 1, GL_FALSE, mv.ptr);
+                    glUniformMatrix4fv(edgeLocProj, 1, GL_FALSE, vp.proj.ptr);
+                    glDrawArrays(GL_LINES, 0, gpu.edgeVertCount);
+                    g_fc.draw(DrawPass.idPick, gpu.edgeVertCount);
+                }
+                break;
+            case SelectMode.Face:
+                if (gpu.faceVertCount > 0) {
+                    setupFaceSelVao(gpu);
+                    glUseProgram(faceProgram);
+                    glUniformMatrix4fv(faceLocView, 1, GL_FALSE, mv.ptr);
+                    glUniformMatrix4fv(faceLocProj, 1, GL_FALSE, vp.proj.ptr);
+                    glDrawArrays(GL_TRIANGLES, 0, gpu.faceVertCount);
+                    g_fc.draw(DrawPass.idPick, gpu.faceVertCount);
+                }
+                break;
+        }
+
+        glBindVertexArray(cast(GLuint)prevVao);
+        glUseProgram(cast(GLuint)prevProgram);
+        glBindFramebuffer(GL_FRAMEBUFFER, cast(GLuint)prevFbo);
+        glViewport(prevVp[0], prevVp[1], prevVp[2], prevVp[3]);
+        if (!prevDepthTest) glDisable(GL_DEPTH_TEST);
+        if (prevPolyOff)    glEnable(GL_POLYGON_OFFSET_FILL);
+        else                glDisable(GL_POLYGON_OFFSET_FILL);
+        if (prevCull)       glEnable(GL_CULL_FACE);
+    }
+
+    void setupVertSelVao(ref const GpuMesh gpu) {
+        glBindVertexArray(vertSelVao);
+        glBindBuffer(GL_ARRAY_BUFFER, gpu.vertVbo);
+        glVertexAttribPointer(0, 3, GL_FLOAT, GL_FALSE,
+                              3 * float.sizeof, cast(void*)0);
+        glEnableVertexAttribArray(0);
+    }
+
+    void setupEdgeSelVao(ref const GpuMesh gpu) {
+        glBindVertexArray(edgeSelVao);
+        glBindBuffer(GL_ARRAY_BUFFER, gpu.edgeVbo);
+        glVertexAttribPointer(0, 3, GL_FLOAT, GL_FALSE,
+                              3 * float.sizeof, cast(void*)0);
+        glEnableVertexAttribArray(0);
+    }
+
+    void setupFaceSelVao(ref const GpuMesh gpu) {
+        glBindVertexArray(faceSelVao);
+        // Position from interleaved faceVbo — stride `kFaceStride`, offset 0.
+        // The normals behind it are irrelevant for selection, so attr 1
+        // points at the parallel faceIdVbo instead.
+        glBindBuffer(GL_ARRAY_BUFFER, gpu.faceVbo);
+        glVertexAttribPointer(0, 3, GL_FLOAT, GL_FALSE,
+                              kFaceStride * float.sizeof, cast(void*)0);
+        glEnableVertexAttribArray(0);
+        glBindBuffer(GL_ARRAY_BUFFER, gpu.faceIdVbo);
+        glVertexAttribIPointer(1, 1, GL_UNSIGNED_INT,
+                               uint.sizeof, cast(void*)0);
+        glEnableVertexAttribArray(1);
+    }
+
+    int readbackNearest(int mx, int my, int r, ref const Viewport vp) {
+        int vx = mx - vp.x;
+        int vyTop = my - vp.y;
+        if (vx < 0 || vx >= fboW || vyTop < 0 || vyTop >= fboH) return -1;
+        int fbY = fboH - 1 - vyTop;
+
+        int x0 = vx  - r; if (x0 < 0)         x0 = 0;
+        int y0 = fbY - r; if (y0 < 0)         y0 = 0;
+        int x1 = vx  + r; if (x1 >= fboW)     x1 = fboW - 1;
+        int y1 = fbY + r; if (y1 >= fboH)     y1 = fboH - 1;
+        int rw = x1 - x0 + 1;
+        int rh = y1 - y0 + 1;
+        if (rw <= 0 || rh <= 0) return -1;
+
+        uint[] buf = new uint[](rw * rh * 4);
+        glBindFramebuffer(GL_FRAMEBUFFER, fbo);
+        glReadBuffer(GL_COLOR_ATTACHMENT0);
+        readIdPixels(x0, y0, rw, rh, buf);
+        glBindFramebuffer(GL_FRAMEBUFFER, 0);
+
+        // The (2r+1)² window's corners lie up to r·√2 away; only pixels within
+        // EUCLIDEAN distance r count, inclusive (the element-pick law,
+        // `hover_state`). r == 0 (face pick) considers only the exact pixel.
+        int  bestD2 = r * r + 1;
+        uint bestId = 0;
+        foreach (j; 0 .. rh) foreach (i; 0 .. rw) {
+            uint id = buf[(j * rw + i) * 4];
+            if (id == 0) continue;
+            int dx = x0 + i - vx, dy = y0 + j - fbY;
+            int d2 = dx * dx + dy * dy;
+            if (d2 < bestD2) { bestD2 = d2; bestId = id; }
+        }
+        if (bestId == 0) return -1;
+        return cast(int)(bestId - 1);
+    }
+
+    /// Read the R32UI attachment through WebGL2's required integer readback
+    /// pair.  Desktop GL also accepts this pair.  Although the attachment has
+    /// one component, RGBA_INTEGER writes four uints per pixel; callers read
+    /// the red lane and size their buffers accordingly.  Keeping the GL call
+    /// here makes it impossible for one of the three picker paths to drift
+    /// back to the implementation-dependent RED_INTEGER pair.
+    void readIdPixels(int x, int y, int w, int h, uint[] rgba) {
+        assert(rgba.length == cast(size_t)w * cast(size_t)h * 4);
+        glReadPixels(x, y, w, h, GL_RGBA_INTEGER, GL_UNSIGNED_INT, rgba.ptr);
+    }
+
+    void ensureSize(int w, int h) {
+        if (w == fboW && h == fboH && fboW > 0) return;
+        fboW = w; fboH = h;
+        glBindTexture(GL_TEXTURE_2D, colorTex);
+        glTexImage2D(GL_TEXTURE_2D, 0, GL_R32UI, w, h, 0, GL_RED_INTEGER,
+                     GL_UNSIGNED_INT, null);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
+        glBindTexture(GL_TEXTURE_2D, 0);
+
+        glBindRenderbuffer(GL_RENDERBUFFER, depthRbo);
+        glRenderbufferStorage(GL_RENDERBUFFER, GL_DEPTH_COMPONENT24, w, h);
+        glBindRenderbuffer(GL_RENDERBUFFER, 0);
+
+        glBindFramebuffer(GL_FRAMEBUFFER, fbo);
+        glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0,
+                               GL_TEXTURE_2D, colorTex, 0);
+        glFramebufferRenderbuffer(GL_FRAMEBUFFER, GL_DEPTH_ATTACHMENT,
+                                  GL_RENDERBUFFER, depthRbo);
+        GLenum status = glCheckFramebufferStatus(GL_FRAMEBUFFER);
+        if (status != GL_FRAMEBUFFER_COMPLETE) {
+            import std.conv : to;
+            throw new Exception(
+                "GpuSelectBuffer: FBO incomplete (status=0x"
+                ~ to!string(status, 16) ~ ")");
+        }
+        glBindFramebuffer(GL_FRAMEBUFFER, 0);
+        invalidate();
+    }
+}
+
+private GLuint linkProgram(string vertSrc, string fragSrc) {
+    GLuint vert = compileShader(GL_VERTEX_SHADER,   vertSrc);
+    GLuint frag = compileShader(GL_FRAGMENT_SHADER, fragSrc);
+    GLuint prog = glCreateProgram();
+    glAttachShader(prog, vert);
+    glAttachShader(prog, frag);
+    glLinkProgram(prog);
+    GLint ok;
+    glGetProgramiv(prog, GL_LINK_STATUS, &ok);
+    if (!ok) {
+        char[512] log;
+        glGetProgramInfoLog(prog, 512, null, log.ptr);
+        import std.conv : to;
+        throw new Exception("gpu_select: link error: " ~ log[].to!string);
+    }
+    glDeleteShader(vert);
+    glDeleteShader(frag);
+    return prog;
+}
+
+

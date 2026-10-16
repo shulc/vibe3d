@@ -6,7 +6,7 @@ import std.json : JSONType, parseJSON;
 import vibe3d.editing.interaction.data.ai.interaction : AiAdvisorDecision, AiCandidate, AiCandidateKind,
     AiElementCandidateKind, AiInteractionContext, AiInteractionPhase,
     AiIntent;
-import ai.interaction_log : AiInteractionLogRecord,
+import vibe3d.runtime.ai_advisor.ai.interaction_log : AiInteractionLogRecord,
     aiInteractionLogSchemaVersion, makeAiInteractionLogRecord;
 
 void main() {}

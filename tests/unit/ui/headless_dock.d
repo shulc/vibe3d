@@ -2,8 +2,8 @@ module tests.unit.ui.headless_dock;
 
 import ImGui = d_imgui;
 import d_imgui.imgui_h;
-import ui.dock_drag : viewportOverlayWindowFlags;
-import ui.imgui_window_class : ImGuiWindowClassStorage;
+import vibe3d.ui.editor.ui.dock_drag : viewportOverlayWindowFlags;
+import vibe3d.ui.editor.ui.imgui_window_class : ImGuiWindowClassStorage;
 
 private extern(C) nothrow @nogc {
     void ImGuiIO_AddMousePosEvent(void* self, float x, float y);
@@ -143,7 +143,7 @@ struct HeadlessDockScene {
     }
 
     bool windowDockDragActive() const {
-        import ui.dock_drag : windowDockDragActive;
+        import vibe3d.ui.editor.ui.dock_drag : windowDockDragActive;
         return windowDockDragActive();
     }
 

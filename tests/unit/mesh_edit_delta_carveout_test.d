@@ -32,7 +32,7 @@ import std.format : format;
 import std.path   : buildPath, dirName;
 
 import vibe3d.mesh.core.mesh;
-import math : Vec3;
+import vibe3d.util.math.math : Vec3;
 import vibe3d.mesh.edit_log.mesh_edit_delta;
 import vibe3d.mesh.core.mesh_planes : rewriteFaces, FaceSource, kNoSource;
 

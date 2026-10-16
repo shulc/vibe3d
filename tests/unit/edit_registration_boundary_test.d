@@ -5,17 +5,17 @@ import tests.unit.census_symbols : exists = wave15Exists;
 import std.algorithm : sort, canFind;
 
 import core.exception : AssertError;
-import command_history : CommandHistory;
-import commands.mesh.session_edit : MeshSessionEdit;
-import commands.mesh.vertex_edit : MeshVertexEdit;
-import edit_tool_registration : EditSessionFactories, EditToolDeps,
+import vibe3d.editing.commands.runtime.command_history : CommandHistory;
+import vibe3d.editing.commands.editor.commands.mesh.session_edit : MeshSessionEdit;
+import vibe3d.editing.commands.editor.commands.mesh.vertex_edit : MeshVertexEdit;
+import vibe3d.apps.desktop.edit_tool_registration : EditSessionFactories, EditToolDeps,
     registerEditToolCommands;
-static import edit_tool_registration;
-import live_registration_roles : LiveSessionRole, LiveViewModeRole;
-import mesh_gpu : GpuMesh;
-import pipe_gizmo_host : PipeGizmoHost;
-import registry : Registry;
-import shader : LitShader;
+static import edit_tool_registration = vibe3d.apps.desktop.edit_tool_registration;
+import vibe3d.runtime.application_core.live_registration_roles : LiveSessionRole, LiveViewModeRole;
+import vibe3d.viewport.gpu.mesh_gpu : GpuMesh;
+import vibe3d.editing.tools.interactive.pipe_gizmo_host : PipeGizmoHost;
+import vibe3d.editing.tools.interactive.registry : Registry;
+import vibe3d.viewport.gpu.shader : LitShader;
 
 import std.array : join;
 import std.exception : assertThrown;

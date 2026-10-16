@@ -13,7 +13,7 @@
 module tests.unit.imgui_event_gate_test;
 
 import bindbc.sdl;
-import imgui_event_gate : goesToImGui, keyBelongsToEditor,
+import vibe3d.ui.editor.imgui_event_gate : goesToImGui, keyBelongsToEditor,
                           escapeReachesEditor;
 
 private SDL_Event keyEvent(uint type, SDL_Keycode sym, ushort mod = 0) {

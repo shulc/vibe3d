@@ -1,0 +1,239 @@
+module vibe3d.editing.commands.editor.commands.mesh.session_edit;
+import vibe3d.mesh.edit_replay.mesh_edit_replay : apply, revert;
+
+import vibe3d.editing.commands.runtime.command;
+import vibe3d.editing.pipeline.contracts.operator : Operator, Task, VectorStack, PacketKind, OperatorActrCommon;
+import vibe3d.mesh.core.mesh;
+import vibe3d.viewport.camera.view;
+import vibe3d.editing.contracts.editmode;
+import vibe3d.mesh.snapshot.snapshot : MeshSnapshot;
+import vibe3d.mesh.edit_log.mesh_edit_delta : MeshEditDelta, MeshEditScope;
+import vibe3d.editing.commands.editor.commands.mesh.gesture_payload : GesturePayload;
+import vibe3d.editing.commands.editor.commands.mesh.mesh_edit_payload : MeshEditPayload;
+import vibe3d.editing.contracts.tool_policy_values : AttrImage, StepOrigin;
+
+/// Generic record-flavor command for an interactive mesh-editing session
+/// (see e.g. BevelTool, EdgeExtrudeTool, ArrayTool, LoopSliceTool, ...). The
+/// tool captures a full MeshSnapshot at the moment its topology/geometry is
+/// first built, mutates the mesh freely while the user drags the gizmo and
+/// tweaks Tool Properties (intermediate revert+reapply cycles within the
+/// tool itself), and on deactivation records this command holding (before,
+/// after) snapshots so the entire gesture is a single undo step.
+///
+/// apply() = restore `after`; revert() = restore `before`. A
+/// topology-creating tool cannot use the vertex-position-delta
+/// MeshVertexEdit undo, so it records a full before/after snapshot pair —
+/// one undo step per session.
+///
+/// This is the single generic class behind what used to be twelve
+/// hand-cloned per-tool subclasses (MeshArrayEdit, MeshBevelEdit,
+/// MeshCloneEdit, MeshEdgeExtendEdit, MeshEdgeExtrudeEdit,
+/// MeshFaceExtrudeEdit, MeshLoopSliceEdit, MeshRadialArrayEdit,
+/// MeshReduceEdit, MeshSmoothShiftEdit, MeshStrokeExtrudeEdit) that
+/// differed only in their wire name, default label, change-scope bits, and
+/// whether an operation-log MeshEditDelta was wired (task 0408, campaign
+/// 0407 §A.D1). Each caller supplies its own `(wireName, defaultLabel,
+/// editScope)` at construction. `name()` returns `wireName` verbatim —
+/// undo history, event-log replay, and macros dispatch on it, so callers
+/// MUST pass the exact string the old per-class `name()` used to return
+/// (e.g. "mesh.bevel_edit", "mesh.array_edit"; see each factory site in
+/// app.d for the frozen list, including the irregular
+/// "mesh.strokeExtrude_edit").
+///
+/// `MeshSelectionEdit` (selection state, not mesh geometry — a different
+/// snapshot type, no gpu/caches, its own compareOp/mergeFrom coalescing and
+/// promote-hook) and `MeshVertexEdit` (per-vertex position delta, its own
+/// coalescing/merge/run-consolidation machinery) are NOT instances of this
+/// shape and intentionally stay as their own classes.
+/// The refusal a payload-less carrier owes. `MeshSessionEdit` is the RECORD
+/// of a tool session: the tool installs the session's (before, after)
+/// snapshots — or its operation-log delta — at the moment it commits the
+/// gesture, and only REDO ever re-enters `evaluate()` with that payload
+/// present. Built fresh from the command registry (`/api/command
+/// mesh.bevel_edit`, `/api/history/replay`, the History panel's `>` button
+/// and "Re-run" item, a recorded macro, a saved script) the carrier is BLANK,
+/// and a blank `MeshSnapshot` is not "a snapshot of an empty mesh" — it is
+/// "no snapshot was ever taken" (`snapshot.d`'s `filled`, written only by
+/// `capture()`). Restoring it wiped the mesh. Task 1552.
+enum string kNoSessionReason =
+    "no recorded edit session: this command carries a tool session's "
+    ~ "before/after snapshots and cannot run on its own";
+
+class MeshSessionEdit : Command, Operator, GesturePayload {
+    mixin OperatorActrCommon;
+
+    private MeshEditPayload payload_;
+    // History owns each topology step's navigation image. The
+    // preview basis is distinct from the visible mesh after a plain drag.
+    private AttrImage stepBeforeAttrs_;
+    private AttrImage stepAfterAttrs_;
+    private MeshSnapshot stepBeforeBasis_;
+    private MeshSnapshot stepAfterBasis_;
+    private bool topologyStep_;
+    private bool stepOpenedByPress_;
+    private ulong stepInstance_;
+    private StepOrigin stepOrigin_;
+    private ulong stepOperation_;
+
+    bool isTopologyStep() const { return topologyStep_; }
+    /// How the step began and the operation it belongs to (topology-redo S2b, model
+    /// doc §2.2); `unclassified` with operation 0 outside the captured model.
+    StepOrigin stepOrigin() const { return stepOrigin_; }
+    ulong stepOperation() const { return stepOperation_; }
+    /// The step was opened by the tool's own press door, not by an arm, an
+    /// Action or a parameter write (plan 8646 [R1-8]).
+    bool stepOpenedByPress() const { return stepOpenedByPress_; }
+    /// The tool INSTANCE that recorded the step (`Tool.preparedLifecycleOwner`):
+    /// an operation context is restored only into it (wave plan 8640 S7a, M-H).
+    ulong stepInstance() const { return stepInstance_; }
+    AttrImage stepBeforeAttrs() const {
+        return AttrImage(stepBeforeAttrs_.names.dup, stepBeforeAttrs_.raw.dup);
+    }
+    AttrImage stepAfterAttrs() const {
+        return AttrImage(stepAfterAttrs_.names.dup, stepAfterAttrs_.raw.dup);
+    }
+    MeshSnapshot stepBeforeBasis() const { return stepBeforeBasis_.ownedDup(); }
+    MeshSnapshot stepAfterBasis() const { return stepAfterBasis_.ownedDup(); }
+    void setTopologyStep(
+            AttrImage beforeAttrs, AttrImage afterAttrs, MeshSnapshot beforeBasis, MeshSnapshot afterBasis, bool openedByPress,
+            ulong instance, StepOrigin origin, ulong operation) {
+        stepOrigin_ = origin;
+        stepOperation_ = operation;
+        stepOpenedByPress_ = openedByPress;
+        stepInstance_ = instance;
+        stepBeforeAttrs_ = beforeAttrs;
+        stepAfterAttrs_ = afterAttrs;
+        stepBeforeBasis_ = beforeBasis;
+        stepAfterBasis_ = afterBasis;
+        topologyStep_ = true;
+    }
+    private string editLabel;
+
+    private string       wireName_;
+    private string       defaultLabel_;
+    private MeshEditScope editScope_;
+
+    // Optional operation-log delta (doc/undo_change_tracker_plan.md Phase 2).
+    // When setDelta installs a delta-backed payload, apply()/revert() replay the
+    // delta (O(delta)) instead of restoring the whole-mesh snapshot pair.
+    // The snapshot path stays intact as the fallback: a degenerate (empty)
+    // delta at a tool commit, and the callers — the majority — that never call
+    // setDelta at all. It used to carry a third reader, the
+    // `VIBE3D_UNDO_TRACKER=0` escape hatch, which task 1903 stage N deleted.
+
+
+    this(Mesh* mesh, ref View view, EditMode editMode,
+         string wireName, string defaultLabel,
+         MeshEditScope editScope = MeshEditScope.None) {
+        super(mesh, view, editMode);
+        this.wireName_     = wireName;
+        this.defaultLabel_ = defaultLabel;
+        this.editScope_    = editScope;
+    }
+
+    override string name()  const { return wireName_; }
+    override string label() const {
+        return editLabel.length ? editLabel : defaultLabel_;
+    }
+
+    // Change-scope metadata (Phase 4 §b). Callers that append/reshape
+    // geometry pass MeshEditScope.Geometry | MeshEditScope.Marks; plain
+    // callers leave the ctor default (None), matching every pre-merge
+    // class that never overrode editScope().
+    override MeshEditScope editScope() const { return editScope_; }
+    // True iff this instance is delta-backed (setDelta was called). The
+    // snapshot path (setSnapshots) reports false honestly.
+    override bool isOperationInverse() const { return payload_.isDelta(); }
+
+    void setSnapshots(MeshSnapshot before_, MeshSnapshot after_, string label_ = "") {
+        payload_ = MeshEditPayload.snapshots(before_, after_);
+        this.editLabel = label_;
+        // TASK 2500 — THE ONE PLACE THIRTY SESSION TOOLS DECLARE THEIR IMAGE.
+        // A tool builds this carrier, hands it the pair and pushes it straight
+        // to `history.record(cmd)` WITHOUT ever calling `apply()`; the flag
+        // therefore cannot be a forward-only bit, and it is raised here, one
+        // statement from the image it describes.
+        noteUndoRecorded();
+    }
+
+    // Install an operation-log delta. The tool builds this by re-running its
+    // kernel once inside a Mesh edit batch. The payload owns this delta;
+    // even an empty installed delta is present. Callers choose the snapshot
+    // fallback before installation; delta replay never reads a snapshot pair.
+    void setDelta(MeshEditDelta delta_, string label_ = "") {
+        payload_ = MeshEditPayload.delta(delta_);
+        this.editLabel = label_;
+        noteUndoRecorded();
+    }
+
+    /// Does this carrier hold an image to replay? TWO arms, and the second is
+    /// load-bearing: the delta path (`setDelta`, edge_extend / edge_extrude)
+    /// never writes `after` at all, so `after.filled` alone answers "empty" on
+    /// a perfectly good delta carrier. Read by `evaluate()` and by
+    /// `hasGesturePayload()`; ONE expression, on purpose (task 1905 D15).
+    private bool hasPayload() const { return payload_.present(); }
+
+    /// GesturePayload — see `commands/mesh/gesture_payload.d`.
+    override bool hasGesturePayload() const { return hasPayload(); }
+
+    bool evaluate(ref VectorStack vts) {
+        import vibe3d.editing.pipeline.contracts.toolpipe.packets : SubjectPacket;
+        auto subj = vts.get!SubjectPacket();
+        if (subj is null) return false;
+        // TASK 1552 — a carrier with NO PAYLOAD must refuse, not restore a
+        // blank snapshot over the live mesh. The predicate is `filled`, the
+        // same one ~98 sibling `revert()` bodies and the session tools' own
+        // pre-record gates read; it is deliberately NOT "the snapshot is
+        // empty", because a session may LEGITIMATELY end on an empty mesh
+        // (delete the last face) and `capture(emptyMesh)` is `filled` and
+        // MUST still redo. The delta-only term in the shared payload is load-bearing: the delta
+        // path (edge_extrude / edge_extend) never sets `after` at all.
+        //
+        // TASK 1905 (D15): the expression itself now lives in the shared payload, forwarded
+        // by `hasPayload()`, and `hasGesturePayload()` — the gesture recorder's belt —
+        // reads the SAME function. It is not "the same predicate written
+        // twice on purpose": two copies drift, and the drift's worst state is
+        // a command the recorder ACCEPTED and this method then refuses, i.e.
+        // an undo entry that dies on redo.
+        if (!hasPayload()) {
+            // Written into the base field rather than through an
+            // `override refusalReason()`: `Command.apply()` writes
+            // `kNoEditTargetReason` into the same field and clears it on the
+            // non-refusing path (`command.d`'s `refusedForNoEditTarget`),
+            // which runs BEFORE `op.evaluate(vts)` — so a separate field plus
+            // an override would shadow the earlier, more specific message.
+            baseRefusal_ = kNoSessionReason;
+            return false;
+        }
+        payload_.forward(*mesh);
+        return true;
+    }
+
+    // NO `filled` GATE HERE, and that is a decision, not an oversight
+    // (task 1552). A payload-less carrier cannot reach `revert()`: it never
+    // gets RECORDED, because `evaluate()` above refuses and `applyOrRefire`
+    // records nothing on a refusal — and every producer that DOES record one
+    // gates on `before.filled` before calling `setSnapshots` (the one that
+    // does not, `tools/edit/tack.d`, captures `pre` unconditionally, so
+    // `filled` is true by construction).
+    //
+    // If such a producer is ever written, the correct answer is a NO-OP
+    // `true` — "nothing to undo" — and NEVER `false`. A false from a Model
+    // entry's `revert()` makes `CommandHistory.undo()` do
+    // `undoStack = undoStack[0 .. mi]`: it silently drops that entry AND the
+    // whole tail above it, which the comment at that site says outright is
+    // unrecoverable. A guard meant as free insurance would turn "undo leaves
+    // an empty mesh" into "undo destroys the history".
+    //
+    // TASK 2500 — THAT ANSWER IS NO LONGER THIS CLASS'S TO GET RIGHT, and the
+    // decision above survives as its reason rather than as its code. `revert`
+    // is `final` on the base and reads one flag, and this class's flag is
+    // raised inside `setSnapshots`/`setDelta` — the only two doors a payload
+    // arrives through. A carrier that never got one therefore answers from the
+    // base, and `revertImpl` below cannot be entered by it at all.
+    protected override void revertImpl() {
+        payload_.reverse(*mesh);
+    }
+}
+
+

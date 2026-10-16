@@ -19,8 +19,8 @@ module capture_to_training_dataset;
 import std.stdio : writeln, writefln, stderr, stdin, File;
 import std.string : strip, startsWith;
 
-import ai.interaction_log : AiInteractionLogRecord, parseAiInteractionLogLine;
-import ai.training_dataset : exportAiTrainingDatasetJsonl;
+import vibe3d.runtime.ai_advisor.ai.interaction_log : AiInteractionLogRecord, parseAiInteractionLogLine;
+import vibe3d.runtime.ai_advisor.ai.training_dataset : exportAiTrainingDatasetJsonl;
 
 void main(string[] args) {
     AiInteractionLogRecord[] records;

@@ -4,7 +4,7 @@ import std.file : exists, write, tempDir, mkdirRecurse, rmdirRecurse;
 import std.path : buildPath;
 import std.format : format;
 import vibe3d.documents.model.document : Document;
-import io.native : kV3dFormatVersion;
+import vibe3d.documents.io.io.native : kV3dFormatVersion;
 
 // The desktop FileLoad refusal chain retains its original codec fixture.
 private string v3dTestDir(string tag) {
@@ -17,7 +17,7 @@ private string v3dTestDir(string tag) {
 unittest {
     import vibe3d.mesh.core.mesh : makeCube;
     import std.algorithm : canFind;
-    import commands.file.load : FileLoad;
+    import vibe3d.apps.desktop.commands.file.load : FileLoad;
     import vibe3d.viewport.camera.view     : View;
     import vibe3d.editing.contracts.editmode : EditMode;
 

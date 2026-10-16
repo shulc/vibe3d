@@ -14,7 +14,7 @@ import std.algorithm : count;
 import std.exception : enforce;
 
 import tests.unit.census_symbols : blankNonCode;
-import viewport_probe_sampling : ProbePoint, ProbeReadRect, parseProbePoints,
+import vibe3d.viewport.display_policy.viewport_probe_sampling : ProbePoint, ProbeReadRect, parseProbePoints,
     probeReadRect, putProbeGbufPoints, putProbePoints;
 
 private enum repoRoot = dirName(dirName(dirName(__FILE_FULL_PATH__)));

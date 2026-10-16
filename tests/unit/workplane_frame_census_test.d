@@ -32,19 +32,20 @@ import tests.unit.census_symbols : blankNonCode, blankUnittestBodies, countIdent
 private enum repoRoot = dirName(dirName(dirName(__FILE_FULL_PATH__)));
 
 // COMPILER PIN: the folded and the new names, by the compiler, not by text.
-static import tools.create.create_common;
-static import viewgrid;
-static assert(![__traits(allMembers, tools.create.create_common)].canFind("currentWorkplaneFrame"));
-static assert(![__traits(allMembers, tools.create.create_common)].canFind("primitiveParameterFrame"));
-static assert([__traits(allMembers, tools.create.create_common)].canFind("primitivePlacementFrame"));
-static assert([__traits(allMembers, tools.create.create_common)].canFind("viewPrincipalAxis"));
-static assert([__traits(allMembers, tools.create.create_common)].canFind("axisUnit"));
+static import vibe3d.editing.tools.interactive.tools.create.create_common;
+static import viewgrid = vibe3d.editing.selection.query.viewgrid;
+static assert(![__traits(allMembers, vibe3d.editing.tools.interactive.tools.create.create_common)].canFind("currentWorkplaneFrame"));
+static assert(![__traits(allMembers, vibe3d.editing.tools.interactive.tools.create.create_common)].canFind("primitiveParameterFrame"));
+static assert([__traits(allMembers, vibe3d.editing.tools.interactive.tools.create.create_common)].canFind("primitivePlacementFrame"));
+static assert([__traits(allMembers, vibe3d.editing.tools.interactive.tools.create.create_common)].canFind("viewPrincipalAxis"));
+static assert([__traits(allMembers, vibe3d.editing.tools.interactive.tools.create.create_common)].canFind("axisUnit"));
 static assert([__traits(allMembers, viewgrid)].canFind("viewVectorQuantum"));
 
 private struct Src { string rel, raw, code; }
 private Wave15Entry[] physicalEntries(string directory) {
     Wave15Entry[] result;
-    foreach (relative; ["libraries/mesh/core/source/vibe3d/mesh/core/package.d",
+    foreach (relative; ["libraries/util/math/source/vibe3d/util/math/package.d",
+                       "libraries/mesh/core/source/vibe3d/mesh/core/package.d",
                        "libraries/documents/model/source/vibe3d/documents/model/package.d"])
         assert(countIdent(blankNonCode(readText(buildPath(repoRoot, relative))), "unittest") == 0,
             "Wave19 selective facade has no unittest: " ~ relative);
@@ -67,22 +68,22 @@ private Wave15Entry[] physicalEntries(string directory) {
 private Src[] sources(bool production, bool logical = false) {
     Src[] r;
     foreach (scanSourceRoot; [buildPath(repoRoot, "source"), buildPath(repoRoot, "packages/command-runtime/source"), buildPath(repoRoot, "packages/application-core/source"), buildPath(repoRoot, "packages/camera-model/source"), buildPath(repoRoot, "packages/document-channels/source"), buildPath(repoRoot, "packages/image-codec/source"), buildPath(repoRoot, "packages/document-io/source"), buildPath(repoRoot, "packages/document-model/source"), buildPath(repoRoot, "packages/param-schema/source"), buildPath(repoRoot, "packages/pipe-runtime/source"), buildPath(repoRoot, "packages/mesh-ops/source"), buildPath(repoRoot, "packages/interchange/source"), buildPath(repoRoot, "packages/interaction-query/source"), buildPath(repoRoot, "packages/pipe-evaluation/source"), buildPath(repoRoot, "packages/tool-state/source"), buildPath(repoRoot, "packages/transform-ops/source"), buildPath(repoRoot, "packages/creation-ops/source"), buildPath(repoRoot, "packages/alignment-ops/source"), buildPath(repoRoot, "packages/input-events/source"), buildPath(repoRoot, "packages/display-policy/source"), buildPath(repoRoot, "packages/viewport-gpu/source"), buildPath(repoRoot, "packages/subpatch-preview/source"), buildPath(repoRoot, "packages/edit-contracts/source"), buildPath(repoRoot, "packages/mesh-change/source"), buildPath(repoRoot, "packages/mesh-contracts/source"), buildPath(repoRoot, "packages/mesh-edit-log/source"), buildPath(repoRoot, "packages/mesh-edit-replay/source"), buildPath(repoRoot, "packages/mesh-snapshot/source"), buildPath(repoRoot, "packages/mesh-topology/source"), buildPath(repoRoot, "packages/mesh/source"), buildPath(repoRoot, "packages/profiling/source"), buildPath(repoRoot, "packages/spatial/source"), buildPath(repoRoot, "util/log/source"), buildPath(repoRoot, "util/math/source"), buildPath(repoRoot, "util/parallel/source"), buildPath(repoRoot, "util/plane-bytes/source"), buildPath(repoRoot, "util/screen-buckets/source"), buildPath(repoRoot, "packages/pipe-contracts/source"), buildPath(repoRoot, "packages/mesh-preview/source"), buildPath(repoRoot, "util/json-number/source")]
-        ~ (exists(buildPath(repoRoot, "packages/selection-model/source")) ? [buildPath(repoRoot, "packages/selection-model/source")] : [])
-        ~ (exists(buildPath(repoRoot, "packages/scene-query/source")) ? [buildPath(repoRoot, "packages/scene-query/source")] : [])
-        ~ (exists(buildPath(repoRoot, "packages/editor-commands/source")) ? [buildPath(repoRoot, "packages/editor-commands/source")] : [])
-        ~ (!logical && exists(buildPath(repoRoot, "packages/interactive-tools/source")) ? [buildPath(repoRoot, "packages/interactive-tools/source")] : [])
-        ~ (!logical && exists(buildPath(repoRoot, "packages/viewport-host/source")) ? [buildPath(repoRoot, "packages/viewport-host/source")] : [])
+        ~ (exists(wave19MathPhysicalPath(buildPath(repoRoot, "packages/selection-model/source"), repoRoot)) ? [buildPath(repoRoot, "packages/selection-model/source")] : [])
+        ~ (exists(wave19MathPhysicalPath(buildPath(repoRoot, "packages/scene-query/source"), repoRoot)) ? [buildPath(repoRoot, "packages/scene-query/source")] : [])
+        ~ (exists(wave19MathPhysicalPath(buildPath(repoRoot, "packages/editor-commands/source"), repoRoot)) ? [buildPath(repoRoot, "packages/editor-commands/source")] : [])
+        ~ (!logical && exists(wave19MathPhysicalPath(buildPath(repoRoot, "packages/interactive-tools/source"), repoRoot)) ? [buildPath(repoRoot, "packages/interactive-tools/source")] : [])
+        ~ (!logical && exists(wave19MathPhysicalPath(buildPath(repoRoot, "packages/viewport-host/source"), repoRoot)) ? [buildPath(repoRoot, "packages/viewport-host/source")] : [])
         ~ (!logical && exists(wave19MathPhysicalPath(buildPath(repoRoot, "packages/interaction-data/source"), repoRoot)) ? [buildPath(repoRoot, "packages/interaction-data/source")] : [])
-        ~ (!logical && exists(buildPath(repoRoot, "packages/ai-advisor/source")) ? [buildPath(repoRoot, "packages/ai-advisor/source")] : [])
-        ~ (!logical && exists(buildPath(repoRoot, "packages/ai3d-runtime/source")) ? [buildPath(repoRoot, "packages/ai3d-runtime/source")] : [])
-        ~ (!logical && exists(buildPath(repoRoot, "packages/document-actions/source")) ? [buildPath(repoRoot, "packages/document-actions/source")] : [])
-        ~ (!logical && exists(buildPath(repoRoot, "packages/http-runtime/source")) ? [buildPath(repoRoot, "packages/http-runtime/source")] : [])
-        ~ (!logical && exists(buildPath(repoRoot, "packages/platform-file/source")) ? [buildPath(repoRoot, "packages/platform-file/source")] : [])
-        ~ (!logical && exists(buildPath(repoRoot, "packages/remesh-runtime/source")) ? [buildPath(repoRoot, "packages/remesh-runtime/source")] : [])
+        ~ (!logical && exists(wave19MathPhysicalPath(buildPath(repoRoot, "packages/ai-advisor/source"), repoRoot)) ? [buildPath(repoRoot, "packages/ai-advisor/source")] : [])
+        ~ (!logical && exists(wave19MathPhysicalPath(buildPath(repoRoot, "packages/ai3d-runtime/source"), repoRoot)) ? [buildPath(repoRoot, "packages/ai3d-runtime/source")] : [])
+        ~ (!logical && exists(wave19MathPhysicalPath(buildPath(repoRoot, "packages/document-actions/source"), repoRoot)) ? [buildPath(repoRoot, "packages/document-actions/source")] : [])
+        ~ (!logical && exists(wave19MathPhysicalPath(buildPath(repoRoot, "packages/http-runtime/source"), repoRoot)) ? [buildPath(repoRoot, "packages/http-runtime/source")] : [])
+        ~ (!logical && exists(wave19MathPhysicalPath(buildPath(repoRoot, "packages/platform-file/source"), repoRoot)) ? [buildPath(repoRoot, "packages/platform-file/source")] : [])
+        ~ (!logical && exists(wave19MathPhysicalPath(buildPath(repoRoot, "packages/remesh-runtime/source"), repoRoot)) ? [buildPath(repoRoot, "packages/remesh-runtime/source")] : [])
         ~ (!logical && exists(wave19MathPhysicalPath(buildPath(repoRoot, "packages/render-model/source"), repoRoot)) ? [buildPath(repoRoot, "packages/render-model/source")] : [])
-        ~ (!logical && exists(buildPath(repoRoot, "packages/render-backends/source")) ? [buildPath(repoRoot, "packages/render-backends/source")] : [])
-        ~ (!logical && exists(buildPath(repoRoot, "packages/forms-model/source")) ? [buildPath(repoRoot, "packages/forms-model/source")] : [])
-        ~ (!logical && exists(buildPath(repoRoot, "packages/editor-ui/source")) ? [buildPath(repoRoot, "packages/editor-ui/source")] : []))
+        ~ (!logical && exists(wave19MathPhysicalPath(buildPath(repoRoot, "packages/render-backends/source"), repoRoot)) ? [buildPath(repoRoot, "packages/render-backends/source")] : [])
+        ~ (!logical && exists(wave19MathPhysicalPath(buildPath(repoRoot, "packages/forms-model/source"), repoRoot)) ? [buildPath(repoRoot, "packages/forms-model/source")] : [])
+        ~ (!logical && exists(wave19MathPhysicalPath(buildPath(repoRoot, "packages/editor-ui/source"), repoRoot)) ? [buildPath(repoRoot, "packages/editor-ui/source")] : []))
 
     foreach (e; logical ? wave15DirEntries(scanSourceRoot, "*.d", SpanMode.depth)
                        : physicalEntries(scanSourceRoot)) {
@@ -171,7 +172,7 @@ unittest // W1: the folded frames, the forwarders, the axis switch, the quantum
            "workplane logical production and source carrier population 625");
     // The new presentation role has current physical ownership only; the
     // original logical625 population and its symbol rosters remain fixed.
-    enum currentPhysicalOnly = "packages/editor-ui/source/ui/panel_host_roles.d";
+    enum currentPhysicalOnly = "libraries/ui/editor/source/vibe3d/ui/editor/ui/panel_host_roles.d";
     size_t currentPhysicalOnlyOccurrences;
     foreach (physical; prod) if (physical.rel == currentPhysicalOnly) ++currentPhysicalOnlyOccurrences;
     assert(currentPhysicalOnlyOccurrences == 1, "workplane current physical role membership");

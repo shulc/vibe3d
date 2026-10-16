@@ -6,19 +6,19 @@ module tests.unit.pipe_preset_claim_test;
 
 import tests.unit.census_symbols : exists = wave15Exists;
 
-import prepared_pipe_activation : PreparedPipeActivationOwner;
-import pipe_gizmo_host : PipeGizmoHost;
-import registry : PreparedPipeAttrs;
-import tool_activation_ownership : PipeArmScope;
-import toolpipe.pipeline : Pipeline, noteUserStageChoice;
-import toolpipe.stage : PresetClaimable;
-import math : Vec3;
+import vibe3d.editing.tools.interactive.prepared_pipe_activation : PreparedPipeActivationOwner;
+import vibe3d.editing.tools.interactive.pipe_gizmo_host : PipeGizmoHost;
+import vibe3d.editing.tools.interactive.registry : PreparedPipeAttrs;
+import vibe3d.editing.commands.runtime.tool_activation_ownership : PipeArmScope;
+import vibe3d.editing.pipeline.runtime.toolpipe.pipeline : Pipeline, noteUserStageChoice;
+import vibe3d.editing.pipeline.runtime.toolpipe.stage : PresetClaimable;
+import vibe3d.util.math.math : Vec3;
 import vibe3d.util.spatial.spatial : Pin;
 import vibe3d.editing.pipeline.contracts.toolpipe.packets : FalloffConfig, FalloffShape, FalloffType;
-import toolpipe.stages.actcenter : ActionCenterStage;
-import toolpipe.stages.axis : AxisStage;
-import toolpipe.stages.constrain : ConstrainStage;
-import toolpipe.stages.falloff : FalloffStage;
+import vibe3d.editing.pipeline.evaluation.toolpipe.stages.actcenter : ActionCenterStage;
+import vibe3d.editing.pipeline.evaluation.toolpipe.stages.axis : AxisStage;
+import vibe3d.editing.pipeline.evaluation.toolpipe.stages.constrain : ConstrainStage;
+import vibe3d.editing.pipeline.evaluation.toolpipe.stages.falloff : FalloffStage;
 
 import tests.unit.census_symbols : wave15InputStart, wave15InputsIntact;
 

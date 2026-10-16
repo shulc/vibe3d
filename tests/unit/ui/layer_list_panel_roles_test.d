@@ -14,37 +14,37 @@ import std.string : indexOf;
 
 import bindbc.sdl : KMOD_NONE, KMOD_SHIFT, SDL_SetModState, loadSDL,
     sdlSupport;
-import application_command_binding : ApplicationCommandBinding;
-import command : Command;
-import command_executor : CommandExecutor;
-import command_history : CommandHistory, RecordMode;
-import commands.layer.commands : LayerAttr, LayerRename, LayerSelect,
+import vibe3d.apps.desktop.application_command_binding : ApplicationCommandBinding;
+import vibe3d.editing.commands.runtime.command : Command;
+import vibe3d.editing.commands.runtime.command_executor : CommandExecutor;
+import vibe3d.editing.commands.runtime.command_history : CommandHistory, RecordMode;
+import vibe3d.runtime.document_actions.commands.layer.commands : LayerAttr, LayerRename, LayerSelect,
     LayerSetVisible;
-import commands.image_plane.commands : ImagePlaneAdd;
+import vibe3d.runtime.document_actions.commands.image_plane.commands : ImagePlaneAdd;
 import vibe3d.documents.model.document : Document, ItemKind, Layer, kindInfo;
-import edit_session : EditSession;
+import vibe3d.editing.tools.interactive.edit_session : EditSession;
 import vibe3d.editing.contracts.editmode : EditMode;
-import forms : Form, formById, g_forms, g_formsPanelEnabled, loadForms;
-import forms_render : FormsPanel;
-import guarded_action_controller : GuardObservationPorts,
+import vibe3d.ui.forms.forms : Form, formById, g_forms, g_formsPanelEnabled, loadForms;
+import vibe3d.ui.editor.forms_render : FormsPanel;
+import vibe3d.apps.desktop.guarded_action_controller : GuardObservationPorts,
     GuardedActionController, GuardedActionPorts;
-import layer_params : itemPropsTarget;
+import vibe3d.documents.channels.layer_params : itemPropsTarget;
 import vibe3d.mesh.core.mesh : makeCube;
-import registry : Registry;
+import vibe3d.editing.tools.interactive.registry : Registry;
 import vibe3d.editing.contracts.seltype : SelType, currentSelType;
-import session_owner : Session;
+import vibe3d.runtime.application_core.session_owner : Session;
 import tests.unit.census_symbols : blankNonCode;
 import tests.unit.ui.headless_panel : HeadlessPanel, KEY_LEFT_CTRL, MOD_CTRL,
     openPanel;
-import tool : Tool;
-import tool_activation_ownership : ToolTransition;
-import tools.transform.xfrm_transform : XfrmTransformTool;
-import ui.discard_guard : GuardRecord;
-import ui.item_rename : ItemRenameState, bindItemRenameController;
-import ui.item_rename : ItemRenameDispatch;
-import ui.item_rows : ItemRow, RowRole, kNoLayerIndex;
-static import ui.item_rows;
-import ui.layer_list_panel : LayerListDrawSnapshot, LayerListDrawnRow,
+import vibe3d.editing.tools.interactive.tool : Tool;
+import vibe3d.editing.commands.runtime.tool_activation_ownership : ToolTransition;
+import vibe3d.editing.tools.interactive.tools.transform.xfrm_transform : XfrmTransformTool;
+import vibe3d.ui.editor.ui.discard_guard : GuardRecord;
+import vibe3d.ui.editor.ui.item_rename : ItemRenameState, bindItemRenameController;
+import vibe3d.ui.editor.ui.item_rename : ItemRenameDispatch;
+import vibe3d.ui.editor.ui.item_rows : ItemRow, RowRole, kNoLayerIndex;
+static import vibe3d.ui.editor.ui.item_rows;
+import vibe3d.ui.editor.ui.layer_list_panel : LayerListDrawSnapshot, LayerListDrawnRow,
     ItemFormOutcome, LayerListActions, LayerListPanelRoles,
     LayerListPanelState, LayerListReadRole, bindLayerListPanel,
     drawLayerListPanel, layerFormBoundItem, layerFormProvider,
@@ -123,10 +123,10 @@ static assert(__traits(compiles, (Document* doc) {
     }),
     "6502 N3m control: a mutable caller must still receive a mutable Layer — this query is ONE definition, not a narrowing");
 
-static assert(typeof(__traits(getMember, ui.item_rows, "rowParentOf")).stringof
+static assert(typeof(__traits(getMember, vibe3d.ui.editor.ui.item_rows, "rowParentOf")).stringof
         == "const(Layer)(const(Document)* doc, const(Layer) l)",
     "6502 N4 rowParentOf: the row-parent walk must take a read-only document and answer a read-only identity; if only a parameter name changed, update the expected string and report it");
-static assert(typeof(__traits(getMember, ui.item_rows, "roleOf")).stringof
+static assert(typeof(__traits(getMember, vibe3d.ui.editor.ui.item_rows, "roleOf")).stringof
         == "RowRole(const(Document)* doc, const(Layer) l)",
     "6502 N5 roleOf: the row-role query must take a read-only document and identity; if only a parameter name changed, update the expected string and report it");
 

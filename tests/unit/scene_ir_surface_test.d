@@ -7,9 +7,9 @@ module tests.unit.scene_ir_surface_test;
 
 import std.format : format;
 
-import math        : Vec3;
+import vibe3d.util.math.math        : Vec3;
 import vibe3d.mesh.core.mesh        : Mesh, Surface;
-import io.scene_ir : ImportedScene, ImportedPart, ImportedSurface, flattenToMesh;
+import vibe3d.documents.interchange.io.scene_ir : ImportedScene, ImportedPart, ImportedSurface, flattenToMesh;
 
 unittest {
     ImportedSurface s;
@@ -55,7 +55,7 @@ unittest {
 
 unittest { // every surface dump carries the flag's VALUE (a constant would pass the frozen all-false planes)
     import std.algorithm : canFind;
-    import http_json : meshPlanesJson, meshToJsonDetailed;
+    import vibe3d.runtime.application_core.http_json : meshPlanesJson, meshToJsonDetailed;
     import tests.unit.fixtures : dumpMeshPlanes;
     Mesh m;
     m.addVertex(Vec3(0, 0, 0));

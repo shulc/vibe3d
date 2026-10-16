@@ -3,7 +3,7 @@
 import vibe3d.editing.interaction.data.ai.debug_trace : clearLatestAiDebugTraces,
     latestModeToolContextDebugTrace;
 import vibe3d.editing.interaction.data.ai.interaction : AiCandidateKind, AiInteractionContext, AiIntent;
-import ai.mode_candidates : collectContextCandidates, collectModeCandidates,
+import vibe3d.runtime.ai_advisor.ai.mode_candidates : collectContextCandidates, collectModeCandidates,
     collectModeToolContextCandidates, collectToolCandidates,
     publishModeToolContextCandidates;
 

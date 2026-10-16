@@ -66,10 +66,10 @@ module tests.unit.mesh_bevel_census_test;
 //   - MIXED SELECTIONS: chains, ring+trailing-chain, disjoint clusters,
 //     and the specific corner-hub-plus-free-end shape that crashed.
 
-import subpatch_factories : subdivideCube;
+import vibe3d.viewport.subpatch.subpatch_factories : subdivideCube;
 import vibe3d.mesh.core.mesh;
 import vibe3d.mesh.ops.mesh_ops.edge_bevel;
-import math : Vec3;
+import vibe3d.util.math.math : Vec3;
 
 version (unittest):
 

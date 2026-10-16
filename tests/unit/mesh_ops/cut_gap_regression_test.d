@@ -1,9 +1,9 @@
 module tests.unit.mesh_ops.cut_gap_regression_test;
 
 import vibe3d.mesh.core.mesh;
-import math;
+import vibe3d.util.math.math;
 import vibe3d.mesh.ops.mesh_ops.cut;
-import subpatch_factories : subdivideCube;
+import vibe3d.viewport.subpatch.subpatch_factories : subdivideCube;
 import std.math : abs;
 
 // ---------------------------------------------------------------------------

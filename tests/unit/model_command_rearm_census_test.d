@@ -10,12 +10,12 @@ module tests.unit.model_command_rearm_census_test;
 
 import tests.unit.census_symbols : exists = wave15Exists;
 
-import command : CmdFlags, Command;
-import command_history : CommandHistory, RecordMode;
-import command_executor : CommandExecutor;
-import edit_session : commandMeetsTool;
+import vibe3d.editing.commands.runtime.command : CmdFlags, Command;
+import vibe3d.editing.commands.runtime.command_history : CommandHistory, RecordMode;
+import vibe3d.editing.commands.runtime.command_executor : CommandExecutor;
+import vibe3d.editing.tools.interactive.edit_session : commandMeetsTool;
 import vibe3d.editing.contracts.editmode : EditMode;
-import registry : Registry;
+import vibe3d.editing.tools.interactive.registry : Registry;
 import std.algorithm : canFind, count;
 import std.conv : to;
 import std.file : SpanMode;
@@ -24,7 +24,7 @@ import std.json : parseJSON;
 import std.path : buildPath, dirName;
 import std.regex : matchAll, regex;
 import std.string : indexOf, lastIndexOf;
-import tool_activation_ownership : CloseOutcome, CommandDoor, ToolTransition;
+import vibe3d.editing.commands.runtime.tool_activation_ownership : CloseOutcome, CommandDoor, ToolTransition;
 import vibe3d.viewport.camera.view : View;
 import tests.unit.census_symbols : blankNonCode;
 

@@ -15,11 +15,11 @@ import std.math : sqrt;
 import std.path : buildPath, dirName;
 import std.string : count;
 
-import display_state : DrawPlan, ViewportDisplay, resolveDrawPlan;
+import vibe3d.viewport.display_policy.display_state : DrawPlan, ViewportDisplay, resolveDrawPlan;
 import vibe3d.util.spatial.item_xform : ItemXform;
-import math : Vec3, faceNormalFirst3, identityMatrix;
-import mesh_gpu : FacePass, buildReverseFaceIndices;
-import ui.viewport_render : facePassFor;
+import vibe3d.util.math.math : Vec3, faceNormalFirst3, identityMatrix;
+import vibe3d.viewport.gpu.mesh_gpu : FacePass, buildReverseFaceIndices;
+import vibe3d.ui.editor.ui.viewport_render : facePassFor;
 
 private enum repoRoot = dirName(dirName(dirName(__FILE_FULL_PATH__)));
 
@@ -207,7 +207,7 @@ unittest // plan -> FacePass: mode off culls by surface; the mode and a mirror a
 unittest // a face-layout build moves the layout generation, on the prepared path too
 {
     import vibe3d.mesh.core.mesh : makeCube;
-    import mesh_gpu : GpuMesh, GpuUploadOwner, PreparedGpuUploadToken,
+    import vibe3d.viewport.gpu.mesh_gpu : GpuMesh, GpuUploadOwner, PreparedGpuUploadToken,
                       ValidatedGpuUploadToken;
     GpuMesh gpu;
     gpu.faceLayoutGen = 3;

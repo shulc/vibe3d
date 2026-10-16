@@ -72,7 +72,7 @@ import std.conv   : to;
 import vibe3d.mesh.core.mesh     : makeCube;
 import vibe3d.editing.contracts.seltype  : SelMode;
 import vibe3d.documents.model.document : Document, Layer, ItemKind, LayerRole;
-import ui.item_rows : ItemRow, RowRole, RowLook, itemRowsInto, lookOf;
+import vibe3d.ui.editor.ui.item_rows : ItemRow, RowRole, RowLook, itemRowsInto, lookOf;
 
 void main() {}
 

@@ -1356,29 +1356,29 @@ string sourceDigest() {
         "tests/unit/unittest_source_ceiling_ledger.txt",
         "tests/unit/comment_prose_ceiling_ledger.txt",
         "dub.json",
-        "packages/http-runtime/dub.json",
-        "packages/http-runtime/tests/dub.json",
-        "packages/ai-advisor/dub.json",
-        "packages/ai-advisor/tests/dub.json",
-        "packages/ai3d-runtime/dub.json",
-        "packages/ai3d-runtime/tests/dub.json",
-        "packages/remesh-runtime/dub.json",
-        "packages/remesh-runtime/tests/dub.json",
-        "packages/platform-file/dub.json",
-        "packages/platform-file/tests/dub.json",
-        "packages/document-actions/dub.json",
-        "packages/document-actions/tests/dub.json",
+        "libraries/runtime/http/dub.json",
+        "libraries/runtime/http/tests/dub.json",
+        "libraries/runtime/ai-advisor/dub.json",
+        "libraries/runtime/ai-advisor/tests/dub.json",
+        "libraries/runtime/ai3d/dub.json",
+        "libraries/runtime/ai3d/tests/dub.json",
+        "libraries/runtime/remesh/dub.json",
+        "libraries/runtime/remesh/tests/dub.json",
+        "libraries/platform/file/dub.json",
+        "libraries/platform/file/tests/dub.json",
+        "libraries/runtime/document-actions/dub.json",
+        "libraries/runtime/document-actions/tests/dub.json",
         "libraries/render/model/dub.json",
         "libraries/render/model/tests/dub.json",
-        "packages/render-backends/dub.json",
-        "packages/render-backends/tests/dub.json",
-        "packages/forms-model/dub.json",
-        "packages/forms-model/tests/dub.json",
-        "packages/editor-ui/dub.json",
-        "packages/editor-ui/tests/dub.json",
+        "libraries/render/backends/dub.json",
+        "libraries/render/backends/tests/dub.json",
+        "libraries/ui/forms/dub.json",
+        "libraries/ui/forms/tests/dub.json",
+        "libraries/ui/editor/dub.json",
+        "libraries/ui/editor/tests/dub.json",
 
-        "packages/interactive-tools/dub.json",
-        "packages/interactive-tools/tests/dub.json",
+        "libraries/editing/tools/interactive/dub.json",
+        "libraries/editing/tools/interactive/tests/dub.json",
         "tools/ai3d_worker/install_linux.sh",
         "tools/ai3d_worker/install_windows.ps1",
         "tools/ai3d_worker/vibe3d_ai3d_worker/__init__.py",
@@ -1396,31 +1396,31 @@ string sourceDigest() {
     // of a test run does not (task 0685 T7).
     try {
         foreach (pattern; ["*.d", "*.c"])
-            foreach (scanSourceRoot; ["libraries/viewport/camera/source", "libraries/viewport/camera/tests/source", "packages/document-channels/source", "packages/document-channels/tests/source", "libraries/documents/image-codec/source", "libraries/documents/image-codec/tests/source", "packages/document-io/source", "packages/document-io/tests/source", "source", "packages/command-runtime/source", "packages/application-core/source", "libraries/documents/model/source", "libraries/editing/params/source", "packages/pipe-runtime/source", "libraries/mesh/ops/source", "packages/interchange/source", "packages/interaction-query/source", "packages/pipe-evaluation/source", "packages/tool-state/source", "packages/transform-ops/source", "packages/creation-ops/source", "packages/alignment-ops/source", "libraries/platform/input/source", "packages/display-policy/source", "packages/viewport-gpu/source", "packages/subpatch-preview/source", "libraries/editing/contracts/source", "libraries/mesh/change/source", "libraries/mesh/contracts/source", "libraries/mesh/edit-log/source", "libraries/mesh/edit-replay/source", "libraries/mesh/snapshot/source", "libraries/mesh/topology/source", "libraries/mesh/core/source", "libraries/util/profiling/source", "libraries/util/spatial/source", "libraries/util/log/source", "util/math/source", "libraries/util/parallel/source", "libraries/util/plane-bytes/source", "libraries/util/screen-buckets/source", "libraries/editing/pipeline/contracts/source", "libraries/mesh/preview/source", "libraries/util/json-number/source", "packages/selection-model/source", "packages/scene-query/source", "packages/editor-commands/source"])
+            foreach (scanSourceRoot; ["libraries/viewport/camera/source", "libraries/viewport/camera/tests/source", "libraries/documents/channels/source", "libraries/documents/channels/tests/source", "libraries/documents/image-codec/source", "libraries/documents/image-codec/tests/source", "libraries/documents/io/source", "libraries/documents/io/tests/source", "apps/desktop/source", "libraries/editing/commands/runtime/source", "libraries/runtime/application-core/source", "libraries/documents/model/source", "libraries/editing/params/source", "libraries/editing/pipeline/runtime/source", "libraries/mesh/ops/source", "libraries/documents/interchange/source", "libraries/editing/selection/query/source", "libraries/editing/pipeline/evaluation/source", "libraries/editing/tools/state/source", "libraries/editing/tools/transform/source", "libraries/editing/tools/creation/source", "libraries/editing/tools/alignment/source", "libraries/platform/input/source", "libraries/viewport/display-policy/source", "libraries/viewport/gpu/source", "libraries/viewport/subpatch/source", "libraries/editing/contracts/source", "libraries/mesh/change/source", "libraries/mesh/contracts/source", "libraries/mesh/edit-log/source", "libraries/mesh/edit-replay/source", "libraries/mesh/snapshot/source", "libraries/mesh/topology/source", "libraries/mesh/core/source", "libraries/util/profiling/source", "libraries/util/spatial/source", "libraries/util/log/source", "util/math/source", "libraries/util/parallel/source", "libraries/util/plane-bytes/source", "libraries/util/screen-buckets/source", "libraries/editing/pipeline/contracts/source", "libraries/mesh/preview/source", "libraries/util/json-number/source", "libraries/editing/selection/model/source", "libraries/editing/selection/scene-query/source", "libraries/editing/commands/editor/source"])
             foreach (e; dirEntries(scanSourceRoot == "util/math/source" ? mathRoot ~ "/source" : scanSourceRoot, pattern, SpanMode.depth))
                 if (e.isFile) files ~= e.name;
         foreach (pattern; ["*.d", "*.c"])
-            foreach (newTestRoot; ["packages/interactive-tools/tests/source", "packages/viewport-host/tests/source", "libraries/editing/interaction/data/tests/source", "packages/ai-advisor/tests/source", "packages/ai3d-runtime/tests/source", "packages/remesh-runtime/tests/source", "packages/document-actions/tests/source"])
+            foreach (newTestRoot; ["libraries/editing/tools/interactive/tests/source", "libraries/viewport/host/tests/source", "libraries/editing/interaction/data/tests/source", "libraries/runtime/ai-advisor/tests/source", "libraries/runtime/ai3d/tests/source", "libraries/runtime/remesh/tests/source", "libraries/runtime/document-actions/tests/source"])
             foreach (e; dirEntries(newTestRoot, pattern, SpanMode.depth))
                 if (e.isFile) files ~= e.name;
         foreach (pattern; ["*.d", "*.c"])
-            foreach (futureSourceRoot; (exists("packages/interactive-tools/source") ? ["packages/interactive-tools/source"] : [])
-                ~ (exists("packages/viewport-host/source") ? ["packages/viewport-host/source"] : [])
+            foreach (futureSourceRoot; (exists("libraries/editing/tools/interactive/source") ? ["libraries/editing/tools/interactive/source"] : [])
+                ~ (exists("libraries/viewport/host/source") ? ["libraries/viewport/host/source"] : [])
                 ~ (exists("libraries/editing/interaction/data/source") ? ["libraries/editing/interaction/data/source"] : [])
-                ~ (exists("packages/http-runtime/source") ? ["packages/http-runtime/source"] : [])
-                ~ (exists("packages/ai-advisor/source") ? ["packages/ai-advisor/source"] : [])
-                ~ (exists("packages/ai3d-runtime/source") ? ["packages/ai3d-runtime/source"] : [])
-                ~ (exists("packages/remesh-runtime/source") ? ["packages/remesh-runtime/source"] : [])
-                ~ (exists("packages/platform-file/source") ? ["packages/platform-file/source"] : [])
-                ~ (exists("packages/document-actions/source") ? ["packages/document-actions/source"] : [])
+                ~ (exists("libraries/runtime/http/source") ? ["libraries/runtime/http/source"] : [])
+                ~ (exists("libraries/runtime/ai-advisor/source") ? ["libraries/runtime/ai-advisor/source"] : [])
+                ~ (exists("libraries/runtime/ai3d/source") ? ["libraries/runtime/ai3d/source"] : [])
+                ~ (exists("libraries/runtime/remesh/source") ? ["libraries/runtime/remesh/source"] : [])
+                ~ (exists("libraries/platform/file/source") ? ["libraries/platform/file/source"] : [])
+                ~ (exists("libraries/runtime/document-actions/source") ? ["libraries/runtime/document-actions/source"] : [])
                 ~ (exists("libraries/render/model/source") ? ["libraries/render/model/source"] : [])
                 ~ (exists("libraries/render/model/tests/source") ? ["libraries/render/model/tests/source"] : [])
-                ~ (exists("packages/render-backends/source") ? ["packages/render-backends/source"] : [])
-                ~ (exists("packages/render-backends/tests/source") ? ["packages/render-backends/tests/source"] : [])
-                ~ (exists("packages/forms-model/source") ? ["packages/forms-model/source"] : [])
-                ~ (exists("packages/forms-model/tests/source") ? ["packages/forms-model/tests/source"] : [])
-                ~ (exists("packages/editor-ui/source") ? ["packages/editor-ui/source"] : [])
-                ~ (exists("packages/editor-ui/tests/source") ? ["packages/editor-ui/tests/source"] : []))
+                ~ (exists("libraries/render/backends/source") ? ["libraries/render/backends/source"] : [])
+                ~ (exists("libraries/render/backends/tests/source") ? ["libraries/render/backends/tests/source"] : [])
+                ~ (exists("libraries/ui/forms/source") ? ["libraries/ui/forms/source"] : [])
+                ~ (exists("libraries/ui/forms/tests/source") ? ["libraries/ui/forms/tests/source"] : [])
+                ~ (exists("libraries/ui/editor/source") ? ["libraries/ui/editor/source"] : [])
+                ~ (exists("libraries/ui/editor/tests/source") ? ["libraries/ui/editor/tests/source"] : []))
             foreach (e; dirEntries(futureSourceRoot, pattern, SpanMode.depth))
                 if (e.isFile) files ~= e.name;
     } catch (Exception e) {
@@ -1429,11 +1429,11 @@ string sourceDigest() {
         return "";
     }
     files ~= [
-        "packages/command-runtime/tests/source/tests/unit/command_history_source_public_test.d",
-        "packages/command-runtime/tests/source/tests/unit/command_source_public_test.d",
-        "packages/command-runtime/tests/source/tests/unit/commands/mesh/session_edit_source_public_test.d",
-        "packages/command-runtime/tests/source/tests/unit/commands/select/element_source_public_test.d",
-        "packages/command-runtime/tests/source/tests/unit/record_observer_hub_source_public_test.d",
+        "libraries/editing/commands/runtime/tests/source/vibe3d/editing/commands/runtime/tests/unit/command_history_source_public_test.d",
+        "libraries/editing/commands/runtime/tests/source/vibe3d/editing/commands/runtime/tests/unit/command_source_public_test.d",
+        "libraries/editing/commands/runtime/tests/source/vibe3d/editing/commands/runtime/tests/unit/commands/mesh/session_edit_source_public_test.d",
+        "libraries/editing/commands/runtime/tests/source/vibe3d/editing/commands/runtime/tests/unit/commands/select/element_source_public_test.d",
+        "libraries/editing/commands/runtime/tests/source/vibe3d/editing/commands/runtime/tests/unit/record_observer_hub_source_public_test.d",
 ];
     sort(files);
     foreach (f; files) {
@@ -1501,7 +1501,7 @@ void harvestSourceFlags() {
         // task 5930's project-owned C source includes the linked UI package's
         // header through its expanded -P-I path.
         g_compileFlags ~= gather("dflags",               "", true);
-        const extraCompileFlags = " -I=packages/interactive-tools/tests/source -I=packages/viewport-host/tests/source -I=libraries/editing/interaction/data/tests/source -I=packages/ai-advisor/tests/source -I=packages/ai3d-runtime/tests/source -I=packages/remesh-runtime/tests/source -I=packages/document-actions/tests/source -J=tests -J=packages/creation-ops/tests/fixtures";
+        const extraCompileFlags = " -I=libraries/editing/tools/interactive/tests/source -I=libraries/viewport/host/tests/source -I=libraries/editing/interaction/data/tests/source -I=libraries/runtime/ai-advisor/tests/source -I=libraries/runtime/ai3d/tests/source -I=libraries/runtime/remesh/tests/source -I=libraries/runtime/document-actions/tests/source -J=tests -J=packages/creation-ops/tests/fixtures";
         g_compileFlags ~= extraCompileFlags;
         g_compileArgs ~= extraCompileFlags.split;
         g_linkTail     ~= gather("lflags",              "-L");
@@ -1534,6 +1534,145 @@ bool isSourceBackedTest(string path) {
         "view", "camera_stamp", "handler", "shader", "editmode", "command",
         "snapshot", "forms", "params", "argstring", "shortcuts", "ai.",
         "buttonset", "ai3d.", "document", "commands.ai3d.", "http_server",
+        "vibe3d.apps.desktop.commands.ai3d.generate",
+        "vibe3d.apps.desktop.commands.ai3d.generate_open",
+        "vibe3d.apps.desktop.commands.ai3d.generate_test_hooks",
+        "vibe3d.apps.desktop.commands.ai3d.import_result",
+        "vibe3d.documents.model.document",
+        "vibe3d.editing.commands.runtime.command",
+        "vibe3d.editing.contracts.editmode",
+        "vibe3d.editing.interaction.data.ai.advisor",
+        "vibe3d.editing.interaction.data.ai.debug_trace",
+        "vibe3d.editing.interaction.data.ai.interaction",
+        "vibe3d.editing.params.argstring",
+        "vibe3d.editing.params.params",
+        "vibe3d.editing.pipeline.contracts.toolpipe.packets",
+        "vibe3d.editing.pipeline.evaluation.toolpipe.attr_cache",
+        "vibe3d.editing.pipeline.evaluation.toolpipe.obbox",
+        "vibe3d.editing.pipeline.evaluation.toolpipe.stages.actcenter",
+        "vibe3d.editing.pipeline.evaluation.toolpipe.stages.axis",
+        "vibe3d.editing.pipeline.evaluation.toolpipe.stages.constrain",
+        "vibe3d.editing.pipeline.evaluation.toolpipe.stages.falloff",
+        "vibe3d.editing.pipeline.evaluation.toolpipe.stages.path",
+        "vibe3d.editing.pipeline.evaluation.toolpipe.stages.snap",
+        "vibe3d.editing.pipeline.evaluation.toolpipe.stages.symmetry",
+        "vibe3d.editing.pipeline.evaluation.toolpipe.stages.workplane",
+        "vibe3d.editing.pipeline.evaluation.toolpipe.state_paths",
+        "vibe3d.editing.pipeline.runtime.falloff",
+        "vibe3d.editing.pipeline.runtime.toolpipe.pipeline",
+        "vibe3d.editing.pipeline.runtime.toolpipe.stage",
+        "vibe3d.editing.pipeline.runtime.toolpipe.subject",
+        "vibe3d.editing.selection.query.symmetry",
+        "vibe3d.editing.selection.query.toolpipe.guide",
+        "vibe3d.editing.tools.alignment.tools.alignment.align_kernels",
+        "vibe3d.editing.tools.creation.tools.create.pen_geometry",
+        "vibe3d.editing.tools.interactive.handler",
+        "vibe3d.editing.tools.interactive.tools.alignment.array_tool",
+        "vibe3d.editing.tools.interactive.tools.alignment.clone_tool",
+        "vibe3d.editing.tools.interactive.tools.alignment.linear_align_tool",
+        "vibe3d.editing.tools.interactive.tools.alignment.mirror",
+        "vibe3d.editing.tools.interactive.tools.alignment.radial_align_tool",
+        "vibe3d.editing.tools.interactive.tools.alignment.radial_array_tool",
+        "vibe3d.editing.tools.interactive.tools.alignment.radial_sweep_tool",
+        "vibe3d.editing.tools.interactive.tools.common.command_wrapper",
+        "vibe3d.editing.tools.interactive.tools.create.arc",
+        "vibe3d.editing.tools.interactive.tools.create.box",
+        "vibe3d.editing.tools.interactive.tools.create.capsule",
+        "vibe3d.editing.tools.interactive.tools.create.cone",
+        "vibe3d.editing.tools.interactive.tools.create.create_common",
+        "vibe3d.editing.tools.interactive.tools.create.create_common_source_cells",
+        "vibe3d.editing.tools.interactive.tools.create.cylinder",
+        "vibe3d.editing.tools.interactive.tools.create.pen",
+        "vibe3d.editing.tools.interactive.tools.create.primitive_create_tool",
+        "vibe3d.editing.tools.interactive.tools.create.sphere",
+        "vibe3d.editing.tools.interactive.tools.create.torus",
+        "vibe3d.editing.tools.interactive.tools.create.tube",
+        "vibe3d.editing.tools.interactive.tools.create.vertex_place",
+        "vibe3d.editing.tools.interactive.tools.deform.bend",
+        "vibe3d.editing.tools.interactive.tools.deform.magnet",
+        "vibe3d.editing.tools.interactive.tools.deform.push",
+        "vibe3d.editing.tools.interactive.tools.deform.smooth_shift_tool",
+        "vibe3d.editing.tools.interactive.tools.deform.stroke_extrude_tool",
+        "vibe3d.editing.tools.interactive.tools.edit.bridge_tool",
+        "vibe3d.editing.tools.interactive.tools.edit.bridge_tool_source_cells",
+        "vibe3d.editing.tools.interactive.tools.edit.edge_bevel",
+        "vibe3d.editing.tools.interactive.tools.edit.edge_extend",
+        "vibe3d.editing.tools.interactive.tools.edit.edge_extend_source_cells",
+        "vibe3d.editing.tools.interactive.tools.edit.edge_extrude",
+        "vibe3d.editing.tools.interactive.tools.edit.haul_axis_latch",
+        "vibe3d.editing.tools.interactive.tools.edit.poly_bevel",
+        "vibe3d.editing.tools.interactive.tools.edit.poly_extrude",
+        "vibe3d.editing.tools.interactive.tools.edit.poly_inset_tool",
+        "vibe3d.editing.tools.interactive.tools.edit.reduce",
+        "vibe3d.editing.tools.interactive.tools.edit.smooth_relax",
+        "vibe3d.editing.tools.interactive.tools.edit.tack",
+        "vibe3d.editing.tools.interactive.tools.edit.topology_pen",
+        "vibe3d.editing.tools.interactive.tools.edit.topology_pen.defs",
+        "vibe3d.editing.tools.interactive.tools.edit.topology_pen.gestures_test",
+        "vibe3d.editing.tools.interactive.tools.edit.topology_pen.json",
+        "vibe3d.editing.tools.interactive.tools.edit.topology_pen.move_protocol_test",
+        "vibe3d.editing.tools.interactive.tools.edit.topology_pen.press_compatibility_test",
+        "vibe3d.editing.tools.interactive.tools.edit.topology_pen.reapply_test",
+        "vibe3d.editing.tools.interactive.tools.edit.topology_pen.render",
+        "vibe3d.editing.tools.interactive.tools.edit.topology_pen.snap_guide",
+        "vibe3d.editing.tools.interactive.tools.edit.topology_pen.tool",
+        "vibe3d.editing.tools.interactive.tools.edit.vert_merge_tool",
+        "vibe3d.editing.tools.interactive.tools.edit.vertex_bevel_tool",
+        "vibe3d.editing.tools.interactive.tools.edit.vertex_extrude_tool",
+        "vibe3d.editing.tools.interactive.tools.slice.edge_slice_tool",
+        "vibe3d.editing.tools.interactive.tools.slice.edge_slide",
+        "vibe3d.editing.tools.interactive.tools.slice.loop_slice_tool",
+        "vibe3d.editing.tools.interactive.tools.slice.slice_tool",
+        "vibe3d.editing.tools.interactive.tools.topology_step",
+        "vibe3d.editing.tools.interactive.tools.transform.move",
+        "vibe3d.editing.tools.interactive.tools.transform.rotate",
+        "vibe3d.editing.tools.interactive.tools.transform.scale",
+        "vibe3d.editing.tools.interactive.tools.transform.transform",
+        "vibe3d.editing.tools.interactive.tools.transform.xfrm_apply",
+        "vibe3d.editing.tools.interactive.tools.transform.xfrm_handles",
+        "vibe3d.editing.tools.interactive.tools.transform.xfrm_item",
+        "vibe3d.editing.tools.interactive.tools.transform.xfrm_transform",
+        "vibe3d.editing.tools.state.tools.common.session_mesh_key",
+        "vibe3d.editing.tools.state.tools.edit.preview_rebuild",
+        "vibe3d.editing.tools.transform.tools.transform.arcball",
+        "vibe3d.editing.tools.transform.tools.transform.cluster_values",
+        "vibe3d.editing.tools.transform.tools.transform.item_xform_kernels",
+        "vibe3d.editing.tools.transform.tools.transform.morph_route",
+        "vibe3d.editing.tools.transform.tools.transform.relocate_plane",
+        "vibe3d.editing.tools.transform.tools.transform.relocate_plane_test",
+        "vibe3d.editing.tools.transform.tools.transform.scale_input",
+        "vibe3d.editing.tools.transform.tools.transform.xform_kernels",
+        "vibe3d.mesh.core.mesh",
+        "vibe3d.mesh.snapshot.snapshot",
+        "vibe3d.platform.input.shortcuts",
+        "vibe3d.runtime.ai3d.ai3d.event_queue",
+        "vibe3d.runtime.ai3d.ai3d.job_controller",
+        "vibe3d.runtime.ai3d.ai3d.job_events",
+        "vibe3d.runtime.ai3d.ai3d.scene_validator",
+        "vibe3d.runtime.ai3d.ai3d.stage_artifact",
+        "vibe3d.runtime.ai3d.ai3d.worker_manager",
+        "vibe3d.runtime.ai_advisor.ai.analysis",
+        "vibe3d.runtime.ai_advisor.ai.copilot_gate",
+        "vibe3d.runtime.ai_advisor.ai.element_candidates",
+        "vibe3d.runtime.ai_advisor.ai.exploration",
+        "vibe3d.runtime.ai_advisor.ai.interaction_log",
+        "vibe3d.runtime.ai_advisor.ai.interaction_log_writer",
+        "vibe3d.runtime.ai_advisor.ai.mode_candidates",
+        "vibe3d.runtime.ai_advisor.ai.model_adapter",
+        "vibe3d.runtime.ai_advisor.ai.offline_evaluator",
+        "vibe3d.runtime.ai_advisor.ai.onnx_backend",
+        "vibe3d.runtime.ai_advisor.ai.ranker_schema",
+        "vibe3d.runtime.ai_advisor.ai.state",
+        "vibe3d.runtime.ai_advisor.ai.support_loop_candidates",
+        "vibe3d.runtime.ai_advisor.ai.synthetic_dataset",
+        "vibe3d.runtime.ai_advisor.ai.training_dataset",
+        "vibe3d.runtime.http.http_server",
+        "vibe3d.ui.editor.buttonset",
+        "vibe3d.ui.forms.forms",
+        "vibe3d.util.math.math",
+        "vibe3d.viewport.camera.view",
+        "vibe3d.viewport.display_policy.camera_stamp",
+        "vibe3d.viewport.gpu.shader",
     ];
     foreach (line; txt.splitLines) {
         auto s = line.strip;
@@ -1570,7 +1709,7 @@ string buildProjectLib(string scratch) {
     bool[string] seen;
     // Task 20262150: moved conditional helpers need the same unittest source
     // grant as desktop/common; keep production package archives unchanged.
-    foreach (root; ["", " :camera-model", " --root=packages/document-channels", " :image-codec", " --root=packages/document-io", " --root=packages/command-runtime", " --root=packages/application-core", " :document-model", " :param-schema", " --root=packages/pipe-runtime", " :json-number", " :pipe-contracts", " :mesh-preview", " :mesh-ops", " --root=packages/tool-state", " --root=packages/transform-ops", " :input-events", " --root=packages/display-policy", " --root=packages/viewport-gpu", " --root=packages/subpatch-preview", " --root=packages/selection-model", " --root=packages/scene-query", " --root=packages/editor-commands"]) {
+    foreach (root; ["", " :camera-model", " :document-channels", " :image-codec", " :document-io", " :command-runtime", " :application-core", " :document-model", " :param-schema", " :pipe-runtime", " :json-number", " :pipe-contracts", " :mesh-preview", " :mesh-ops", " :tool-state", " :transform-ops", " :input-events", " :display-policy", " :viewport-gpu", " :subpatch-preview", " :selection-model", " :scene-query", " :editor-commands"]) {
         auto rr = executeShell("dub describe" ~ root
             ~ " --config=modeling --data=source-files --data-list 2>/dev/null");
         if (rr.status != 0) return "";
@@ -1585,8 +1724,8 @@ string buildProjectLib(string scratch) {
             }
         }
     }
-    foreach (owner; ["interactive-tools", "viewport-host", "interaction-data", "http-runtime", "ai-advisor", "ai3d-runtime", "remesh-runtime", "platform-file", "document-actions"]) {
-        auto rr = executeShell("dub describe --root=packages/" ~ owner
+    foreach (pair; [["interactive-tools", "libraries/editing/tools/interactive"], ["viewport-host", "libraries/viewport/host"], ["interaction-data", "libraries/editing/interaction/data"], ["http-runtime", "libraries/runtime/http"], ["ai-advisor", "libraries/runtime/ai-advisor"], ["ai3d-runtime", "libraries/runtime/ai3d"], ["remesh-runtime", "libraries/runtime/remesh"], ["platform-file", "libraries/platform/file"], ["document-actions", "libraries/runtime/document-actions"]]) {
+        auto rr = executeShell("dub describe --root=" ~ pair[1]
             ~ "/tests --config=algorithm --data=source-files --data-list 2>/dev/null");
         if (rr.status != 0) return "";
         foreach (line; rr.output.splitLines) {

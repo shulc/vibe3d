@@ -2,14 +2,14 @@
 // Blocks keep their original order and text. Blocks that read a module-
 // private symbol stayed behind -- see the task for the count.
 module tests.unit.mesh_test;
-import mesh_visibility : visibleVertices;
+import vibe3d.editing.selection.query.mesh_visibility : visibleVertices;
 import vibe3d.mesh.ops.mesh_edge_slice : addEdgePoint, splitFaceByVertices;
 
-import subpatch_factories : subdivideCube;
+import vibe3d.viewport.subpatch.subpatch_factories : subdivideCube;
 import std.math : sqrt, abs;
 import std.parallelism : parallel;
 import std.range : iota;
-import math;
+import vibe3d.util.math.math;
 import vibe3d.util.spatial.spatial : Viewport;
 import vibe3d.editing.contracts.editmode : EditMode;
 import vibe3d.mesh.edit_log.mesh_edit_delta : MeshEditTracker, MeshEditScope;
@@ -858,7 +858,7 @@ private auto polyBevelOnce(alias kernel, Args...)(ref Mesh m, auto ref Args args
 // every side — must read hidden.
 // ---------------------------------------------------------------------------
 unittest {
-    import math : lookAt, perspectiveMatrix;
+    import vibe3d.util.math.math : lookAt, perspectiveMatrix;
 import vibe3d.util.spatial.spatial : ModelSpace;
     import std.math : PI;
 
@@ -4605,7 +4605,7 @@ unittest {
 // directly reddens on that same deletion (got all-zero instead of
 // `[1..6]`).
 unittest {
-    import symmetry_pick : symmetricSelectFace;
+    import vibe3d.editing.selection.scene_query.symmetry_pick : symmetricSelectFace;
     import vibe3d.util.spatial.spatial : Viewport;
 
     Mesh m = makeCube();

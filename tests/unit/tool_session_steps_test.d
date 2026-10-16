@@ -37,18 +37,18 @@ import tests.unit.census_symbols : wave15InputsIntact;
 
 import tests.unit.census_symbols : exists = wave15Exists;
 
-import command_history : CommandHistory, HistoryFlags, UndoState;
-import commands.tool.lifecycle : ToolActivationCommand, ToolTaskClearCommand;
-import edit_session : DropRowSpec, EditSession, ParameterChangeSource, ParameterChangePhase;
+import vibe3d.editing.commands.runtime.command_history : CommandHistory, HistoryFlags, UndoState;
+import vibe3d.editing.tools.interactive.commands.tool.lifecycle : ToolActivationCommand, ToolTaskClearCommand;
+import vibe3d.editing.tools.interactive.edit_session : DropRowSpec, EditSession, ParameterChangeSource, ParameterChangePhase;
 import vibe3d.editing.contracts.editmode : EditMode;
 import vibe3d.mesh.core.mesh : Mesh, makeCube;
-import math : Vec3;
+import vibe3d.util.math.math : Vec3;
 import vibe3d.editing.params.params;
-import tool : AttrImage, OpensAt, PressActivation, PressKind, StepOrigin, Tool, ToolSessionPolicy,
+import vibe3d.editing.tools.interactive.tool : AttrImage, OpensAt, PressActivation, PressKind, StepOrigin, Tool, ToolSessionPolicy,
     TopologyStepClient;
-import command : Command;
+import vibe3d.editing.commands.runtime.command : Command;
 import vibe3d.mesh.snapshot.snapshot : MeshSnapshot;
-import tool_activation_ownership;
+import vibe3d.editing.commands.runtime.tool_activation_ownership;
 import vibe3d.viewport.camera.view : View;
 
 import std.algorithm : canFind, count;
@@ -234,7 +234,7 @@ unittest { // a key-door row of THIS arm joins the group; the navigate redo repl
 }
 
 private class Stub : imported!"command".Command {
-    import command : CmdFlags;
+    import vibe3d.editing.commands.runtime.command : CmdFlags;
     import vibe3d.viewport.camera.view : View;
     View v;
     this(View view) { v = view; super(null, v, EditMode.Vertices); }
@@ -273,7 +273,7 @@ unittest { // ...and only on the redo of its own row
 unittest { // the first group's stash is bound to the history position it was made at
     // (review B1): no activation row joins the group (K1 / script door), so
     // its undo stashes it — valid only while the undo top is unchanged.
-    import command : CmdFlags;
+    import vibe3d.editing.commands.runtime.command : CmdFlags;
     { // R1: a command recorded after the group's undo — the group stays gone
         auto r = rig();
         r.t.gesture(6);
@@ -743,7 +743,7 @@ unittest { // M4 marks: the row a close WROTE carries the closing session's toke
 }
 
 unittest { // M4 pair: the record that closed THIS session's first operation pops with its row
-    import command : Command;
+    import vibe3d.editing.commands.runtime.command : Command;
     Mesh m = makeCube();
     // (a) the law: key-door row + this session's record -> one undo step, one redo step
     {
@@ -810,7 +810,7 @@ unittest { // M4 restorePredecessor: undoing the successor's row hands the prede
 }
 
 unittest { // M4 keepAliveOnCancel is data: the whole-edit cancel keeps or drops by the policy
-    import tool : ToolSessionPolicy;
+    import vibe3d.editing.tools.interactive.tool : ToolSessionPolicy;
     static class OpenTool : Tool {
         bool open = true, keep;
         override bool hasUncommittedEdit() const { return open; }
@@ -883,7 +883,7 @@ unittest { // M4 marks, the other half: a switch whose door wrote NOTHING marks 
 }
 
 unittest { // M4 pair: the row below must carry the RECORD's token, and redo pairs only a carrying row
-    import command : Command;
+    import vibe3d.editing.commands.runtime.command : Command;
     Mesh m = makeCube();
     { // a record of session 5 above the carrying row of session 4: not its row
         auto r = rig();
@@ -1277,7 +1277,7 @@ private class ScrubTopologyTool : Tool, TopologyStepClient {
     override Mesh* topologyStepMesh() { return m; }
     override MeshSnapshot topologyStepBasis() { return basis; }
     override Command topologyStepCarrier() {
-        import commands.mesh.session_edit : MeshSessionEdit;
+        import vibe3d.editing.commands.editor.commands.mesh.session_edit : MeshSessionEdit;
         return new MeshSessionEdit(m, view, EditMode.Polygons, "t.scrub", "Scrub");
     }
     override bool recordTopologyStep(Command cmd) { h.record(cmd); return true; }
@@ -1530,7 +1530,7 @@ private class PressFlagTool : Tool, TopologyStepClient {
     override Mesh* topologyStepMesh() { return m; }
     override MeshSnapshot topologyStepBasis() { return basis; }
     override Command topologyStepCarrier() {
-        import commands.mesh.session_edit : MeshSessionEdit;
+        import vibe3d.editing.commands.editor.commands.mesh.session_edit : MeshSessionEdit;
         if (nullCarrier) return null;
         return new MeshSessionEdit(m, view, EditMode.Polygons, "t.press", "Press");
     }
@@ -1550,7 +1550,7 @@ private class PressFlagTool : Tool, TopologyStepClient {
 }
 
 private bool lastRowByPress(CommandHistory h) {
-    import commands.mesh.session_edit : MeshSessionEdit;
+    import vibe3d.editing.commands.editor.commands.mesh.session_edit : MeshSessionEdit;
     auto row = cast(const MeshSessionEdit) h.undoEntries()[$ - 1].cmd;
     assert(row !is null && row.isTopologyStep(), "8646 press flag: the top row is no topology step");
     return row.stepOpenedByPress();
@@ -1737,7 +1737,7 @@ unittest { // a stale instance gets no image of the tool the session now tracks
 /// The `before` (`which == "before"`) or `after` image a recorded
 /// `MeshSessionEdit` row replays.
 private const(MeshSnapshot) rowImage(CommandHistory h, size_t k, string which) {
-    import commands.mesh.session_edit : MeshSessionEdit;
+    import vibe3d.editing.commands.editor.commands.mesh.session_edit : MeshSessionEdit;
     auto row = cast(const MeshSessionEdit) h.undoEntries()[k].cmd;
     assert(row !is null, format("8646 reuse: row %d is no MeshSessionEdit", k));
     foreach (i, ref payload; row.tupleof)
@@ -1927,7 +1927,7 @@ unittest {
 // arm). `v` is its haul (the operation context), `k` an ordinary attribute.
 
 private ToolSessionPolicy foldPolicy(bool on) {
-    import tools.edit.topology_pen : TopologyPenTool;
+    import vibe3d.editing.tools.interactive.tools.edit.topology_pen : TopologyPenTool;
     ToolSessionPolicy p = { activationRow: true, sessionSteps: true,
         historyTopologySteps: true, opensAt: OpensAt.firstPress,
         imageAttrs: ["v", "k"], haulAttrs: ["v"] };
@@ -1953,7 +1953,7 @@ private final class FoldTool : Tool, TopologyStepClient {
     override Mesh* topologyStepMesh() { return m; }
     override MeshSnapshot topologyStepBasis() { return MeshSnapshot.init; }
     override Command topologyStepCarrier() {
-        import commands.mesh.session_edit : MeshSessionEdit;
+        import vibe3d.editing.commands.editor.commands.mesh.session_edit : MeshSessionEdit;
         return new MeshSessionEdit(m, view, EditMode.Polygons, "t.fold", "Fold");
     }
     override bool recordTopologyStep(Command cmd) { h.record(cmd); return true; }
@@ -2000,8 +2000,8 @@ unittest { // S7a: a PodArray of uint and of Vec3 (the descriptor's kinds) round
 }
 
 unittest { // S7a u1, M-C (a) + M-H: the press resets the haul; a row's haul comes back only into its instance
-    import command_history : HistoryFlags;
-    import commands.mesh.session_edit : MeshSessionEdit;
+    import vibe3d.editing.commands.runtime.command_history : HistoryFlags;
+    import vibe3d.editing.commands.editor.commands.mesh.session_edit : MeshSessionEdit;
     size_t cells;
     foreach (on; [false, true]) foreach (same; [true, false]) {
         Mesh m = makeCube();
@@ -2045,7 +2045,7 @@ unittest { // S7a u1, M-C (a) + M-H: the press resets the haul; a row's haul com
 }
 
 unittest { // S7a u2, the fold: two pre-press rows fold into the activation at the press; off: none
-    import command_history : HistoryFlags;
+    import vibe3d.editing.commands.runtime.command_history : HistoryFlags;
     foreach (on; [true, false]) {
         Mesh m = makeCube();
         auto h = new CommandHistory();
@@ -2076,7 +2076,7 @@ unittest { // S7a u2, the fold: two pre-press rows fold into the activation at t
 }
 
 unittest { // S7a u3: a press whose walk meets a foreign-token row marks none
-    import command_history : HistoryFlags;
+    import vibe3d.editing.commands.runtime.command_history : HistoryFlags;
     Mesh m = makeCube();
     auto h = new CommandHistory();
     auto t = new FoldTool(true);
@@ -2087,7 +2087,7 @@ unittest { // S7a u3: a press whose walk meets a foreign-token row marks none
     s.noteArm("t.fold", 5);
     foldWrite(s, t, 1.0f);
     // Another session's parameter row: every term of a fold row but the token.
-    import commands.mesh.session_edit : MeshSessionEdit;
+    import vibe3d.editing.commands.editor.commands.mesh.session_edit : MeshSessionEdit;
     auto foreign = new MeshSessionEdit(&m, t.view, EditMode.Polygons, "t.other", "Other");
     auto snap = MeshSnapshot.capture(m);
     foreign.setSnapshots(snap, snap);
@@ -2106,7 +2106,7 @@ unittest { // S7a u3: a press whose walk meets a foreign-token row marks none
 // ---- Task 8920 (topology-redo wave S2a): the settle after a navigation -------
 
 unittest { // a navigation before any arm: no tool, nothing bound — the settle asks no tool
-    import edit_session : EditSession;
+    import vibe3d.editing.tools.interactive.edit_session : EditSession;
     import vibe3d.viewport.camera.view : View;
     auto h = new CommandHistory();
     Tool none = null;
@@ -2203,7 +2203,7 @@ unittest { // S2b invariant: an open operation is always an armed post mode
 }
 
 private const(imported!"commands.mesh.session_edit".MeshSessionEdit) s2bTopRow(CommandHistory h) {
-    import commands.mesh.session_edit : MeshSessionEdit;
+    import vibe3d.editing.commands.editor.commands.mesh.session_edit : MeshSessionEdit;
     auto row = cast(const MeshSessionEdit) h.undoEntries()[$ - 1].cmd;
     assert(row !is null && row.isTopologyStep(), "S2b: the undo top is no topology step");
     return row;
@@ -2417,7 +2417,7 @@ unittest { // S5b: the begin flag does not outlive a begin row whose stepEnds di
         ParameterChangePhase.BatchComplete);
     // An unarmed write is an attribute-only row (model doc §R6.1): it keeps the mesh
     // image; a stale begin flag makes it a mesh row that opens the operation.
-    import commands.mesh.session_edit : MeshSessionEdit;
+    import vibe3d.editing.commands.editor.commands.mesh.session_edit : MeshSessionEdit;
     assert(h.undoEntries().length == 1
            && cast(const MeshSessionEdit) h.undoEntries()[$ - 1].cmd is null
            && m.vertices[0].y == y,
@@ -2863,7 +2863,7 @@ private final class NavPenTool : ScrubTopologyTool {
 }
 
 unittest { // U-NA1 pen: the same ladder re-syncs a tool outside the model, and rebases none
-    import tool : capturedTopologyModel;
+    import vibe3d.editing.tools.interactive.tool : capturedTopologyModel;
     Mesh m = makeCube();
     auto h = new CommandHistory();
     auto t = new NavPenTool;
@@ -2920,7 +2920,7 @@ unittest {
 /// A PressFlagTool whose UI command closes its operation (as the 12 of the model declare).
 private final class UiClosePressTool : PressFlagTool {
     override ToolSessionPolicy sessionPolicy() const nothrow @nogc {
-        import tool : CommandClose;
+        import vibe3d.editing.tools.interactive.tool : CommandClose;
         static immutable ToolSessionPolicy policy = {
             activationRow: true, sessionSteps: true, historyTopologySteps: true,
             opensAt: OpensAt.firstPress, imageAttrs: ["v"], commandClose: CommandClose.uiDoor
@@ -2968,7 +2968,7 @@ unittest {
 // ---- next parameter row is the base of its own open step, not a row of the old block --------
 
 unittest {
-    import tool : CommandClose;
+    import vibe3d.editing.tools.interactive.tool : CommandClose;
     Mesh m = makeCube();
     auto h = new CommandHistory();
     auto t = new FoldTool(true);
@@ -3004,7 +3004,7 @@ unittest {
 /// A first-press model tool whose activation resets `v` (its data).
 private class InitPressTool : PressFlagTool {
     override ToolSessionPolicy sessionPolicy() const nothrow @nogc {
-        import tool : CommandClose;
+        import vibe3d.editing.tools.interactive.tool : CommandClose;
         static immutable ToolSessionPolicy policy = {
             activationRow: true, commandClose: CommandClose.uiDoor, sessionSteps: true,
             historyTopologySteps: true, opensAt: OpensAt.firstPress, imageAttrs: ["v"],
@@ -3017,7 +3017,7 @@ private class InitPressTool : PressFlagTool {
 /// The same tool opening its operation at the arm.
 private final class InitArmTool : InitPressTool {
     override ToolSessionPolicy sessionPolicy() const nothrow @nogc {
-        import tool : CommandClose;
+        import vibe3d.editing.tools.interactive.tool : CommandClose;
         static immutable ToolSessionPolicy policy = {
             activationRow: true, commandClose: CommandClose.uiDoor, sessionSteps: true,
             historyTopologySteps: true, opensAt: OpensAt.arm, imageAttrs: ["v"],
@@ -3266,7 +3266,7 @@ private final class PinRig {
     float y() { return m.vertices[0].y - y0; }
     bool pinned() { return s.sessionStateJson()["redoPinned"].type == JSONType.true_; }
     size_t topologyRows() {
-        import commands.mesh.session_edit : MeshSessionEdit;
+        import vibe3d.editing.commands.editor.commands.mesh.session_edit : MeshSessionEdit;
         size_t n;
         foreach (e; h.undoEntries())
             if (auto row = cast(const MeshSessionEdit) e.cmd) if (row.isTopologyStep()) ++n;
@@ -3408,8 +3408,8 @@ unittest { // U-RI6 (plan §22.4 P3): the operation's end releases the pinned im
 }
 
 unittest {
-    import tool : DropUndoPolicy, DropUndoExtent, DropRedoPopulation;
-    import commands.mesh.session_edit : MeshSessionEdit;
+    import vibe3d.editing.tools.interactive.tool : DropUndoPolicy, DropUndoExtent, DropRedoPopulation;
+    import vibe3d.editing.commands.editor.commands.mesh.session_edit : MeshSessionEdit;
     static class BasisTool : Tool {
         Mesh* mesh;
         MeshSnapshot basis;

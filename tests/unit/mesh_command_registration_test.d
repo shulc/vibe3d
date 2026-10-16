@@ -1,17 +1,17 @@
 module tests.unit.mesh_command_registration_test;
 import vibe3d.mesh.ops.mesh_ops.triangulate : triangulateFacesByMask;
 
-import command : Command;
-import commands.mesh.remesh : Remesh;
-import commands.mesh.select : MeshSelect;
-import commands.tool.headless : ToolHeadlessCommand;
+import vibe3d.editing.commands.runtime.command : Command;
+import vibe3d.editing.commands.editor.commands.mesh.remesh : Remesh;
+import vibe3d.editing.commands.editor.commands.mesh.select : MeshSelect;
+import vibe3d.editing.tools.interactive.commands.tool.headless : ToolHeadlessCommand;
 import vibe3d.editing.contracts.editmode : EditMode;
-import math : Vec3;
+import vibe3d.util.math.math : Vec3;
 import vibe3d.util.spatial.spatial : Viewport;
 import vibe3d.mesh.core.mesh : Mesh, makeCube;
 import vibe3d.editing.params.params : Param;
-import registration : registerMeshCommandsForOwnershipTest;
-import registry : ToolFactory;
+import vibe3d.apps.desktop.registration : registerMeshCommandsForOwnershipTest;
+import vibe3d.editing.tools.interactive.registry : ToolFactory;
 import std.conv : to;
 import std.file : readText;
 import std.meta : AliasSeq;
@@ -20,7 +20,7 @@ import std.string : count, indexOf;
 import std.traits : BaseClassesTuple;
 import tests.unit.census_symbols : blankNonCode;
 import tests.unit.live_registration_rig : LiveRegistrationRig;
-import tool : Tool;
+import vibe3d.editing.tools.interactive.tool : Tool;
 
 private enum repoRoot = buildNormalizedPath(dirName(__FILE_FULL_PATH__), "..",
     "..");

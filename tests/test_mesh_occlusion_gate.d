@@ -29,10 +29,10 @@
 import std.format : format;
 import std.math : PI, sqrt, fabs;
 
-import math : Vec3, lookAt, perspectiveMatrix;
+import vibe3d.util.math.math : Vec3, lookAt, perspectiveMatrix;
 import vibe3d.util.spatial.spatial : Viewport, ModelSpace;
 import vibe3d.mesh.core.mesh : Mesh;
-import mesh_visibility : visibleVertices;
+import vibe3d.editing.selection.query.mesh_visibility : visibleVertices;
 
 void main() {}
 
@@ -294,7 +294,7 @@ unittest {
     // Since task 9387 facing is a POLYGON term (`doc/measured_laws.md` §3):
     // the snap service's polygon leg culls the away quad, its vertex leg does
     // not. Driven through `snapCursor` itself, cursor on the quad's centre.
-    import snap : snapCursor, SnapResult, invalidateSnapGrids;
+    import vibe3d.editing.selection.query.snap : snapCursor, SnapResult, invalidateSnapGrids;
     import vibe3d.editing.pipeline.contracts.toolpipe.packets : SnapPacket, SnapType, SnapMode;
     import vibe3d.util.spatial.spatial : projectToWindowFull;
     float cx, cy, cz;

@@ -32,7 +32,7 @@ import vibe3d.viewport.camera.view       : View;
 import vibe3d.editing.contracts.editmode   : EditMode;
 import vibe3d.mesh.snapshot.snapshot   : MeshSnapshot;
 import vibe3d.mesh.ops.uv_relax   : uvRelax;
-import commands.mesh.uv_relax : UvRelax;
+import vibe3d.editing.commands.editor.commands.mesh.uv_relax : UvRelax;
 import std.net.curl : post, get;
 
 void main() {}
@@ -68,7 +68,7 @@ private bool feq(float a, float b) { return fabs(a - b) < eps; }
 // Also perturbs the 4 center-vertex loops to (1.3, 1.3).
 // Returns (m, centerLoops=[cL0,cL1,cL2,cL3]).
 private Mesh make3x3WithUv(out size_t[4] centerLoops) {
-    import math : Vec3;
+    import vibe3d.util.math.math : Vec3;
     Mesh m;
     m.vertices = [
         Vec3(0,0,0), Vec3(1,0,0), Vec3(2,0,0),

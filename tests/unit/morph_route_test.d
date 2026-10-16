@@ -15,7 +15,7 @@
 // are pinned here, directly, where the inputs can be built to order.
 module tests.unit.morph_route_test;
 
-import math : Vec3;
+import vibe3d.util.math.math : Vec3;
 import vibe3d.mesh.core.mesh;
 
 // ---------------------------------------------------------------------------
@@ -48,8 +48,8 @@ private Mesh rig() {
 // ---------------------------------------------------------------------------
 
 unittest {
-    import commands.mesh.morph_edit : MeshMorphEdit, MorphEntryEdit;
-    import command : Command, CompareResult, RunMergeable;
+    import vibe3d.editing.commands.editor.commands.mesh.morph_edit : MeshMorphEdit, MorphEntryEdit;
+    import vibe3d.editing.commands.runtime.command : Command, CompareResult, RunMergeable;
     import vibe3d.viewport.camera.view : View;
     import vibe3d.editing.contracts.editmode : EditMode;
 
@@ -94,8 +94,8 @@ unittest {
 }
 
 unittest { // compareOp must compare the MAP NAME
-    import commands.mesh.morph_edit : MeshMorphEdit, MorphEntryEdit;
-    import command : CompareResult;
+    import vibe3d.editing.commands.editor.commands.mesh.morph_edit : MeshMorphEdit, MorphEntryEdit;
+    import vibe3d.editing.commands.runtime.command : CompareResult;
     import vibe3d.viewport.camera.view : View;
     import vibe3d.editing.contracts.editmode : EditMode;
 
@@ -116,8 +116,8 @@ unittest { // compareOp must compare the MAP NAME
 }
 
 unittest { // mergeRunTail: first-touch BEFORE, latest AFTER, union by vertex
-    import commands.mesh.morph_edit : MeshMorphEdit, MorphEntryEdit;
-    import command : Command;
+    import vibe3d.editing.commands.editor.commands.mesh.morph_edit : MeshMorphEdit, MorphEntryEdit;
+    import vibe3d.editing.commands.runtime.command : Command;
     import vibe3d.viewport.camera.view : View;
     import vibe3d.editing.contracts.editmode : EditMode;
 

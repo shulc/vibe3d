@@ -5,12 +5,12 @@ import tests.unit.census_symbols : exists = wave15Exists;
 
 import core.exception : AssertError;
 import vibe3d.editing.contracts.editmode : EditMode;
-import live_registration_roles : LiveSessionRole, LiveViewModeRole;
+import vibe3d.runtime.application_core.live_registration_roles : LiveSessionRole, LiveViewModeRole;
 import vibe3d.util.spatial.spatial : Viewport;
-import mesh_command_registration : MeshCommandDeps, registerMeshCommands;
-static import mesh_command_registration;
-import registry : Registry;
-import remesh.remesh_job : RemeshJob;
+import vibe3d.apps.desktop.mesh_command_registration : MeshCommandDeps, registerMeshCommands;
+static import mesh_command_registration = vibe3d.apps.desktop.mesh_command_registration;
+import vibe3d.editing.tools.interactive.registry : Registry;
+import vibe3d.runtime.remesh.remesh.remesh_job : RemeshJob;
 import std.array : join;
 import std.exception : assertThrown;
 import std.file : SpanMode;
