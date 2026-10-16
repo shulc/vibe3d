@@ -142,7 +142,7 @@ private DependencyGraph readDependencyGraph(string path)
                 || importerField.indexOf(" (packages/subpatch-preview/source/") >= 0
                 || importerField.indexOf(" (packages/viewport-gpu/source/") >= 0
                 || importerField.indexOf(" (util/log/source/") >= 0
-                || importerField.indexOf(" (util/math/source/") >= 0
+                || importerField.indexOf(" (libraries/util/math/source/vibe3d/util/math/") >= 0
                 || importerField.indexOf(" (util/parallel/source/") >= 0
                 || importerField.indexOf(" (util/plane-bytes/source/") >= 0
                 || importerField.indexOf(" (util/screen-buckets/source/") >= 0
@@ -338,7 +338,7 @@ if [ "$config" = web ]; then
     echo "FATAL: --config=web described no -version=web; the gates would be inert" >&2; exit 2 ;;
   esac
 fi
-python3 tools/ci/dmd_with_dub_flags.py "$flags" -deps="$3" -o- -c $(find source packages/forms-model/source packages/editor-ui/source packages/http-runtime/source packages/ai-advisor/source packages/ai3d-runtime/source packages/remesh-runtime/source packages/platform-file/source packages/document-actions/source packages/interactive-tools/source packages/viewport-host/source packages/interaction-data/source packages/command-runtime/source packages/application-core/source packages/document-model/source packages/param-schema/source packages/pipe-runtime/source packages/mesh-ops/source packages/interchange/source packages/interaction-query/source packages/pipe-evaluation/source packages/tool-state/source packages/transform-ops/source packages/creation-ops/source packages/alignment-ops/source packages/input-events/source packages/display-policy/source packages/viewport-gpu/source packages/subpatch-preview/source packages/edit-contracts/source packages/mesh-change/source packages/mesh-contracts/source packages/mesh-edit-log/source packages/mesh-edit-replay/source packages/mesh-snapshot/source packages/mesh-topology/source packages/mesh/source packages/profiling/source packages/spatial/source util/log/source util/math/source util/parallel/source util/plane-bytes/source util/screen-buckets/source packages/camera-model/source packages/document-channels/source packages/image-codec/source packages/document-io/source packages/selection-model/source packages/scene-query/source packages/editor-commands/source packages/pipe-contracts/source packages/mesh-preview/source util/json-number/source -name '*.d' -print)
+python3 tools/ci/dmd_with_dub_flags.py "$flags" -deps="$3" -o- -c $(find source packages/forms-model/source packages/editor-ui/source packages/http-runtime/source packages/ai-advisor/source packages/ai3d-runtime/source packages/remesh-runtime/source packages/platform-file/source packages/document-actions/source packages/interactive-tools/source packages/viewport-host/source packages/interaction-data/source packages/command-runtime/source packages/application-core/source packages/document-model/source packages/param-schema/source packages/pipe-runtime/source packages/mesh-ops/source packages/interchange/source packages/interaction-query/source packages/pipe-evaluation/source packages/tool-state/source packages/transform-ops/source packages/creation-ops/source packages/alignment-ops/source packages/input-events/source packages/display-policy/source packages/viewport-gpu/source packages/subpatch-preview/source packages/edit-contracts/source packages/mesh-change/source packages/mesh-contracts/source packages/mesh-edit-log/source packages/mesh-edit-replay/source packages/mesh-snapshot/source packages/mesh-topology/source packages/mesh/source packages/profiling/source packages/spatial/source util/log/source libraries/util/math/source/vibe3d/util/math util/parallel/source util/plane-bytes/source util/screen-buckets/source packages/camera-model/source packages/document-channels/source packages/image-codec/source packages/document-io/source packages/selection-model/source packages/scene-query/source packages/editor-commands/source packages/pipe-contracts/source packages/mesh-preview/source util/json-number/source -name '*.d' ! -path 'libraries/util/math/source/vibe3d/util/math/package.d' -print)
 SH";
     enum graphConfigurations = ["web", "modeling"];
     const graphPaths = [webDepsPath, nativeDepsPath];
@@ -612,10 +612,11 @@ for package in packages/forms-model packages/editor-ui util/json-number packages
                packages/edit-contracts packages/mesh-change packages/mesh-contracts \
                packages/mesh-edit-log packages/mesh-edit-replay packages/mesh-snapshot \
                packages/mesh-topology packages/mesh packages/profiling packages/spatial \
-               util/log util/math util/parallel util/plane-bytes util/screen-buckets \
+               util/log util/parallel util/plane-bytes util/screen-buckets \
                packages/camera-model packages/document-channels packages/image-codec packages/document-io packages/selection-model packages/scene-query packages/editor-commands packages/render-model packages/render-backends; do
   dub build --root="$package" --config=web --compiler=dmd
 done
+dub build :math --config=web --compiler=dmd
 for data in import-paths versions linker-files libs lflags source-files dflags \
             string-import-paths; do
   dub describe --config=web --data="$data" --data-list > "$out/$data.txt"

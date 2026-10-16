@@ -73,11 +73,15 @@ case " $flags " in *" -version=web "*) ;; *)
 esac
 mapfile -t files < <(dub describe --config=web --data=source-files --data-list \
     2>>"$2" | sed '/^$/d' | grep '\.d$')
-for owner in packages/forms-model packages/editor-ui packages/camera-model packages/document-channels packages/image-codec packages/document-io packages/alignment-ops packages/command-runtime packages/application-core packages/creation-ops packages/display-policy packages/edit-contracts packages/input-events packages/interaction-query packages/interchange packages/mesh-change packages/mesh-contracts packages/mesh-edit-log packages/mesh-edit-replay packages/mesh-ops packages/selection-model packages/scene-query packages/editor-commands packages/interactive-tools packages/viewport-host packages/interaction-data packages/mesh-snapshot packages/mesh-topology packages/mesh packages/pipe-evaluation packages/profiling packages/spatial packages/subpatch-preview packages/tool-state packages/transform-ops packages/viewport-gpu util/log util/math util/parallel util/plane-bytes util/screen-buckets packages/pipe-contracts packages/mesh-preview util/json-number; do
+for owner in packages/forms-model packages/editor-ui packages/camera-model packages/document-channels packages/image-codec packages/document-io packages/alignment-ops packages/command-runtime packages/application-core packages/creation-ops packages/display-policy packages/edit-contracts packages/input-events packages/interaction-query packages/interchange packages/mesh-change packages/mesh-contracts packages/mesh-edit-log packages/mesh-edit-replay packages/mesh-ops packages/selection-model packages/scene-query packages/editor-commands packages/interactive-tools packages/viewport-host packages/interaction-data packages/mesh-snapshot packages/mesh-topology packages/mesh packages/pipe-evaluation packages/profiling packages/spatial packages/subpatch-preview packages/tool-state packages/transform-ops packages/viewport-gpu util/log util/parallel util/plane-bytes util/screen-buckets packages/pipe-contracts packages/mesh-preview util/json-number; do
     mapfile -t package_files < <(dub describe --root="$owner" --config=web \
         --data=source-files --data-list 2>>"$2" | sed '/^$/d' | grep '\.d$')
     files+=("${package_files[@]}")
 done
+# Math is a root-registered subpackage; the child recipe is not an independent root.
+mapfile -t package_files < <(dub describe :math --config=web \
+    --data=source-files --data-list 2>>"$2" | sed '/^$/d' | grep '\.d$')
+files+=("${package_files[@]}")
 # Every file is explicit. This is required by the nine command modules whose declared
 # names end in `_` while their paths do not; import lookup alone cannot resolve them.
 python3 tools/ci/dmd_with_dub_flags.py "$flags" -deps="$3" -o- -c "${files[@]}"
@@ -91,7 +95,7 @@ SH";
                inventory.status, inventory.output));
     string[][string] importsByModule;
     string[string] sourcePathByModule;
-    const productionPrefixes = [buildPath(repoRoot, "packages/camera-model/source") ~ "/", buildPath(repoRoot, "packages/document-channels/source") ~ "/", buildPath(repoRoot, "packages/image-codec/source") ~ "/", buildPath(repoRoot, "packages/document-io/source") ~ "/", buildPath(repoRoot, "source") ~ "/", buildPath(repoRoot, "packages/alignment-ops/source") ~ "/", buildPath(repoRoot, "packages/command-runtime/source"), buildPath(repoRoot, "packages/application-core/source"), buildPath(repoRoot, "packages/document-model/source"), buildPath(repoRoot, "packages/param-schema/source"), buildPath(repoRoot, "packages/pipe-runtime/source") ~ "/", buildPath(repoRoot, "packages/creation-ops/source") ~ "/", buildPath(repoRoot, "packages/display-policy/source") ~ "/", buildPath(repoRoot, "packages/edit-contracts/source") ~ "/", buildPath(repoRoot, "packages/input-events/source") ~ "/", buildPath(repoRoot, "packages/interaction-query/source") ~ "/", buildPath(repoRoot, "packages/interchange/source") ~ "/", buildPath(repoRoot, "packages/mesh-change/source") ~ "/", buildPath(repoRoot, "packages/mesh-contracts/source") ~ "/", buildPath(repoRoot, "packages/mesh-edit-log/source") ~ "/", buildPath(repoRoot, "packages/mesh-edit-replay/source") ~ "/", buildPath(repoRoot, "packages/mesh-ops/source") ~ "/", buildPath(repoRoot, "packages/mesh-snapshot/source") ~ "/", buildPath(repoRoot, "packages/mesh-topology/source") ~ "/", buildPath(repoRoot, "packages/mesh/source") ~ "/", buildPath(repoRoot, "packages/pipe-evaluation/source") ~ "/", buildPath(repoRoot, "packages/profiling/source") ~ "/", buildPath(repoRoot, "packages/spatial/source") ~ "/", buildPath(repoRoot, "packages/subpatch-preview/source") ~ "/", buildPath(repoRoot, "packages/tool-state/source") ~ "/", buildPath(repoRoot, "packages/transform-ops/source") ~ "/", buildPath(repoRoot, "packages/viewport-gpu/source") ~ "/", buildPath(repoRoot, "util/log/source") ~ "/", buildPath(repoRoot, "util/math/source") ~ "/", buildPath(repoRoot, "util/parallel/source") ~ "/", buildPath(repoRoot, "util/plane-bytes/source") ~ "/", buildPath(repoRoot, "util/screen-buckets/source") ~ "/", buildPath(repoRoot, "packages/pipe-contracts/source") ~ "/", buildPath(repoRoot, "packages/mesh-preview/source") ~ "/", buildPath(repoRoot, "util/json-number/source") ~ "/",
+    const productionPrefixes = [buildPath(repoRoot, "packages/camera-model/source") ~ "/", buildPath(repoRoot, "packages/document-channels/source") ~ "/", buildPath(repoRoot, "packages/image-codec/source") ~ "/", buildPath(repoRoot, "packages/document-io/source") ~ "/", buildPath(repoRoot, "source") ~ "/", buildPath(repoRoot, "packages/alignment-ops/source") ~ "/", buildPath(repoRoot, "packages/command-runtime/source"), buildPath(repoRoot, "packages/application-core/source"), buildPath(repoRoot, "packages/document-model/source"), buildPath(repoRoot, "packages/param-schema/source"), buildPath(repoRoot, "packages/pipe-runtime/source") ~ "/", buildPath(repoRoot, "packages/creation-ops/source") ~ "/", buildPath(repoRoot, "packages/display-policy/source") ~ "/", buildPath(repoRoot, "packages/edit-contracts/source") ~ "/", buildPath(repoRoot, "packages/input-events/source") ~ "/", buildPath(repoRoot, "packages/interaction-query/source") ~ "/", buildPath(repoRoot, "packages/interchange/source") ~ "/", buildPath(repoRoot, "packages/mesh-change/source") ~ "/", buildPath(repoRoot, "packages/mesh-contracts/source") ~ "/", buildPath(repoRoot, "packages/mesh-edit-log/source") ~ "/", buildPath(repoRoot, "packages/mesh-edit-replay/source") ~ "/", buildPath(repoRoot, "packages/mesh-ops/source") ~ "/", buildPath(repoRoot, "packages/mesh-snapshot/source") ~ "/", buildPath(repoRoot, "packages/mesh-topology/source") ~ "/", buildPath(repoRoot, "packages/mesh/source") ~ "/", buildPath(repoRoot, "packages/pipe-evaluation/source") ~ "/", buildPath(repoRoot, "packages/profiling/source") ~ "/", buildPath(repoRoot, "packages/spatial/source") ~ "/", buildPath(repoRoot, "packages/subpatch-preview/source") ~ "/", buildPath(repoRoot, "packages/tool-state/source") ~ "/", buildPath(repoRoot, "packages/transform-ops/source") ~ "/", buildPath(repoRoot, "packages/viewport-gpu/source") ~ "/", buildPath(repoRoot, "util/log/source") ~ "/", buildPath(repoRoot, "libraries/util/math/source/vibe3d/util/math") ~ "/", buildPath(repoRoot, "util/parallel/source") ~ "/", buildPath(repoRoot, "util/plane-bytes/source") ~ "/", buildPath(repoRoot, "util/screen-buckets/source") ~ "/", buildPath(repoRoot, "packages/pipe-contracts/source") ~ "/", buildPath(repoRoot, "packages/mesh-preview/source") ~ "/", buildPath(repoRoot, "util/json-number/source") ~ "/",
         buildPath(repoRoot, "packages/selection-model/source"),
         buildPath(repoRoot, "packages/scene-query/source"),
         buildPath(repoRoot, "packages/editor-commands/source"),
@@ -159,7 +163,17 @@ SH";
     assert(baseline.length == 568, "web compiler baseline manifest population");
     // 20262940: the historical identities stay fixed; the approved borrowed role is current-only.
     enum currentOnlyModules = ["ui.panel_host_roles"];
-    const expectedCurrentModules = baseline ~ currentOnlyModules;
+    string[] expectedCurrentModules = baseline.dup;
+    size_t mathTranslations;
+    foreach (ref name; expectedCurrentModules)
+        foreach (oldName; ["math", "math_geometry", "math_matrix", "math_quaternion", "math_vector"])
+            if (name == oldName)
+            {
+                name = "vibe3d.util.math." ~ oldName;
+                ++mathTranslations;
+            }
+    assert(mathTranslations == 5, "Wave19 web baseline must translate five original math identities");
+    expectedCurrentModules ~= currentOnlyModules;
     string[] added, removed;
     foreach (name; selectedModules) if (!expectedCurrentModules.canFind(name)) added ~= name;
     foreach (name; expectedCurrentModules) if (!selectedModules.canFind(name)) removed ~= name;

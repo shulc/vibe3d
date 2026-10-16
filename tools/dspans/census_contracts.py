@@ -389,7 +389,8 @@ def logical_source_paths(directory, pattern, *, root=None):
         result = []
         for old, new, spans in _MATH_COORDINATES:
             logical = root / old
-            if logical.is_relative_to(normal) and logical.match(pattern):
+            if (logical.is_relative_to(normal) and logical.match(pattern)
+                    and (root / (new if moved else old)).is_file()):
                 _math_coordinate(logical, root)
                 result.append(logical)
         return result

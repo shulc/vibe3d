@@ -151,6 +151,10 @@ backing_paths = {census_contracts.physical_source_path(path, root=root)
                  for inputs in owner_inputs.values() for path in inputs}
 backing_paths.update(root / fragment["destination"]
                      for fragment in census_contracts.SOURCE_FRAGMENTS)
+# Math's physical coordinate is selected by its operational recipe.
+backing_paths.update(path for path in (root / "util/math/dub.json",
+                                      root / "libraries/util/math/dub.json")
+                     if path.is_file())
 with tempfile.TemporaryDirectory(prefix="protocol-owners-") as scratch:
     partial = Path(scratch)
     for path in sorted(backing_paths):
