@@ -4931,7 +4931,8 @@ def renderer_compile_target(description, target, compiler, env, evidence, label,
     construction.update(name=configuration,buildOptions=settings.get('options',[]),
                         buildRequirements=settings.get('requirements',[]))
     recipe=evidence/(label+'-selected-target.recipe.json')
-    recipe.write_text(json.dumps({'name':target['rootPackage'],'targetType':package['targetType'],
+    selected_name=target['rootPackage'].split(':')[-1] if is_internal(target['rootPackage']) else target['rootPackage']
+    recipe.write_text(json.dumps({'name':selected_name,'targetType':package['targetType'],
         'sourcePaths':[],'importPaths':[], 'configurations':[construction],
         'buildTypes':{build:{}}},indent=2))
     (evidence/(label+'-selected-context.json')).write_text(json.dumps({
@@ -4940,7 +4941,7 @@ def renderer_compile_target(description, target, compiler, env, evidence, label,
     command=['dub','describe','--root='+str(context_root),'--config='+configuration,'--compiler='+compiler,
              '--build='+build,'--nodeps','--skip-registry=all','--quiet','--recipe='+str(recipe)]
     own_description=json.loads(run(command,root,env,evidence,label+'-selected-target',renderer_kind='describe').stdout)
-    own_target=next(t for t in own_description['targets'] if t['rootPackage']==target['rootPackage'])
+    own_target=next(t for t in own_description['targets'] if t['rootPackage']==selected_name)
     for field in fields:
         actual=own_target['buildSettings'].get(field,[]);expected=settings.get(field,[])
         if field in ('importPaths','stringImportPaths'):

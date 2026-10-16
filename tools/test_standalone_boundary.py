@@ -576,6 +576,33 @@ class BoundaryControls(unittest.TestCase):
             source=ast.parse(Path(support.__file__).read_text())
             function=next(n for n in source.body if isinstance(n,ast.FunctionDef)
                           and n.name=='renderer_compile_target')
+            selected_name=next(n for n in function.body if isinstance(n,ast.Assign)
+                               and any(isinstance(t,ast.Name) and t.id=='selected_name' for t in n.targets))
+            recipe_write=next(n for n in function.body if isinstance(n,ast.Expr)
+                              and isinstance(n.value,ast.Call) and isinstance(n.value.func,ast.Attribute)
+                              and isinstance(n.value.func.value,ast.Name) and n.value.func.value.id=='recipe')
+            selected_target=next(n for n in function.body if isinstance(n,ast.Assign)
+                                 and any(isinstance(t,ast.Name) and t.id=='own_target' for t in n.targets))
+            recipe_check=compile(ast.Module(body=[selected_name,recipe_write,selected_target],
+                                            type_ignores=[]),support.__file__,'exec')
+            for parent_name,local_name in (('vibe3d:math','math'),('math','math'),('render-model','render-model'),
+                    ('vibe3d-render-backends','vibe3d-render-backends'),
+                    ('vibe3d-math-tests','vibe3d-math-tests'),('boundary:external','boundary:external')):
+                recipe=root/'selected.recipe.json';parent_target={'rootPackage':parent_name}
+                local_target={'rootPackage':local_name,'buildSettings':{'versions':['WithRender']}}
+                namespace=dict(support.__dict__,target=parent_target,recipe=recipe,
+                               package={'targetType':'staticLibrary'},construction={'name':'with-render'},
+                               build='debug',own_description={'targets':[local_target]})
+                exec(recipe_check,namespace)
+                self.assertEqual(json.loads(recipe.read_text())['name'],local_name,
+                                 'synthetic standalone recipe retains its independently expected local identity')
+                self.assertIs(namespace['own_target'],local_target)
+                self.assertEqual(parent_target,{'rootPackage':parent_name},
+                                 'selected context retains the qualified parent target identity')
+                if parent_name=='vibe3d:math':
+                    namespace['own_description']={'targets':[parent_target]}
+                    with self.assertRaises(StopIteration):
+                        exec(recipe_check,namespace)
             expected=next(n for n in function.body if isinstance(n,ast.Assign)
                           and any(isinstance(t,ast.Name) and t.id=='expected_links' for t in n.targets))
             guard=next(n for n in function.body if isinstance(n,ast.Expr)
