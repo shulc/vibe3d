@@ -26,7 +26,8 @@ import std.regex : ctRegex, matchAll;
 import std.string : splitLines;
 
 import tests.unit.census_symbols : blankNonCode, blankUnittestBodies, countIdent,
-    wave15DirEntries, wave15ReadText, wave15LogicalPath, Wave15Entry, wave15InputsIntact, wave15InputStart;
+    wave15DirEntries, wave15ReadText, wave15LogicalPath, wave19MathPhysicalPath,
+    Wave15Entry, wave15InputsIntact, wave15InputStart;
 
 private enum repoRoot = dirName(dirName(dirName(__FILE_FULL_PATH__)));
 
@@ -43,6 +44,14 @@ static assert([__traits(allMembers, viewgrid)].canFind("viewVectorQuantum"));
 private struct Src { string rel, raw, code; }
 private Wave15Entry[] physicalEntries(string directory) {
     Wave15Entry[] result;
+    // The physical census keeps the five real math bodies, excluding the five
+    // compatibility modules and facade; sources still reads their actual bytes.
+    if (directory == buildPath(repoRoot, "util/math/source")) {
+        foreach (entry; wave15DirEntries(directory, "*.d", SpanMode.depth))
+            result ~= Wave15Entry(wave19MathPhysicalPath(entry.name),
+                entry.isFile, entry.isDir, entry.size);
+        return result;
+    }
     foreach (entry; dirEntries(directory, "*.d", SpanMode.depth))
         result ~= Wave15Entry(entry.name, entry.isFile, entry.isDir, entry.isFile ? entry.size : 0);
     return result;
