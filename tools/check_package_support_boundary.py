@@ -3873,7 +3873,7 @@ def validate_description(description, project, owner, config, tests=False, harne
         selected=internal_owner(name)
         path=project/SPECS[selected]['root']/('tests' if name.endswith('-tests') else '')
         raw, cfg=raw_config(path,active[name]['configuration'])
-        external.update(k for k in set(raw.get('dependencies',{}))|set(cfg.get('dependencies',{})) if not k.startswith('vibe3d-'))
+        external.update(k for k in set(raw.get('dependencies',{}))|set(cfg.get('dependencies',{})) if not is_internal(k))
     require(set(active)-internal==external_closure(external,config=='web'), 'support resolved external package population: '+owner)
     for name in set(active)-internal:
         if name=='nfde':require(Path(active[name]['path']).resolve()==(project/'third_party/nfde').resolve(),
@@ -4790,10 +4790,10 @@ def renderer_description(description, project, owner, config, tests=False, harne
         path=Path(package['path']).resolve()
         require(path.is_relative_to(project) or not is_internal(name), 'support renderer internal owner path')
         if is_internal(name) or name==root_name:
-            selected=internal_owner(name)
             if owner=='app' and name==root_name:
                 expected=[(project/p).resolve() for p in APP_SOURCES]
             else:
+                selected=internal_owner(name)
                 spec=SPECS[selected]
                 own=spec['testSources'] if name.endswith('-tests') else spec['sources']+spec.get('transitionalSources', [])
                 expected=[(path/p).resolve() for p in own]

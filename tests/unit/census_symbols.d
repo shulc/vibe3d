@@ -3272,21 +3272,22 @@ public struct Wave15Entry {
 }
 
 public Wave15Entry[] wave15DirEntries(string directory, string pattern,
-        SpanMode span, bool followSymlink = true) {
+        SpanMode span, bool followSymlink = true, string root = repoRoot) {
     import std.file : dirEntries, exists, isFile, isDir, getSize;
     import std.path : baseName, dirName, globMatch, relativePath;
     import std.algorithm : startsWith, canFind;
     const normal = wave15Normalize(directory);
     Wave15Entry[] result;
-    const physicalDirectory = wave19MathPhysicalPath(directory);
+    const base = wave15Normalize(root);
+    const physicalDirectory = wave19MathPhysicalPath(directory, base);
     if (physicalDirectory != normal) {
         foreach (name; wave19MathModules) {
-            const logical = buildPath(repoRoot, wave19MathOldRoot, mathRelative(name, false));
+            const logical = buildPath(base, wave19MathOldRoot, mathRelative(name, false));
             if (!logical.startsWith(normal ~ "/")) continue;
             const relative = relativePath(logical, normal);
             if (span == SpanMode.shallow && relative.canFind("/")) continue;
             if (!globMatch(baseName(logical), pattern)) continue;
-            const physical = wave19MathPhysicalPath(logical);
+            const physical = wave19MathPhysicalPath(logical, base);
             result ~= Wave15Entry(buildPath(directory, relative), true, false, getSize(physical));
         }
         return result;
@@ -3422,7 +3423,18 @@ unittest { // Wave19 math: real selected inputs, exact coordinates and span-only
     const foreign = buildPath(scratch, "foreign/util/math/source/math_vector.d");
     assert(wave19MathPhysicalPath(foreign, scratch) == foreign,
         "Wave19 math foreign coordinate remains foreign");
-    put("libraries/util/math/source/math_vector.d", "module math_vector; public import vibe3d.util.math.math_vector;");
+    foreach (name; wave19MathModules[0 .. $ - 1])
+        put("libraries/util/math/source/" ~ name ~ ".d",
+            "module " ~ name ~ "; public import vibe3d.util.math." ~ name ~ ";");
+    put("libraries/util/math/source/vibe3d/util/math/package.d", "module vibe3d.util.math;");
+    assert(wave15DirEntries(buildPath(scratch, "util/math/source"), "*.d", SpanMode.depth, true, scratch ~ "/.").length == 5,
+        "Wave19 math moved logical source walk excludes six transitional inputs");
+    assert(wave15DirEntries(buildPath(scratch, "util/math"), "*.d", SpanMode.depth, true, scratch ~ "/.").length == 6
+        && wave15DirEntries(buildPath(scratch, "util/math/tests/source"), "*.d", SpanMode.depth, true, scratch ~ "/.").length == 1,
+        "Wave19 math moved logical owner walk retains six originals including carrier");
+    assert(wave15DirEntries(buildPath(scratch, "util/math/source"), "*.d", SpanMode.shallow, true, scratch ~ "/.").length == 5
+        && wave15DirEntries(buildPath(scratch, "util/math/tests/source"), "*.d", SpanMode.shallow, true, scratch ~ "/.").length == 0,
+        "Wave19 math moved logical shallow walk retains original layout");
     remove(physical);
     assertThrown!AssertError(wave19MathMoved(scratch)); // shim cannot replace missing real file
     put("libraries/util/math/source/vibe3d/util/math/math_vector.d", "module wrong;");
@@ -3474,6 +3486,7 @@ unittest { // Wave19 math: real selected inputs, exact coordinates and span-only
         assert(wave15ReadText(path) == wave19MathLogicalText(raw),
             "Wave19 math actual selected source reader positive: " ~ name);
     }
-    assert(wave15DirEntries(buildPath(repoRoot, "util/math/source"), "*.d", SpanMode.depth).length == 5,
-        "Wave19 math original logical source population five");
+    const actualSources = wave15DirEntries(buildPath(repoRoot, "util/math/source"), "*.d", SpanMode.depth);
+    assert(actualSources.length == 5,
+        "Wave19 math original logical source population five, actual=" ~ actualSources.length.to!string);
 }

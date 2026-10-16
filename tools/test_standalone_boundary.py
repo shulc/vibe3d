@@ -48,6 +48,31 @@ class BoundaryControls(unittest.TestCase):
     def tearDownClass(cls):
         cls.temporary.cleanup()
 
+    def test_current_math_consumer_description(self):
+        actual = Path(__file__).resolve().parents[1]
+        result = subprocess.run(['dub', 'describe', '--root=' + str(actual / 'packages/spatial'),
+            '--config=modeling-noai', '--compiler=dmd', '--nodeps', '--skip-registry=all', '--quiet'],
+            cwd=actual, text=True, capture_output=True, check=True)
+        description = json.loads(result.stdout)
+        support.validate_description(description, actual, 'spatial', 'modeling-noai')
+        changed = copy.deepcopy(description)
+        next(p for p in changed['packages'] if p['name'] == 'vibe3d:math')['name'] = 'vibe3d-math'
+        with self.assertRaisesRegex(support.BoundaryError, 'resolved internal package population: spatial'):
+            support.validate_description(changed, actual, 'spatial', 'modeling-noai')
+
+    def test_current_app_renderer_description(self):
+        actual = Path(__file__).resolve().parents[1]
+        result = subprocess.run(['dub', 'describe', '--root=' + str(actual),
+            '--config=with-render', '--compiler=dmd', '--nodeps', '--skip-registry=all', '--quiet'],
+            cwd=actual, text=True, capture_output=True, check=True)
+        description = json.loads(result.stdout)
+        support.renderer_description(description, actual, 'app', 'with-render')
+        changed = copy.deepcopy(description)
+        app = next(p for p in changed['packages'] if p['name'] == 'vibe3d')
+        app['files'].append({'path': 'source/unauthorized.d', 'role': 'source'})
+        with self.assertRaisesRegex(support.BoundaryError, 'exact physical owner inputs: vibe3d'):
+            support.renderer_description(changed, actual, 'app', 'with-render')
+
     def test_renderer_native_formatter(self):
         # Real DUB is the independent formatter; only recipe/pkg-config data
         # belong to this fixture. Execute the production expectation and guard.
@@ -301,7 +326,7 @@ class BoundaryControls(unittest.TestCase):
                     next(p for p in changed['packages'] if p['name'] == name)['configuration'] = 'isolated-tests'
                     with self.assertRaisesRegex(boundary.BoundaryError, 'resolved setting changed: ' + owner + ':dflags'):
                         boundary.validate_package_settings(changed, root, compiler)
-                target = next(t for t in description['targets'] if t['rootPackage'] == 'vibe3d-math')
+                target = next(t for t in description['targets'] if t['rootPackage'] == support.SPECS['math']['name'])
             else:
                 target = next(t for t in description['targets'] if t['rootPackage'] == 'vibe3d-core-tests')
             target['buildSettings']['dflags'] = ['--singleobj']

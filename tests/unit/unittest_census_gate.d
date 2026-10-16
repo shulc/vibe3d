@@ -92,7 +92,7 @@ import std.conv       : to;
 import std.exception  : collectException;
 import std.file       : dirEntries, exists, isDir, read, SpanMode, tempDir, remove;
 import std.format     : format;
-import std.path       : buildPath, dirName, relativePath;
+import std.path       : absolutePath, buildNormalizedPath, buildPath, dirName, relativePath;
 import std.process    : environment, execute, pipe, spawnProcess, wait, Config, thisProcessID;
 import std.string     : strip, splitLines, indexOf;
 
@@ -521,6 +521,7 @@ struct FileCensus
 FileCensus[] scanWorkingTree(string root)
 {
     auto acc = appender!(FileCensus[]);
+    const base = buildNormalizedPath(absolutePath(root));
     import tests.unit.census_symbols : wave19MathPhysicalPath, wave19MathLogicalPath;
     foreach (sub; censusRoots)
     {
@@ -530,7 +531,7 @@ FileCensus[] scanWorkingTree(string root)
         foreach (entry; dirEntries(dir, SpanMode.depth))
         {
             if (!entry.isFile || !entry.name.endsWith(".d")) continue;
-            auto rel = relativePath(wave19MathLogicalPath(entry.name, root), root);
+            auto rel = relativePath(wave19MathLogicalPath(entry.name, root), base);
             version (Windows) { import std.array : replace; rel = rel.replace("\\", "/"); }
             // Keep the key identical to git's, so the per-file report can pair
             // the two sides even when the tool is pointed at `.`.
@@ -818,6 +819,7 @@ private TreeEntry[] revEntries(string root, string rev)
     if (ls.status != 0) return null;
 
     auto acc = appender!(TreeEntry[]);
+    const base = buildNormalizedPath(absolutePath(root));
     size_t start = 0;
     foreach (i, ch; ls.text)
     {
@@ -837,7 +839,7 @@ private TreeEntry[] revEntries(string root, string rev)
         if (isLedgerPath(path) || path.endsWith(".d"))
         {
             import tests.unit.census_symbols : wave19MathLogicalPath;
-            acc.put(TreeEntry(oid, relativePath(wave19MathLogicalPath(buildPath(root, path), root), root)));
+            acc.put(TreeEntry(oid, relativePath(wave19MathLogicalPath(buildPath(root, path), root), base)));
         }
     }
     return acc.data;
@@ -1217,6 +1219,14 @@ unittest
     import std.stdio : stderr;
 
     auto v = judge(censusRepoRoot);
+
+    const dottedRoot = buildPath(censusRepoRoot, ".");
+    const entries = revEntries(dottedRoot, "HEAD");
+    assert(entries.count!(e => e.path == ledgerPath) == 1,
+        "Wave19 historical ledger keeps its exact relative key with dotted root");
+    const currentFiles = scanWorkingTree(dottedRoot);
+    assert(currentFiles.count!(f => f.path == "util/math/source/math_vector.d") == 1,
+        "Wave19 current mapped source keeps its exact relative key with dotted root");
 
     if (!v.ran)
     {
