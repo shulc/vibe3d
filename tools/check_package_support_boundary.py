@@ -4931,7 +4931,7 @@ def renderer_compile_target(description, target, compiler, env, evidence, label,
     construction.update(name=configuration,buildOptions=settings.get('options',[]),
                         buildRequirements=settings.get('requirements',[]))
     recipe=evidence/(label+'-selected-target.recipe.json')
-    selected_name=target['rootPackage'].split(':')[-1] if is_internal(target['rootPackage']) else target['rootPackage']
+    selected_name=target['rootPackage'].replace(':','-') if is_internal(target['rootPackage']) else target['rootPackage']
     recipe.write_text(json.dumps({'name':selected_name,'targetType':package['targetType'],
         'sourcePaths':[],'importPaths':[], 'configurations':[construction],
         'buildTypes':{build:{}}},indent=2))
