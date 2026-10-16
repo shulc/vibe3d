@@ -2741,7 +2741,7 @@ public bool wave19MathMoved(string root) {
         assert(!exists(buildPath(root, rejected, mathRelative(name, !moved))),
             "Wave19 math duplicate real source: " ~ name);
         const expected = moved ? "vibe3d.util.math." ~ name : name;
-        const declarations = matchAll(blankNonCode(readText(physical)),
+        auto declarations = matchAll(blankNonCode(readText(physical)),
             regex(`\bmodule\s+([A-Za-z_][A-Za-z_0-9.]*)\s*;`));
         size_t count;
         foreach (declaration; declarations) {
@@ -2781,7 +2781,7 @@ private string wave19MathLogicalText(string source) {
     const code = blankNonCode(source);
     struct Edit { size_t begin, end; string text; }
     Edit[] edits;
-    foreach (statement; matchAll(code, regex(`\b(?:module|import)\b[^;{}]*;`))) {
+    foreach (statement; matchAll(code, regex(`\b(?:module|import)\s+[A-Za-z_][^;{}]*;`))) {
         foreach (token; matchAll(statement[0], regex(`[A-Za-z_][A-Za-z_0-9]*(?:\.[A-Za-z_][A-Za-z_0-9]*)*`))) {
             foreach (name; wave19MathModules) {
                 if (token[0] != "vibe3d.util.math." ~ name) continue;
@@ -3439,13 +3439,23 @@ unittest { // Wave19 math: real selected inputs, exact coordinates and span-only
     put("libraries/util/math/dub.json", `{"name":"math"}`);
     assert(wave19MathMoved(scratch), "Wave19 math restored positive");
 
+    enum expression = `enum s = import("x") ~ __traits(identifier, vibe3d.util.math.math);`;
+    assert(wave19MathLogicalText(expression) == expression,
+        "Wave19 math string-import expression bytes remain unchanged");
+    assert(wave19MathLogicalText(expression.replace("vibe3d.util.math.math", "math")) != expression,
+        "Wave19 math changed string-import body remains distinguishable");
+
     enum renamed = "module vibe3d.util.math.math;\n"
         ~ "public import V = vibe3d.util.math.math_vector, vibe3d.util.math.math_matrix : Vec3;\n"
+        ~ "static import\n vibe3d.util.math.math_quaternion;\n"
+        ~ "import /* gap */ vibe3d.util.math.math_geometry : faceNormalFirst3;\n"
         ~ "// vibe3d.util.math.math_vector\n"
         ~ "enum text = \"vibe3d.util.math.math_matrix\";\n"
         ~ "void body() { vibe3d.util.math.math_vector.Vec3 v; }\n";
     enum original = "module math;\n"
         ~ "public import V = math_vector, math_matrix : Vec3;\n"
+        ~ "static import\n math_quaternion;\n"
+        ~ "import /* gap */ math_geometry : faceNormalFirst3;\n"
         ~ "// vibe3d.util.math.math_vector\n"
         ~ "enum text = \"vibe3d.util.math.math_matrix\";\n"
         ~ "void body() { vibe3d.util.math.math_vector.Vec3 v; }\n";
