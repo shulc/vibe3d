@@ -624,6 +624,10 @@ class BoundaryControls(unittest.TestCase):
             self.assertIn('libraries/viewport/camera/dub.json',namespace['members'],
                           'root registration retains unselected real descriptor metadata')
             self.assertNotIn('source/app.d',namespace['members'],'metadata never grants desktop source')
+            app_namespace=dict(support.__dict__,project=actual,owner='app')
+            exec(compile(ast.Module(body=archive_setup,type_ignores=[]),support.__file__,'exec'),app_namespace)
+            self.assertEqual(app_namespace['members'],[],'app retains the full-tree archive sentinel')
+            self.assertEqual(app_namespace['metadata'],[],'app needs no selected-owner metadata supplement')
             archive_guard=next(n for n in execute.body if isinstance(n,ast.If)
                                and any(isinstance(a,ast.Constant) and isinstance(a.value,str)
                                        and 'root recipe metadata identity' in a.value for a in ast.walk(n)))
