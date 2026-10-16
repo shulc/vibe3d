@@ -1072,6 +1072,22 @@ class BoundaryControls(unittest.TestCase):
                       and 'PACKAGE_FIXTURES' in ast.unparse(node))
         validation = next(node for node in execute.body if isinstance(node, ast.For)
                           and isinstance(node.target, ast.Name) and node.target.id == 'selected')
+        desktop_guard = next(node for node in execute.body if isinstance(node, ast.Expr)
+                             and any(isinstance(item, ast.Constant) and item.value ==
+                                     'PREPARATION-REFUSED: desktop production root'
+                                     for item in ast.walk(node)))
+        desktop_check = compile(ast.Module(body=[desktop_guard], type_ignores=[]),
+                                support.__file__, 'exec')
+        with tempfile.TemporaryDirectory(prefix='boundary-desktop-exclusion-') as directory:
+            archive = Path(directory)
+            namespace = dict(support.__dict__, archive=archive)
+            exec(desktop_check, namespace)
+            desktop = archive / 'apps/desktop/source'
+            desktop.mkdir(parents=True)
+            with self.assertRaisesRegex(support.BoundaryError, 'desktop production root'):
+                exec(desktop_check, namespace)
+            desktop.rmdir()
+            exec(desktop_check, namespace)
         expected_owners = {
             'alignment-ops': {'alignment-ops'}, 'creation-ops': {'creation-ops'},
             'viewport-gpu': {'viewport-gpu'}, 'selection-model': {'viewport-gpu'},
@@ -1269,6 +1285,20 @@ class BoundaryControls(unittest.TestCase):
                                        and 'root recipe metadata identity' in a.value for a in ast.walk(n)))
             archive_check=compile(ast.Module(body=[archive_guard],type_ignores=[]),support.__file__,'exec')
             isolated=root/'isolated';isolated.mkdir()
+            desktop_guard=next(n for n in execute.body if isinstance(n,ast.If)
+                               and any(isinstance(item,ast.Constant) and item.value ==
+                                       'support renderer isolated archive contains desktop'
+                                       for item in ast.walk(n)))
+            desktop_check=compile(ast.Module(body=[desktop_guard],type_ignores=[]),
+                                  support.__file__,'exec')
+            guard_namespace=dict(support.__dict__,owner='render-model',archive=isolated)
+            exec(desktop_check,guard_namespace)
+            desktop=isolated/'apps/desktop/source';desktop.mkdir(parents=True)
+            with self.assertRaisesRegex(support.BoundaryError, 'isolated archive contains desktop'):
+                exec(desktop_check,guard_namespace)
+            exec(desktop_check,dict(guard_namespace,owner='app'))
+            desktop.rmdir()
+            exec(desktop_check,guard_namespace)
             original=(actual/'dub.json').read_bytes();(isolated/'dub.json').write_bytes(original)
             namespace['archive']=isolated
             exec(archive_check,namespace)
@@ -1435,7 +1465,7 @@ class BoundaryControls(unittest.TestCase):
                     wrong.write_bytes(b'wrong staging witness\n')
                     try:
                         with self.assertRaisesRegex(boundary.BoundaryError,
-                                'fresh DUB output missing: ' + re.escape(str(binary))):
+                                'fresh DUB output missing: ' + re.escape(str(self.project / 'apps/cli/../../vibe3d-cli'))):
                             boundary.main(['--root=' + str(self.project / 'apps/cli'), '--evidence-dir=' + str(evidence)])
                     finally:
                         wrong.unlink()
