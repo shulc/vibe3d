@@ -6194,6 +6194,7 @@ struct Mesh {
     /// it. `keepOrphans` remains the knob for the different question of what to
     /// do with verts THIS call newly orphaned.
     size_t dissolveVerticesByMask(in bool[] maskIn, bool keepOrphans = false) {
+        import std.array : appender;
         const mask = maskMinusHiddenVertices(maskIn);  // §3.3 backstop (task 0613) — see maskMinusHidden* in mesh.d
         if (mask.length != vertices.length) return 0;
         size_t dissolved = 0;
@@ -6241,13 +6242,29 @@ struct Mesh {
         FaceIdx[] reshapeIdx;
         uint[][] reshapeBefore;
         uint[][] reshapeAfter;
-        FaceIdx[] removedFaceIdx;
-        uint[][] removedFaceLists;
-        uint[]   removedFaceMat;
-        uint[]   removedFacePart;
-        uint[]   removedFaceSub;
-        ulong[]  removedFaceSetMask;   // task 1060 review SHOULD-FIX 4 — rides facePart's carry
-        int[]    removedFaceOrd;       // task 1902 Stage H — rides facePart's carry too
+        // Appender caches capacity during this bulk capture, avoiding a GC
+        // block lookup for every appended face attribute. The recorder still
+        // takes ownership of the completed buffers, including deep-copied rings.
+        auto removedFaceIdx = appender!(FaceIdx[])();
+        auto removedFaceLists = appender!(uint[][])();
+        auto removedFaceMat = appender!(uint[])();
+        auto removedFacePart = appender!(uint[])();
+        auto removedFaceSub = appender!(uint[])();
+        auto removedFaceSetMask = appender!(ulong[])();
+        auto removedFaceOrd = appender!(int[])();
+        // Removed rings share one owned slab, with disjoint slices: copying
+        // the same values needs no separate GC allocation for every polygon.
+        size_t removedCornerCount;
+        if (recDis) foreach (f; faces) {
+            size_t keptCount;
+            foreach (vid; f) {
+                if (vid < mask.length && mask[vid]) continue;
+                if (++keptCount == 3) break;
+            }
+            if (keptCount < 3) removedCornerCount += f.length;
+        }
+        auto removedRings = new uint[removedCornerCount];
+        size_t removedCornerOffset;
         // PolyVertex remap, mechanism (b): a masked corner is dropped from its
         // face's corner LIST, so new corner `j` of a surviving face came from a
         // specific OLD corner `k` (its position in the old face). Build
@@ -6285,13 +6302,16 @@ struct Mesh {
             } else if (recDis) {
                 // Degenerate face dropped — reconstruct it on revert at the
                 // index it holds RIGHT NOW, in the pre-rewrite array.
-                removedFaceIdx   ~= fi;
-                removedFaceLists ~= f.dup;
-                removedFaceMat   ~= faceAttrOr(faceMaterial, fi);
-                removedFacePart  ~= faceAttrOr(facePart, fi);
-                removedFaceSub   ~= (isFaceSubpatch(fi) ? 1u : 0u);
-                removedFaceSetMask ~= faceAttrOr(faceSetMask, fi);
-                removedFaceOrd   ~= faceAttrOr(faceSelectionOrder, fi);
+                removedFaceIdx.put(fi);
+                auto ring = removedRings[removedCornerOffset .. removedCornerOffset + f.length];
+                ring[] = f[];
+                removedCornerOffset += f.length;
+                removedFaceLists.put(ring);
+                removedFaceMat.put(faceAttrOr(faceMaterial, fi));
+                removedFacePart.put(faceAttrOr(facePart, fi));
+                removedFaceSub.put(isFaceSubpatch(fi) ? 1u : 0u);
+                removedFaceSetMask.put(faceAttrOr(faceSetMask, fi));
+                removedFaceOrd.put(faceAttrOr(faceSelectionOrder, fi));
             }
         }
         if (recDis) {
@@ -6307,10 +6327,10 @@ struct Mesh {
             // the same space the entries' own indices are in.
             recordPolyVertexPayload(reshapeIdx);
             editRecorder_.recordReshapeFaces(reshapeIdx, reshapeBefore, reshapeAfter);
-            recordPolyVertexPayload(removedFaceIdx);
-            editRecorder_.recordRemoveFaces(removedFaceIdx, removedFaceLists,
-                                            removedFaceMat, removedFacePart, removedFaceSub,
-                                            removedFaceSetMask, removedFaceOrd);
+            recordPolyVertexPayload(removedFaceIdx.data);
+            editRecorder_.recordRemoveFaces(removedFaceIdx.data, removedFaceLists.data,
+                                            removedFaceMat.data, removedFacePart.data, removedFaceSub.data,
+                                            removedFaceSetMask.data, removedFaceOrd.data);
         }
         // Task 1903 Stage K — NOT armed: this kernel records `ReshapeFaces`
         // AND `RemoveFaces` above, so its face change is already in the log
