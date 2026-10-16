@@ -124,6 +124,9 @@ unittest {
     assert(wideFill(1) == [60,59,60] && mesaFill(1) == [60,60,60] &&
         wideFill(128) == [132,106,157] && mesaFill(128) == [131,106,157],
         "sector finite oracle discriminating arithmetic controls");
+    assert(wideFill(0) == [59,59,59] && mesaFill(0) == [59,59,59] &&
+        wideFill(255) == [204,153,255] && mesaFill(255) == [204,153,255],
+        "sector finite oracle endpoint arithmetic controls");
     assert(quarterFill([95,83,108]) && quarterFill([95,82,108]),
         "sector finite oracle must retain both complete alpha64 tuples");
     size_t admitted;
