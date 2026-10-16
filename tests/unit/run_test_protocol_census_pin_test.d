@@ -375,4 +375,24 @@ unittest
         "`%s` occurs %d times in run_test.d's code; this census anchors its "
       ~ "window on it and needs it to be the single test-liveness refusal",
         kFirstGate, countOf(code, kFirstGate)));
+
+    // Task 20263020: helper refusal controls must protect the actual CLI
+    // observation path; see doc/ci_runner_failures_plan_2026-10-16.md.
+    const cliPath = buildPath(repoRoot, "tests/test_standalone_cli.d");
+    const cliCode = blankNonCode(readText(cliPath));
+    const cliFn = cliCode.indexOf("private Run runCli(");
+    assert(cliFn >= 0, "CLI readiness wiring: runCli definition missing");
+    size_t cliStart = cast(size_t) cliFn;
+    while (cliStart < cliCode.length && cliCode[cliStart] != '{') cliStart++;
+    size_t cliDepth, cliEnd = cliStart;
+    for (; cliEnd < cliCode.length; cliEnd++)
+    {
+        if (cliCode[cliEnd] == '{') cliDepth++;
+        else if (cliCode[cliEnd] == '}' && --cliDepth == 0) { cliEnd++; break; }
+    }
+    assert(cliStart < cliEnd && cliDepth == 0,
+        "CLI readiness wiring: runCli body missing or incomplete");
+    const cliBody = cliCode[cliStart .. cliEnd];
+    assert(countOf(cliBody, "awaitLoaded(pid, reaped, diagnostics, fifo)") == 1,
+        "CLI readiness wiring: runCli must call awaitLoaded before process observation");
 }
