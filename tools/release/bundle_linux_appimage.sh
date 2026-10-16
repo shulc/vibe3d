@@ -107,8 +107,8 @@ if [[ "$BUILD" == true ]]; then
         DC="$(find_ldc)" || die "no LDC >= 1.41 found (system ldc 1.40 can't build vibe3d). Install LDC 1.42+ or set DC=..."
     fi
     log "compiler: $DC ($(ldc_version "$DC"))"
-    log "$DUB_BIN build --config=modeling --build=release --d-version=ReleaseBuild --compiler=$DC"
-    "$DUB_BIN" build --config=modeling --build=release --d-version=ReleaseBuild --compiler="$DC"
+    log "$DUB_BIN build --config=modeling --build=release-thinlto --d-version=ReleaseBuild --compiler=$DC"
+    "$DUB_BIN" build --config=modeling --build=release-thinlto --d-version=ReleaseBuild --compiler="$DC"
 else
     log "--no-build: reusing existing ./vibe3d"
 fi

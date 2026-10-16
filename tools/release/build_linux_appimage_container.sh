@@ -20,14 +20,14 @@
 #
 # Env overrides:
 #   DOCKER   container engine (default: podman; docker also works)
-#   IMAGE    builder image tag (default: vibe3d-appimage-builder:ubuntu2004-portal)
+#   IMAGE    builder image tag (default: vibe3d-appimage-builder:ubuntu2004-portal-thinlto)
 #
 # set -euo pipefail; clear logging; exits non-zero on the first failure.
 
 set -euo pipefail
 
 DOCKER="${DOCKER:-podman}"
-IMAGE="${IMAGE:-vibe3d-appimage-builder:ubuntu2004-portal}"
+IMAGE="${IMAGE:-vibe3d-appimage-builder:ubuntu2004-portal-thinlto}"
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 REPO_ROOT="$(cd "$SCRIPT_DIR/../.." && pwd)"
@@ -81,7 +81,7 @@ VERIFY_ARG=""
 # SELinux (Fedora host): :Z relabels the bind mounts for container access.
 # Harmless on non-SELinux hosts.
 log "running build inside container ($DOCKER)"
-log "  build : dub build --config=modeling --build=release --d-version=ReleaseBuild --compiler=ldc2"
+log "  build : dub build --config=modeling --build=release-thinlto --d-version=ReleaseBuild --compiler=ldc2"
 log "  pack  : bundle_linux_appimage.sh --no-build ${VERIFY_ARG}"
 "$DOCKER" run --rm \
     -v "$REPO_ROOT":/src:Z \
@@ -107,7 +107,7 @@ log "  pack  : bundle_linux_appimage.sh --no-build ${VERIFY_ARG}"
         # Prefetch the registry dependency tree into the container dub cache.
         dub describe --config=modeling --compiler=ldc2 >/dev/null
 
-        dub build --config=modeling --build=release --d-version=ReleaseBuild --compiler=ldc2
+        dub build --config=modeling --build=release-thinlto --d-version=ReleaseBuild --compiler=ldc2
         tools/release/bundle_linux_appimage.sh --no-build --output '$INCONTAINER_OUT' ${VERIFY_ARG}
     "
 

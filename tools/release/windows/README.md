@@ -80,7 +80,7 @@ The helper accepts either a **flat directory** or a **`.zip`**:
 * **Local build on Windows:** build the default modeling config, then point the
   helper at a directory you assemble with the same file set:
   ```powershell
-  dub build --config=modeling --compiler=ldc2 --build=release --d-version=ReleaseBuild
+  dub build --config=modeling --compiler=ldc2 --build=release-thinlto --d-version=ReleaseBuild
   ```
   (You must stage `vibe3d.exe` + `SDL2.dll` + `onnxruntime.dll` + the VC++ CRT
   DLLs + `config\` + `assets\` into one folder — the CI "Zip artifact (Windows)"

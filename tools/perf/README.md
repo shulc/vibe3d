@@ -32,6 +32,19 @@ rdmd tools/perf/run.d --no-absolute         # relative invariants only
 rdmd tools/perf/run.d --tolerance 0.5       # looser absolute threshold (+50%)
 ```
 
+The LDC `perf` build uses optimized ThinLTO for the executable and all D
+dependency archives. Linux needs the matching `LLVMgold-ldc.so` shipped with
+the official LDC distribution; macOS uses its matching `libLTO.dylib`, and
+Windows uses LDC's internal LLD. The explicit linker O3 flags matter because
+DUB removes compiler `-O3` from its separate link command. `perf-count` and
+`perf-unit` retain their existing debug builds.
+
+Check the production flags, archive exception unwinding and DUB cache keys:
+
+```bash
+python3 tools/check_thinlto.py --compiler=/path/to/ldc2
+```
+
 ## Layout
 
 ```

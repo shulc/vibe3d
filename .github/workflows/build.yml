@@ -177,6 +177,19 @@ jobs:
           echo "VIBE3D_EXPECT_ARCH=arm64" >> "$GITHUB_ENV"
           echo "SDL2_DIR=$(brew --prefix sdl2)" >> "$GITHUB_ENV"
 
+      - name: Activate macOS arm64 toolchain
+        if: matrix.name == 'macos-arm64'
+        run: |
+          # Homebrew's static D runtimes follow the host macOS version. The
+          # official toolchain keeps the D runtimes compatible with macOS 11.
+          root="$HOME/opt/vibe3d-macos-arm64/ldc"
+          test -x "$root/bin/ldc2" && test -f "$root/lib/libLTO.dylib" || {
+            echo "::error::official arm64 LDC toolchain missing at $root"
+            exit 1
+          }
+          lipo -archs "$root/bin/ldc2" | grep -qw arm64
+          echo "$root/bin" >> "$GITHUB_PATH"
+
       - name: Activate macOS x64 toolchain
         if: matrix.name == 'macos-x64'
         run: |
@@ -396,14 +409,14 @@ jobs:
       # build ever writes it.
       - name: Build
         if: runner.os != 'Linux' && matrix.name != 'macos-x64'
-        run: dub build --compiler=ldc2 --build=release --d-version=ReleaseBuild
+        run: dub build --compiler=ldc2 --build=release-thinlto --d-version=ReleaseBuild
 
       - name: Build macOS x64
         if: matrix.name == 'macos-x64'
         run: |
           export PATH="$VIBE3D_X64_ROOT/bin:$VIBE3D_X64_ROOT/ldc/bin:$VIBE3D_X64_ROOT/sdl2/bin:/opt/homebrew/bin:$PATH"
           test "$(command -v cmake)" = "$VIBE3D_X64_ROOT/bin/cmake"
-          dub build --config=modeling --compiler="$VIBE3D_X64_ROOT/ldc/bin/ldc2" --arch=x86_64 --build=release --d-version=ReleaseBuild
+          dub build --config=modeling --compiler="$VIBE3D_X64_ROOT/ldc/bin/ldc2" --arch=x86_64 --build=release-thinlto --d-version=ReleaseBuild
 
       - name: Build app bundle (macOS)
         if: runner.os == 'macOS'
@@ -525,7 +538,7 @@ jobs:
         if: runner.os == 'Windows'
         shell: powershell
         run: |
-          dub build --config=modeling-noai --compiler=ldc2 --build=release --d-version=ReleaseBuild
+          dub build --config=modeling-noai --compiler=ldc2 --build=release-thinlto --d-version=ReleaseBuild
           if ($LASTEXITCODE -ne 0) { throw "modeling-noai (Win7) build failed" }
 
           $stage = "win7-stage"

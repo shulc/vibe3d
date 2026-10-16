@@ -30,7 +30,7 @@ done
 cd "$REPO_ROOT"
 
 if [[ "$BUILD" == true ]]; then
-    dub build --config=with-render --build=release
+    dub build --config=with-render --build=release-thinlto --compiler="${DC:-ldc2}"
 fi
 if [[ ! -x ./vibe3d ]]; then
     echo "[bundle] ./vibe3d not found" >&2

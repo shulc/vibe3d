@@ -39,7 +39,7 @@ without any env override. `ensureRuntimeLibPath()` in
 
 Each script:
 
-1. `dub build --config=with-render --build=release` (skip with
+1. `dub build --config=with-render --build=release-thinlto --compiler=ldc2` (skip with
    `--no-build` if `./vibe3d` is already current).
 2. Reads `dub describe` to find the resolved `d-cycles` and
    `bindbc-rpr` package directories.
@@ -49,6 +49,20 @@ Each script:
    only; macOS deps are pinned by the explicit-list copy + an
    `otool -L` verification step).
 5. Zips up the staged tree.
+
+Desktop Build jobs use `release-thinlto`; the Windows render bundler uses
+`debug-thinlto` while its existing release startup crash remains unresolved.
+That profile keeps debug assertions, bounds checks and debug information.
+Both profiles use LDC ThinLTO with linker O3 across the D dependency archives.
+Ordinary `debug`/`release`, sanitizer builds and the separate web build retain
+their existing flags. The AppImage builder runs its linker with the compiler's
+newer glibc loader while GCC still selects Ubuntu 20.04's CRT and libraries;
+its ThinLTO smoke check enforces an output glibc floor no higher than 2.31.
+
+The macOS arm64 Build runner uses the official LDC installation at
+`$HOME/opt/vibe3d-macos-arm64/ldc` (including its matching `lib/libLTO.dylib`)
+to preserve the D runtimes' macOS 11 baseline. The x64 lane retains its isolated
+`$HOME/opt/vibe3d-macos-x64/ldc` toolchain.
 
 A relocate smoke test sits inside `bundle_linux.sh` — the staged
 binary is `ldd`-checked with `LD_LIBRARY_PATH=$STAGE/lib:$STAGE/rpr`
@@ -100,7 +114,7 @@ modeling configuration (no render backends).
 ./tools/release/bundle_linux_appimage.sh --output /tmp/V.AppImage
 ```
 
-The script builds `dub build --config=modeling --build=release
+The script builds `dub build --config=modeling --build=release-thinlto
 --d-version=ReleaseBuild` with LDC (defaults to the first `ldc2 >=
 1.41` it finds — the Fedora system `ldc2` 1.40 can't build vibe3d),
 fetches its packaging tools on first run (cached under

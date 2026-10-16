@@ -18,17 +18,16 @@
 # on a newer distro and REQUIRE glibc >= 2.34 to *execute* — they won't even
 # start on Ubuntu 20.04. We fix that WITHOUT raising the output floor: bundle a
 # newer glibc (from ubuntu:22.04) and point ONLY those two tool binaries at it
-# via `patchelf --set-interpreter/--set-rpath`. Their child processes (the native
-# gcc/ld that actually link the output) keep the system glibc 2.31 — the patched
-# rpath is per-binary, never inherited — so nothing about the produced binary
-# changes. This is the standard "run a modern compiler, emit old-glibc code" trick.
+# via `patchelf --set-interpreter/--set-rpath`. GCC still selects the system's
+# glibc 2.31 CRT and libraries. A private linker uses the same donor loader for
+# the LTO plugin below; its own runtime does not change those output inputs.
 #
 # LDC >= 1.41 is REQUIRED (frontend 2.111+; Ubuntu 20.04's apt ldc is far older).
 #
 # Build (via the wrapper, which tags + caches this image):
 #   tools/release/build_linux_appimage_container.sh
 # or by hand:
-#   podman build -t vibe3d-appimage-builder:ubuntu2004-portal \
+#   podman build -t vibe3d-appimage-builder:ubuntu2004-portal-thinlto \
 #     -f tools/release/appimage-builder.Containerfile tools/release
 
 # --- Stage 1: harvest a consistent newer-glibc runtime set (2.35) -----------
@@ -134,9 +133,8 @@ RUN set -eux; \
     rm -f /tmp/ldc2.tar.xz
 
 # Bundle the newer glibc and re-target ONLY the ldc2/dub binaries at it so they
-# can execute on glibc 2.31. Everything they SPAWN (the native gcc/ld doing the
-# actual linking) keeps the system 2.31 loader, so the produced binary is
-# unaffected and stays floored at 2.31.
+# can execute on glibc 2.31. The native GCC driver retains the system 2.31 CRT
+# and libraries; the LTO linker process gets a private loader below.
 COPY --from=glibc-donor /glibc-run /opt/glibc-run
 # NB: the rpath MUST be DT_RPATH (transitive), NOT DT_RUNPATH — dub transitively
 # pulls the system libpthread (via the system libcurl it dlopens), and only
@@ -159,14 +157,25 @@ ENV PATH=/opt/ldc2/bin:${PATH}
 # PATH regardless (used via --compiler=ldc2 for the wrapper's explicit build).
 ENV DC=/opt/ldc2/bin/ldc2
 
+# The bundled LLVMgold plugin needs glibc >= 2.34 too. Run a private copy of
+# the system linker with the donor loader; GCC still supplies focal's CRT and
+# libraries, so the emitted executable keeps its glibc 2.31 compatibility.
+RUN set -eux; \
+    mkdir -p /opt/lto-binutils; \
+    cp /usr/bin/ld.bfd /opt/lto-binutils/ld; \
+    patchelf --set-interpreter /opt/glibc-run/ld-linux-x86-64.so.2 \
+             --force-rpath --set-rpath /opt/glibc-run /opt/lto-binutils/ld
+ENV COMPILER_PATH=/opt/lto-binutils
+
 # Smoke-test the toolchain: a threaded D program must build native and floor at
 # glibc <= 2.31 (proves the shim did not leak the 2.35 loader into the output).
 RUN set -eux; \
     printf 'import core.thread, core.stdc.stdio;\nvoid main(){auto t=new Thread({});t.start();t.join();printf("ok\\n");}\n' > /tmp/hello.d; \
-    ldc2 -of=/tmp/hello /tmp/hello.d; \
+    ldc2 -O3 -flto=thin -L-plugin-opt=O3 -of=/tmp/hello /tmp/hello.d; \
     /tmp/hello; \
     floor="$(objdump -T /tmp/hello | grep -oE 'GLIBC_[0-9.]+' | sed 's/GLIBC_//' | sort -V | tail -1)"; \
     echo "toolchain self-test: output glibc floor = $floor (build-host glibc $(getconf GNU_LIBC_VERSION | awk '{print $2}'))"; \
+    dpkg --compare-versions "$floor" le 2.31; \
     rm -f /tmp/hello /tmp/hello.d
 
 WORKDIR /src

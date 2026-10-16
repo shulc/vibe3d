@@ -48,8 +48,8 @@ cd "$REPO_ROOT"
 if [[ "$BUILD" == true ]]; then
     # Compiler defaults to ldc2 (optimized release); override with DC=dmd etc.
     DC="${DC:-ldc2}"
-    echo "[bundle] dub build --config=with-render --build=release --compiler=$DC"
-    dub build --config=with-render --build=release --compiler="$DC"
+    echo "[bundle] dub build --config=with-render --build=release-thinlto --compiler=$DC"
+    dub build --config=with-render --build=release-thinlto --compiler="$DC"
 else
     echo "[bundle] --no-build: reusing existing ./vibe3d"
 fi

@@ -241,6 +241,7 @@
   "_comment-instrumented-targetname": "THE BINARY NAME IS A REAL HAZARD AND `targetName` DOES NOT SOLVE IT -- measured, do not re-attempt. dub.json declares no root targetName, so EVERY buildType writes ./vibe3d, and the nightly perf lane (perf.yaml) runs `run.d frames --no-build` against exactly that path in a workspace deliberately kept unclean (`clean: false`); an instrumented binary left there is read, silently, by the next 03:30 gating run. tools/perf/run.d already carries this trap in its own words (its `NOTE: ./vibe3d is now the perf buildType binary` warnings). The obvious fix -- a per-buildType `targetName` -- was tried here and is INERT: on dub 1.41, `dub describe --build=check` reports `targetName: vibe3d` with the field set, and `dub build --build=check` writes ./vibe3d anyway. The fields were therefore removed rather than left in place looking effective. The working mechanism is explicit and lives in tools/sanitizer/lane.d: `lane.d build <buildType>` builds, immediately renames ./vibe3d to ./vibe3d-<buildType>, and FAILS if ./vibe3d still exists afterwards; `lane.d stage <buildType>` copies it back to ./vibe3d (which run_test.d hardcodes, run_test.d:792) and writes the build stamp; `lane.d teardown` deletes ./vibe3d and fails if it cannot. The workflow's teardown step is `if: always()`.",
   "_comment-instrumented-no-ubsan": "THERE IS NO UBSan HERE, AND THAT IS NOT AN OVERSIGHT. Measured on the shipped LDC 1.42.0 tarball: --fsanitize= accepts address, thread, memory, leak, fuzzer and REJECTS undefined, integer, bounds, float-cast-overflow (`Error: Unrecognized -fsanitize value 'undefined'`). The shipped ldc2 carries no UBSan runtime, so the cheapest phase of the original plan has no mechanism at all. The only route to it is rebuilding the runtime with `ldc-build-runtime` (shipped in the same tarball) -- a separate task, deliberately not attempted here. The one UB finding that motivated UBSan (params.d's float->int cast) is covered instead by a BEHAVIOURAL test that needs no sanitizer at all: tests/test_param_cast_overflow.d.",
   "_comment-assimp-static": "Interchange owns the native static codec dependency and its unchanged build/link settings. Desktop imports codecs through the package dependency.",
+  "_comment-thinlto": "DUB applies the root build type to every target, including dependency archives. ThinLTO is scoped to perf and the explicit desktop Build profiles. DUB drops compiler -O3 during a separate link, so each platform also selects LTO O3 at the linker; Linux's explicit plugin option overrides LDC's generated O0. Ordinary debug/release, DMD, perf-count/perf-unit and sanitizer profiles retain their existing flags.",
   "buildTypes": {
     "profile-fp": {
       "_comment": "Profiling build: forces frame pointers so perf --call-graph fp produces clean stacks without DWARF unwind cost. Use: `dub build --build=profile-fp` then `perf record -F 999 --call-graph fp -p $(pgrep vibe3d) sleep 5`. DMD uses `-gs`; LDC uses `--frame-pointer=all` (its `-gs` equivalent) \u2014 kept separate so the buildType works under either compiler.",
@@ -256,6 +257,20 @@
         "--frame-pointer=all"
       ]
     },
+    "release-thinlto": {
+      "buildOptions": ["releaseMode", "optimize", "inline"],
+      "dflags-ldc": ["-flto=thin"],
+      "dflags-linux-ldc": ["-L-plugin-opt=O3"],
+      "dflags-osx-ldc": ["-L-mllvm", "-L-O3"],
+      "dflags-windows-ldc": ["--link-internally", "-L/opt:lldlto=3"]
+    },
+    "debug-thinlto": {
+      "buildOptions": ["debugMode", "debugInfo"],
+      "dflags-ldc": ["-flto=thin"],
+      "dflags-linux-ldc": ["-L-plugin-opt=O3"],
+      "dflags-osx-ldc": ["-L-mllvm", "-L-O3"],
+      "dflags-windows-ldc": ["--link-internally", "-L/opt:lldlto=3"]
+    },
     "perf": {
       "_comment": "Perf-harness build: optimized + inlined release with PerfProbe instrumentation active. releaseMode strips bounds-checks/asserts off the hot per-vertex loops so the timers measure the tool, not bounds-checking. The default build defines no PerfProbe version, so g_perf calls compile to no-ops. Use: `dub build --build=perf --compiler=ldc2`.",
       "buildOptions": [
@@ -263,6 +278,10 @@
         "optimize",
         "inline"
       ],
+      "dflags-ldc": ["-flto=thin"],
+      "dflags-linux-ldc": ["-L-plugin-opt=O3"],
+      "dflags-osx-ldc": ["-L-mllvm", "-L-O3"],
+      "dflags-windows-ldc": ["--link-internally", "-L/opt:lldlto=3"],
       "versions": [
         "PerfProbe"
       ]
