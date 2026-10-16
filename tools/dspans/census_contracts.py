@@ -25195,7 +25195,7 @@ def read_source_text(path, *, root=None, **kwargs):
         if root is None or path != root / old:
             continue
         destination = root / new
-        before, after = path.exists(), physical_source_path(destination, root=root).exists()
+        before, after = path.exists(), _wave19_inventory_path(destination, root).exists()
         physical = path if before else destination
         text = read_source_text(physical, root=root, **kwargs) if not before else (
             _wave19_import_original(physical, physical.read_text(**kwargs), root))
