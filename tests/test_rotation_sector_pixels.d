@@ -22,6 +22,26 @@ void main() {}
 version (linux) {
 import core.sys.posix.unistd : getpid;
 private alias Rgb = int[3];
+// Task 20263020: finite W/M RGB8 arithmetic classes, independently derived in
+// doc/ci_runner_pixel_oracle_amendment_2026-10-16.md; fixture bytes stay historical.
+private Rgb wideFill(int alpha) pure {
+    Rgb result;
+    foreach (i, channel; [204, 153, 255])
+        result[i] = (channel * alpha + 59 * (255-alpha) + 127) / 255;
+    return result;
+}
+private int mesaProduct(int numerator) pure {
+    return (numerator + (numerator >> 8) + 128) >> 8;
+}
+private Rgb mesaFill(int alpha) pure {
+    Rgb result;
+    foreach (i, channel; [204, 153, 255])
+        result[i] = mesaProduct(channel * alpha) + mesaProduct(59 * (255-alpha));
+    return result;
+}
+private bool quarterFill(Rgb actual) pure {
+    return actual == wideFill(64) || actual == mesaFill(64);
+}
 private string evidence;
 private enum width = 1280, height = 960;
 private struct Frame {
@@ -99,6 +119,23 @@ private void check(string axis, string cell, string wanted,
     }
 }
 unittest {
+    assert(wideFill(64) == [95,83,108] && mesaFill(64) == [95,82,108],
+        "sector finite oracle alpha64 arithmetic controls");
+    assert(wideFill(1) == [60,59,60] && mesaFill(1) == [60,60,60] &&
+        wideFill(128) == [132,106,157] && mesaFill(128) == [131,106,157],
+        "sector finite oracle discriminating arithmetic controls");
+    assert(quarterFill([95,83,108]) && quarterFill([95,82,108]),
+        "sector finite oracle must retain both complete alpha64 tuples");
+    size_t admitted;
+    int soleAlpha = -1;
+    foreach (alpha; 0 .. 256) {
+        if (quarterFill(wideFill(alpha)) || quarterFill(mesaFill(alpha))) {
+            ++admitted;
+            soleAlpha = alpha;
+        }
+    }
+    assert(admitted == 1 && soleAlpha == 64,
+        "sector finite oracle must admit exactly alpha64 across all 256 packed alphas");
     evidence = "";
     const wanted = environment.get("VIBE3D_CELL", "");
     assert(wanted == "" || wanted == "X-fill" || wanted == "X-outline" ||
@@ -174,6 +211,7 @@ unittest {
     writefln("[sector-pixels] OWNERS appPid=%d xPid=%d display=%s port=%d root=%s",
         app.processID, x.processID, env["DISPLAY"], port, root);
     string first;
+    Rgb xFill;
     foreach (axis; ["X", "Z"]) {
         cmd("scene.reset"); cmd("history.clear");
         cmd("viewport.view " ~ (axis == "X" ? "Right" : "Front"));
@@ -184,6 +222,8 @@ unittest {
         int cx = cast(int)(cam["vpX"].integer + cam["width"].integer/2);
         int cy = cast(int)(cam["vpY"].integer + cam["height"].integer/2);
         auto idle = capture(root, env, axis ~ "-idle");
+        assert(idle.at(cx+45, cy-15) == [59,59,59],
+            axis ~ " sector fixed idle background59 prerequisite");
         input(env, ["mousemove", (cx+120).to!string, cy.to!string]);
         input(env, ["mousedown", "1"]);
         input(env, ["mousemove", (cx+104).to!string, (cy-60).to!string]);
@@ -194,6 +234,7 @@ unittest {
         // Opaque guide and quarter-alpha fill are independently captured values.
         // The active ring retains its existing 0.95 GL alpha over the grey face.
         auto fill = drag.at(cx+45, cy-15);
+        if (axis == "X") xFill = fill;
         // Half of the fixed haul vector lies on the terminal radial edge.
         auto edge = drag.at(cx+52, cy-30);
         const guideCount = population(drag, cx, cy, 116, [204,153,255], 0);
@@ -205,8 +246,12 @@ unittest {
         auto measured = format("[sector-pixels] %s measured fill=%s guide=%d active=%d changed=%d",
             axis, fill, guideCount, activeCount, changed);
         evidence ~= measured ~ "\n"; writefln("%s", measured);
-        check(axis, "fill", wanted, { ++executed; assert(near(fill, [95,83,108], 0),
-            format("%s sector quarter-alpha fill: expected [95, 83, 108], got %s", axis, fill)); }, first);
+        check(axis, "fill", wanted, { ++executed;
+            assert(quarterFill(fill),
+                format("%s sector quarter-alpha fill: expected finite W64/M64 tuple, got %s", axis, fill));
+            if (axis == "Z") assert(fill == xFill,
+                format("Z sector fill must equal X exactly: X=%s Z=%s", xFill, fill));
+        }, first);
         check(axis, "outline", wanted, { ++executed; assert(guideCount >= 20 && near(edge, [204,153,255], 0),
             format("%s sector opaque guide outline: expected >=20 purple pixels and radial edge [204, 153, 255], got %d and %s", axis, guideCount, edge)); }, first);
         check(axis, "active-ring", wanted, { ++executed; assert(activeCount >= 40,
