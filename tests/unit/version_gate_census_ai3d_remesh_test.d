@@ -501,7 +501,7 @@ module w16_a_web_inproc_probe;
 import commands.file.load : FileLoad;
 import commands.file.save : FileSave;
 import document : Document;
-import editmode : EditMode;
+import vibe3d.editing.contracts.editmode : EditMode;
 import http_server : HttpServer, InProcessHttpTransport;
 import io.assimp_runtime : initAssimp, isAssimpAvailable, shutdownAssimp;
 import io.scene_export : exportDocumentViaAssimp, exportViaAssimp;
@@ -511,7 +511,7 @@ import mesh : makeCube, Mesh;
 import std.file : exists, remove;
 import std.format : format;
 import std.stdio : writefln;
-import tsan_annotate : parallelForWithCompletion;
+import vibe3d.util.parallel.tsan_annotate : parallelForWithCompletion;
 import ui.action_menu : popupActionNeedsAssimp;
 import view : View;
 // Host-compiled web probe exercises the production native-web refusal path.

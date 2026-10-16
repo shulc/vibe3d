@@ -172,8 +172,9 @@ unittest // W1: the folded frames, the forwarders, the axis switch, the quantum
     assert(currentPhysicalOnlyOccurrences == 1, "workplane current physical role membership");
     foreach (physical; prod) {
         size_t rawOccurrences, codeOccurrences;
-        foreach (s; logicalRaw) if (s.rel == wave15LogicalPath(buildPath(repoRoot, physical.rel))[repoRoot.length + 1 .. $]) ++rawOccurrences;
-        foreach (s; logicalCode) if (s.rel == wave15LogicalPath(buildPath(repoRoot, physical.rel))[repoRoot.length + 1 .. $]) ++codeOccurrences;
+        const logicalRelative = wave15LogicalPath(buildPath(repoRoot, physical.rel))[repoRoot.length + 1 .. $];
+        foreach (s; logicalRaw) if (s.rel == logicalRelative) ++rawOccurrences;
+        foreach (s; logicalCode) if (s.rel == logicalRelative) ++codeOccurrences;
         if (physical.rel == currentPhysicalOnly)
             assert(rawOccurrences == 0 && codeOccurrences == 0,
                    "workplane current physical role must not invent an old logical source");

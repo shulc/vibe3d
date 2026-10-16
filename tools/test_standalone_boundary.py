@@ -151,6 +151,45 @@ class BoundaryControls(unittest.TestCase):
                     physical.unlink()
                     recipe.unlink()
 
+    def test_current_support_runtime_identities(self):
+        # Independently frozen D1 enabled cells plus the unchanged math pilot.
+        owners = ('math', 'edit-contracts', 'interaction-data', 'json-number', 'log', 'mesh-contracts', 'parallel', 'plane-bytes', 'profiling', 'screen-buckets', 'spatial', 'param-schema', 'mesh-change')
+        enabled = {
+            'vibe3d.editing.contracts.tests.unit.seltype_test',
+            'vibe3d.editing.interaction.data.tests.unit.ai.advisor_test',
+            'vibe3d.editing.interaction.data.tests.unit.ai.debug_trace_test',
+            'vibe3d.editing.interaction.data.tests.unit.ai.interaction_test',
+            'vibe3d.editing.params.argstring',
+            'vibe3d.editing.params.tests.unit.argstring_test',
+            'vibe3d.editing.params.tests.unit.param_cast_overflow_test',
+            'vibe3d.editing.params.tests.unit.params_test',
+            'vibe3d.mesh.change.mesh_dirty',
+            'vibe3d.mesh.contracts.mesh_corner_maps',
+            'vibe3d.mesh.contracts.tests.unit.mesh_plane_types_test',
+            'vibe3d.util.json_number.tests.unit.json_num_test',
+            'vibe3d.util.log.log',
+            'vibe3d.util.math.math_geometry',
+            'vibe3d.util.math.math_quaternion',
+            'vibe3d.util.math.tests.unit.math_test',
+            'vibe3d.util.plane_bytes.plane_bytes',
+            'vibe3d.util.screen_buckets.screen_buckets',
+            'vibe3d.util.spatial.spatial',
+            'vibe3d.util.spatial.tests.unit.spatial_test',
+            'vibe3d.util.spatial.trackball',
+        }
+        self.assertEqual(len(enabled), 21)
+        modules = {support.compiler_module(path) for owner in owners
+                   for field in ('sources', 'testSources', 'testHelpers', 'transitionalSources')
+                   for path in support.SPECS[owner].get(field, []) if path.endswith('.d')}
+        self.assertEqual(modules & support.ENABLED_MODULES, enabled,
+                         'D1 independently frozen enabled module identity')
+        output = ''.join('PKG-MODULE name=' + name + ' unittest='
+                         + str(int(name in enabled)) + '\n' for name in sorted(modules))
+        output += '21 modules passed unittests\n'
+        for owner in owners:
+            with self.subTest(owner=owner):
+                support.validate_runtime(output, owner)
+
     def test_current_support_raw_tree(self):
         actual = Path(__file__).resolve().parents[1]
         self.assertEqual(len(support.SPECS), 55)

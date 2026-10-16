@@ -14,6 +14,7 @@ unittest {
             "import sys;sys.path.insert(0,sys.argv[1]+'/tools');"
             ~ "import test_standalone_boundary as t;"
             ~ "t.BoundaryControls('test_current_support_raw_tree').test_current_support_raw_tree();"
+            ~ "t.BoundaryControls('test_current_support_runtime_identities').test_current_support_runtime_identities();"
             ~ "print('PKG-RAW-CONTROLS owners=55')", repoRoot]);
         assert(raw.status == 0 && raw.output.lineSplitter.canFind("PKG-RAW-CONTROLS owners=55"),
             "support actual raw-tree controls: " ~ raw.output);

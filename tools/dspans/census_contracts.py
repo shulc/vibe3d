@@ -6023,14 +6023,6 @@ _WAVE19_CLIENT_IMPORTS = {'packages/ai-advisor/source/ai/element_candidates.d': 
                                                    'vibe3d.mesh.change.change_bus',
                                                    'change_bus',
                                                    'mesh-change'),),
- 'tests/unit/display_refresh_mask_boundary_test.d': ((6425,
-                                                      'mesh_dirty = vibe3d.mesh.change.mesh_dirty',
-                                                      'mesh_dirty',
-                                                      'mesh-change'),
-                                                     (8795,
-                                                      'vibe3d.mesh.change.mesh_dirty',
-                                                      'mesh_dirty',
-                                                      'mesh-change')),
  'tests/unit/display_state_test.d': ((22156,
                                       'vibe3d.editing.contracts.editmode',
                                       'editmode',
@@ -7326,8 +7318,8 @@ def _wave19_coordinate(path, root):
 def _wave19_import_original(path, text, root):
     if root is None or not path.is_relative_to(root):
         return text
-    valid = (len(_WAVE19_CLIENT_IMPORTS) == 792
-             and sum(map(len, _WAVE19_CLIENT_IMPORTS.values())) == 1945)
+    valid = (len(_WAVE19_CLIENT_IMPORTS) == 791
+             and sum(map(len, _WAVE19_CLIENT_IMPORTS.values())) == 1943)
     _source_validity.append(valid)
     if not valid:
         raise ValueError('Wave19 frozen client/import coordinate population')

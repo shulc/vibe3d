@@ -148,6 +148,7 @@ for invalid in (stat_original, stat_physical[:407] + stat_header + stat_physical
         raise SystemExit("prepared-protocol stat missing/duplicate/wrong-body input must be refused")
 stat_inverse_control(stat_physical, stat_original, True)
 editor_physical = (root / "source/editor_app.d").read_bytes()
+editor_current = editor_physical
 editor_physical = census_contracts._wave19_import_original(root / "source/editor_app.d", editor_physical.decode(), root).encode()
 first = census_contracts.source_input_start()
 editor_original = census_contracts._restore_source_text("source/editor_app.d", editor_physical.decode(), root).encode()
@@ -157,6 +158,9 @@ if (len(editor_physical) != 52269 or len(editor_original) != 48220
         or not census_contracts.source_inputs_intact(first)):
     raise SystemExit("prepared-protocol editor complete inverse control")
 editor_wrong_body = (b" " if editor_physical[:1] != b" " else b"\n") + editor_physical[1:]
+editor_wrong_current = (b" " if editor_current[:1] != b" " else b"\n") + editor_current[1:]
+if census_contracts._wave19_import_original(root / "source/editor_app.d", editor_wrong_current.decode(), root).encode() != editor_wrong_body:
+    raise SystemExit("prepared-protocol current wrong-body fixture retains only approved import tokens")
 first = census_contracts.source_input_start()
 if (census_contracts._restore_source_text("source/editor_app.d", editor_wrong_body.decode(), root)
         or census_contracts._source_validity[first] or census_contracts.source_inputs_intact(first)):
@@ -222,7 +226,7 @@ with tempfile.TemporaryDirectory(prefix="protocol-owners-") as scratch:
         raise SystemExit(f"prepared-protocol restored complete baseline: {got!r}")
     carrier = partial / "source/editor_app.d"
     carrier.unlink()
-    carrier.write_bytes(editor_wrong_body)
+    carrier.write_bytes(editor_wrong_current)
     got = census_contracts.production_lexer_census(partial)
     if not any("dspans lexer diagnostics on tree files" in message for message in got):
         raise SystemExit(f"prepared-protocol complete tree wrong-body refusal: {got!r}")

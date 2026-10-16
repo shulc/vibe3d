@@ -3768,7 +3768,7 @@ unittest { // Wave19 D1: frozen real-row bijection and each complete selected ow
         // Exercise every selected actual root/carrier, independent of the scratch fixture.
         foreach (row; wave19Modules) {
             if (row.owner != owner.name) continue;
-            const logical = buildPath(repoRoot, row.oldPath);
+            const logical = wave15Normalize(buildPath(repoRoot, row.oldPath));
             const physical = wave19PhysicalPath(logical);
             assert(wave19LogicalPath(physical) == logical
                 && wave19MathLogicalText(std.file.readText(physical)).canFind("module " ~ row.oldModule ~ ";"),

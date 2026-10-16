@@ -162,7 +162,7 @@ unittest // the production scan and its fixtures use the same classifier
         "the scanner must count the policy definition independently of roles");
 
     const importForms = scanDisplayRefreshRole(q{
-        public static import dirty = mesh_dirty = vibe3d.mesh.change.mesh_dirty :
+        public static import dirty = mesh_dirty :
             LocalEpoch = DisplayEpochMask;
         void localImport() {
             import delta = mesh_edit_delta : LocalMask = DisplayRefreshMask;
@@ -216,7 +216,7 @@ unittest // the production scan and its fixtures use the same classifier
         enum classification = DisplayRefreshMask;
     });
     const aliasViolation = scanDisplayRefreshRole(q{
-        import vibe3d.mesh.change.mesh_dirty : DisplayEpochMask;
+        import mesh_dirty : DisplayEpochMask;
         import display_sync;
         enum classification = DisplayEpochMask;
     });

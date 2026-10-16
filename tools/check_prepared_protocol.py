@@ -1320,32 +1320,45 @@ for row in converted_rows:
 def mutation_rejected(edit, expected_message, expected=WRITER_MANIFEST, inspect=None):
     with tempfile.TemporaryDirectory(prefix="vibe3d-writer-mut-") as td:
         mutant_root = Path(td)
-        # Task 20263050: module identity also reads math's selected recipe.
-        for relative in ("util/math/dub.json", "libraries/util/math/dub.json"):
-            if (ROOT / relative).is_file():
-                destination = mutant_root / relative
-                destination.parent.mkdir(parents=True, exist_ok=True)
-                shutil.copy2(ROOT / relative, destination)
+        # Projected fixture sources retain D1's original import identities;
+        # their recipes must select that same state (math is already qualified).
+        from census_contracts import _WAVE19_OWNERS
+        for owner, old_root, new_root in _WAVE19_OWNERS:
+            selected = next(ROOT / relative / "dub.json"
+                            for relative in (old_root, new_root)
+                            if (ROOT / relative / "dub.json").is_file())
+            relative = selected.relative_to(ROOT) if owner == "math" else Path(old_root) / "dub.json"
+            destination = mutant_root / relative
+            destination.parent.mkdir(parents=True, exist_ok=True)
+            recipe = json.loads(selected.read_text())
+            if owner != "math":
+                recipe["name"] = "vibe3d-" + owner
+            destination.write_text(json.dumps(recipe))
+        def copy_current(source, destination):
+            from census_contracts import _wave19_import_original
+            destination.write_text(_wave19_import_original(source, source.read_text(), ROOT))
         for path in logical_source_paths(ROOT / "source/tools", "*.d"):
             destination = mutant_root / path.relative_to(ROOT)
             destination.parent.mkdir(parents=True, exist_ok=True)
             destination.write_text(read_source_text(path))
-        shutil.copytree(ROOT / "packages/tool-state/source/tools", mutant_root / "packages/tool-state/source/tools")
-        shutil.copytree(ROOT / "packages/transform-ops/source/tools", mutant_root / "packages/transform-ops/source/tools")
-        shutil.copytree(ROOT / "packages/creation-ops/source/tools", mutant_root / "packages/creation-ops/source/tools")
-        shutil.copytree(ROOT / "packages/alignment-ops/source/tools", mutant_root / "packages/alignment-ops/source/tools")
+        for relative in ("packages/tool-state/source/tools", "packages/transform-ops/source/tools",
+                         "packages/creation-ops/source/tools", "packages/alignment-ops/source/tools"):
+            for source in (ROOT / relative).rglob("*.d"):
+                destination = mutant_root / source.relative_to(ROOT)
+                destination.parent.mkdir(parents=True, exist_ok=True)
+                copy_current(source, destination)
         for name in ("tool.d", "tool_presets.d"):
             (mutant_root / "source" / name).write_text(
                 read_source_text(ROOT / "source" / name))
         for name in writer_registration_source_names:
-            shutil.copy2(ROOT / "source" / name,
+            copy_current(ROOT / "source" / name,
                          mutant_root / "source" / name)
         transition_path = module_path(
             ROOT, "prepared_tool_transition", "prepared.tool_transition")
         transition_relative = transition_path.relative_to(ROOT)
         (mutant_root / transition_relative.parent).mkdir(parents=True, exist_ok=True)
         (mutant_root / transition_relative).write_text(read_source_text(transition_path))
-        shutil.copy2(ROOT / "source/app.d", mutant_root / "source/app.d")
+        copy_current(ROOT / "source/app.d", mutant_root / "source/app.d")
         (mutant_root / "source/commands/tool").mkdir(parents=True)
         (mutant_root / "source/commands/tool/set.d").write_text(
             read_source_text(ROOT / "source/commands/tool/set.d"))
@@ -1362,7 +1375,7 @@ def mutation_rejected(edit, expected_message, expected=WRITER_MANIFEST, inspect=
                 'packages/command-runtime/tests/source/tests/unit/record_observer_hub_source_public_test.d', 'packages/editor-commands/tests/source/tests/unit/commands/mesh/edge_crease_source_public_test.d', 'packages/editor-commands/tests/source/tests/unit/commands/mesh/remove_source_public_test.d', 'packages/editor-commands/tests/source/tests/unit/commands/mesh/symmetrize_source_public_test.d', 'packages/editor-commands/tests/source/tests/unit/commands/mesh/vertex_set_source_public_test.d', 'packages/editor-commands/tests/source/tests/unit/commands/select/boundary_source_public_test.d', 'packages/editor-commands/tests/source/tests/unit/commands/select/by_stat_source_public_test.d', 'packages/editor-commands/tests/source/tests/unit/commands/select/by_tag_source_public_test.d', 'packages/editor-commands/tests/source/tests/unit/commands/select/type_from_source_public_test.d', 'packages/selection-model/tests/source/tests/unit/selection_product_source_public_test.d'):
             destination = mutant_root / relative
             destination.parent.mkdir(parents=True, exist_ok=True)
-            shutil.copy2(ROOT / relative, destination)
+            copy_current(ROOT / relative, destination)
         edit(mutant_root)
         try:
             actual = scan_writer_graph(mutant_root)
