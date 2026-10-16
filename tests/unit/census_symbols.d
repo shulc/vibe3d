@@ -5013,9 +5013,10 @@ public Wave15Entry[] wave15DirEntries(string directory, string pattern,
     // inputs are never directory members. Historical destinations below keep
     // their original single ownership through wave15Moves.
     foreach (row; wave19Modules) {
-        if (row.owner != "desktop" || !wave19RowMoved(base, row)) continue;
+        if (row.owner != "desktop") continue;
         const logical = buildPath(base, row.oldPath);
         if (!logical.startsWith(normal ~ "/")) continue;
+        if (!wave19RowMoved(base, row)) continue;
         const relative = relativePath(logical, normal);
         if (span == SpanMode.shallow && relative.canFind("/")) continue;
         if (!globMatch(baseName(logical), pattern)) continue;

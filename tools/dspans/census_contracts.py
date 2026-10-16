@@ -232,8 +232,8 @@ def _restore_source_text(origin, text, root):
     for fragment in SOURCE_FRAGMENTS[-3:]:
         if fragment['source'] != origin:
             continue
-        carrier = root / fragment['destination']
-        raw = (_wave19_import_original(carrier, carrier.read_text(), root).encode('utf-8')
+        carrier = _wave19_inventory_path(root / fragment['destination'], root)
+        raw = (read_source_text(carrier, root=root).encode('utf-8')
                if carrier.is_file() else b'')
         if origin == 'source/ui/availability.d':
             valid = (len(raw) == 4074 and hashlib.sha256(raw).hexdigest() ==
@@ -25237,9 +25237,9 @@ def read_source_text(path, *, root=None, **kwargs):
             if before:
                 original, matches = _original_fragment(text, fragment)
             else:
-                carrier = root / fragment['destination']
+                carrier = _wave19_inventory_path(root / fragment['destination'], root)
                 original, matches = (_original_fragment(
-                    _wave19_import_original(carrier, carrier.read_text(**kwargs), root), fragment)
+                    read_source_text(carrier, root=root, **kwargs), fragment)
                     if carrier.exists() else ('', 0))
                 if fragment['destination'] != new:
                     text += '\n' + original
