@@ -1230,6 +1230,14 @@ unittest
         return;
     }
 
+    const directCurrent = scanWorkingTree(censusRepoRoot);
+    string[] meshInputs;
+    foreach (input; directCurrent)
+        if (input.path.startsWith("packages/mesh/source/")) meshInputs ~= input.path;
+    assert(meshInputs == ["packages/mesh/source/mesh.d", "packages/mesh/source/mesh_morph.d",
+                          "packages/mesh/source/mesh_planes.d", "packages/mesh/source/mesh_selsets.d"],
+        "census direct scanner default retains exactly the four selected real mesh inputs");
+
     if (v.degraded)
         stderr.writefln("census gate: DEGRADED — the only baseline is HEAD itself " ~
                         "(%d blocks / %d asserts), so the tree is being compared against " ~

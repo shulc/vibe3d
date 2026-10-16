@@ -398,7 +398,9 @@ class BoundaryControls(unittest.TestCase):
  'mesh-preview',
  'mesh-snapshot',
  'pipe-contracts')
-        enabled = {'vibe3d.documents.image_codec.tests.unit.image_codec_population_test',
+        enabled = {'tests.unit.fixtures',
+ 'tests.unit.mesh_by_value_gate',
+ 'vibe3d.documents.image_codec.tests.unit.image_codec_population_test',
  'vibe3d.documents.image_codec.tests.unit.io.image_decode_source_cells_test',
  'vibe3d.documents.image_codec.tests.unit.io.image_decode_test',
  'vibe3d.documents.model.tests.unit.document_test',
@@ -485,7 +487,7 @@ class BoundaryControls(unittest.TestCase):
  'vibe3d.viewport.camera.tests.unit.camera_model_population_test',
  'vibe3d.viewport.camera.tests.unit.view_source_cells_test',
  'vibe3d.viewport.camera.tests.unit.view_test'}
-        self.assertEqual(len(enabled), 87)
+        self.assertEqual(len(enabled), 89)
         self.assertEqual(support.compiler_module('../../../../tests/unit/fixtures.d'),
                          'tests.unit.fixtures')
         self.assertEqual(support.compiler_module('../../../../tests/unit/mesh_by_value_gate.d'),
@@ -497,7 +499,7 @@ class BoundaryControls(unittest.TestCase):
                          'D1+D2 independently frozen enabled module identity')
         output = ''.join('PKG-MODULE name=' + name + ' unittest='
                          + str(int(name in enabled)) + '\n' for name in sorted(modules))
-        output += '87 modules passed unittests\n'
+        output += '89 modules passed unittests\n'
         output += 'MeshSnapshotFixtures: adjacency restore and keep-selection cells passed\n'
         for owner in owners:
             with self.subTest(owner=owner):
