@@ -300,7 +300,7 @@ with tempfile.TemporaryDirectory(prefix="protocol-owners-") as scratch:
         raise SystemExit(f"prepared-protocol restored complete baseline: {got!r}")
     carrier = partial / editor_path.relative_to(root)
     carrier.unlink()
-    carrier.write_bytes(editor_wrong_current)
+    carrier.write_bytes(editor_current + b"\n/*")
     got = census_contracts.production_lexer_census(partial)
     if not any("dspans lexer diagnostics on tree files" in message for message in got):
         raise SystemExit(f"prepared-protocol complete tree wrong-body refusal: {got!r}")
