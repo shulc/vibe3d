@@ -13,33 +13,44 @@ import ai3d.stage_artifact : stageArtifact, probeHealthCheck, Ai3dProgress,
 import ai3d.job_controller;
 
 unittest {
-    // State machine smoke test — no real network (invalid worker URL means
-    // stageArtifact/probeHealthCheck fail fast, offline). Exercises: busy()
-    // during start(), single-in-flight rejection, and that both a health
-    // probe and a job worker eventually post a terminal-ish event, all
-    // drainable and none touching any Document/Mesh (this class holds no
-    // such reference at all, by construction).
+    // Task 20263020: the accepted owned peer holds real health I/O in flight
+    // until the single-in-flight assertion; evidence: doc/ci_runner_failures_plan_2026-10-16.md.
+    import std.conv : to;
+    import std.socket : TcpSocket, InternetAddress, Socket, SocketSet;
+    auto listener = new TcpSocket();
+    listener.bind(new InternetAddress("127.0.0.1", cast(ushort) 0));
+    listener.listen(1);
+    scope(exit) listener.close();
+    const url = "http://127.0.0.1:" ~ (cast(InternetAddress) listener.localAddress).port.to!string;
     auto c = new Ai3dJobController();
+    scope(exit) { c.stop(); c.join(15_000); }
     assert(!c.busy());
 
-    auto started = c.start("/nonexistent.png", "http://127.0.0.1:1", 500);
+    auto started = c.start("/nonexistent.png", url, 500);
     assert(started);
-    assert(c.busy());
-    assert(!c.start("/nonexistent.png", "http://127.0.0.1:1", 500),
+    auto ready = new SocketSet();
+    ready.add(listener);
+    assert(Socket.select(ready, null, null, 5.seconds) == 1,
+        "worker must connect to the owned health listener");
+    auto peer = listener.accept();
+    scope(exit) peer.close();
+    assert(c.busy(), "accepted peer must hold worker busy");
+    assert(!c.start("/nonexistent.png", url, 500),
            "single-in-flight: a second start() must no-op while busy");
 
-    // Wait for the worker to finish (invalid URL fails immediately).
+    peer.close();
+    // Releasing the owned peer must release the worker.
     auto deadline = MonoTime.currTime + 5.seconds;
     while (c.busy() && MonoTime.currTime < deadline)
         Thread.sleep(5.msecs);
-    assert(!c.busy(), "worker should finish quickly against an unreachable host");
+    assert(!c.busy(), "worker should finish after the owned peer closes");
 
     bool sawTerminalOrError;
     c.drain((ref const Ai3dEvent e) {
         if (e.kind == Ai3dEventKind.terminal || e.kind == Ai3dEventKind.transportError)
             sawTerminalOrError = true;
     });
-    assert(sawTerminalOrError);
+    assert(sawTerminalOrError, "released worker must enqueue terminal or transport error");
 
     assert(c.join(1_000));
 }
@@ -61,7 +72,7 @@ unittest {
     // instantly with no route rather than a slow connect timeout).
     import std.conv : to;
     import std.datetime.stopwatch : StopWatch, AutoStart;
-    import std.socket : TcpSocket, InternetAddress, SocketOptionLevel, SocketOption;
+    import std.socket : TcpSocket, InternetAddress, SocketOptionLevel, SocketOption, Socket, SocketSet;
 
     auto listener = new TcpSocket();
     listener.setOption(SocketOptionLevel.SOCKET, SocketOption.REUSEADDR, true);
@@ -71,11 +82,16 @@ unittest {
     scope(exit) listener.close();
 
     auto c = new Ai3dJobController();
+    scope(exit) { c.stop(); c.join(15_000); }
     assert(c.start("/nonexistent.png", "http://127.0.0.1:" ~ port.to!string, 500));
 
     // Accept the real health-check connection before timing join. Keeping
     // this peer open makes the worker provably in flight; closing it after
     // the timeout contract is observed releases cleanup immediately.
+    auto ready = new SocketSet();
+    ready.add(listener);
+    assert(Socket.select(ready, null, null, 5.seconds) == 1,
+        "join fixture must accept a real health connection within its budget");
     auto peer = listener.accept();
     bool peerClosed;
     void closePeer() { if (!peerClosed) { peerClosed = true; peer.close(); } }

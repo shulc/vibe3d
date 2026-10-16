@@ -151,27 +151,34 @@ backing_paths = {census_contracts.physical_source_path(path, root=root)
                  for inputs in owner_inputs.values() for path in inputs}
 backing_paths.update(root / fragment["destination"]
                      for fragment in census_contracts.SOURCE_FRAGMENTS)
-for owner, floor in floors.items():
-    population = owners[owner]
-    inputs = owner_inputs[owner]
-    # The omission population is independently frozen, not derived
-    # from the reader or the fixture it will judge.
-    if len(inputs) != population:
-        raise SystemExit(f"prepared-protocol omission input changed: {owner}")
-    with tempfile.TemporaryDirectory(prefix="protocol-owner-") as scratch:
-        partial = Path(scratch)
-        for path in sorted(backing_paths):
-            link = partial / path.relative_to(root)
-            link.parent.mkdir(parents=True, exist_ok=True)
-            link.symlink_to(path)
-        got = census_contracts.production_lexer_census(partial)
-        if got:
-            raise SystemExit(f"prepared-protocol synthetic owner baseline {owner}: {got!r}")
+with tempfile.TemporaryDirectory(prefix="protocol-owners-") as scratch:
+    partial = Path(scratch)
+    for path in sorted(backing_paths):
+        link = partial / path.relative_to(root)
+        link.parent.mkdir(parents=True, exist_ok=True)
+        link.symlink_to(path)
+    got = census_contracts.production_lexer_census(partial)
+    if got:
+        raise SystemExit(f"prepared-protocol synthetic complete baseline: {got!r}")
+    for owner, floor in floors.items():
+        population = owners[owner]
+        inputs = owner_inputs[owner]
+        # The omission population is independently frozen, not derived
+        # from the reader or the fixture it will judge.
+        if len(inputs) != population:
+            raise SystemExit(f"prepared-protocol omission input changed: {owner}")
         omitted = population - floor + 1
         for path in inputs[:omitted]:
             backing = census_contracts.physical_source_path(path, root=root)
             (partial / backing.relative_to(root)).unlink()
-        got = census_contracts.production_lexer_census(partial)
+        def no_parse(*args, **kwargs):
+            raise SystemExit("prepared-protocol incomplete inventory must refuse before parsing")
+        original_spans = census_contracts.dspans_client.spans
+        census_contracts.dspans_client.spans = no_parse
+        try:
+            got = census_contracts.production_lexer_census(partial)
+        finally:
+            census_contracts.dspans_client.spans = original_spans
         complement = f"dspans production complement read {608 - omitted} files; floor 608"
         owner_refusal = f"dspans lexer census owner {owner} read {floor - 1} files; floor {floor} (materialized 2026-10-10)"
         if complement not in got:
@@ -181,6 +188,22 @@ for owner, floor in floors.items():
         if got != [complement, owner_refusal]:
             raise SystemExit(f"prepared-protocol omission diagnostics {owner}: got {got!r}, want {[complement, owner_refusal]!r}")
         print(f"prepared-protocol omission {owner}: COMPLEMENT and OWNER refused independently", flush=True)
+        for path in inputs[:omitted]:
+            backing = census_contracts.physical_source_path(path, root=root)
+            (partial / backing.relative_to(root)).symlink_to(backing)
+        if any(not (partial / path.relative_to(root)).is_file() for path in backing_paths):
+            raise SystemExit(f"prepared-protocol owner restoration {owner}")
+    got = census_contracts.production_lexer_census(partial)
+    if got:
+        raise SystemExit(f"prepared-protocol restored complete baseline: {got!r}")
+    carrier = partial / "source/editor_app.d"
+    carrier.unlink()
+    carrier.write_bytes(editor_wrong_body)
+    got = census_contracts.production_lexer_census(partial)
+    if not any("dspans lexer diagnostics on tree files" in message for message in got):
+        raise SystemExit(f"prepared-protocol complete tree wrong-body refusal: {got!r}")
+    carrier.unlink()
+    carrier.symlink_to(root / "source/editor_app.d")
 PY";
     const scratch = buildPath(tempDir(), format("protocol-census-%d", thisProcessID));
     mkdirRecurse(scratch);

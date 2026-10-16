@@ -6,7 +6,7 @@ import std.conv : to;
 import std.digest.sha : sha256Of;
 import std.digest : toHexString;
 import std.file : read, readText, write, exists, mkdirRecurse, rmdirRecurse,
-    dirEntries, SpanMode, readLink, symlink;
+    dirEntries, SpanMode, readLink, symlink, remove;
 import std.json : JSONValue, JSONType, parseJSON;
 import std.path : buildPath, dirName, baseName;
 import std.process : execute, spawnProcess, wait, kill, tryWait, Pid, Config,
@@ -14,7 +14,13 @@ import std.process : execute, spawnProcess, wait, kill, tryWait, Pid, Config,
 import std.stdio : File, stdin, writeln;
 import std.string : split, strip, toLower;
 import core.sys.posix.signal : SIGKILL;
-import core.sys.posix.unistd : link;
+import core.sys.posix.unistd : link, close;
+import core.sys.posix.sys.stat : mkfifo;
+import core.sys.posix.fcntl : open, O_WRONLY, O_NONBLOCK, fcntl, F_SETFL;
+import core.stdc.errno : errno, ENXIO, EINTR;
+import core.thread : Thread;
+import core.time : MonoTime, msecs, seconds;
+import std.exception : enforce;
 import std.string : toStringz;
 
 void main() {}
@@ -156,6 +162,77 @@ private void parity(JSONValue cli, JSONValue desktop, JSONValue previousCli, JSO
     }
 }
 
+// Task 20263020: loaded diagnostic plus an open, EOF-withheld commands FIFO
+// keeps the real host alive for /proc custody; doc/ci_runner_failures_plan_2026-10-16.md.
+private int awaitLoaded(Pid pid, ref bool reaped, string diagnostics, string fifo,
+        int budgetMs = 5_000) {
+    const deadline = MonoTime.currTime + budgetMs.msecs;
+    int writer = -1;
+    scope(failure) { if (writer >= 0) close(writer); }
+    while (MonoTime.currTime < deadline) {
+        const state = tryWait(pid);
+        if (state.terminated) {
+            reaped = true;
+            enforce(false, "CLI readiness: child exited before loaded/FIFO, status=" ~ state.status.to!string);
+        }
+        if (writer < 0) {
+            writer = open(fifo.toStringz, O_WRONLY | O_NONBLOCK);
+            enforce(writer >= 0 || errno == ENXIO || errno == EINTR,
+                "CLI readiness: commands FIFO open failed");
+        }
+        if (writer >= 0 && exists(diagnostics)) {
+            const text = readText(diagnostics);
+            // A concurrent writer may have only emitted part of the first JSONL row.
+            if (text.canFind("\n")) {
+                auto rows = jsonRows(text);
+                enforce(rows.length == 1 && rows[0]["phase"].str == "loaded",
+                    "CLI readiness: exact loaded row before commands");
+                enforce(fcntl(writer, F_SETFL, 0) == 0, "CLI readiness: commands FIFO blocking mode");
+                return writer;
+            }
+        }
+        Thread.sleep(5.msecs);
+    }
+    enforce(false, "CLI readiness: deadline before loaded/FIFO");
+    return -1;
+}
+
+private bool mappingContains(string mappings, string name) {
+    return mappings.toLower.canFind(name);
+}
+
+private void readinessRefusals(string root) {
+    foreach (name; ["sdl", "libgl", "libegl", "imgui", "libx11", "nfde", "libxcb", "wayland"]) {
+        assert(mappingContains("/usr/lib/" ~ name ~ ".so", name),
+            "CLI process: populated forbidden mapping fixture " ~ name);
+        assert(!mappingContains("/usr/lib/libc.so", name),
+            "CLI process: ordinary mapping fixture " ~ name);
+    }
+    foreach (mode; ["exit", "never-ready"]) {
+        const fifo = buildPath(root, "readiness-" ~ mode ~ ".fifo");
+        const diagnostic = buildPath(root, "readiness-" ~ mode ~ ".jsonl");
+        enforce(mkfifo(fifo.toStringz, 0x180) == 0);
+        scope(exit) remove(fifo);
+        // Opening the peer without emitting loaded must never grant observation.
+        auto child = spawnProcess(["python3", "-c",
+            "import sys; f=open(sys.argv[1]) if sys.argv[2]=='never-ready' else None; "
+            ~ "sys.exit(7) if f is None else f.read()", fifo, mode]);
+        bool reaped, refused;
+        scope(exit) if (!reaped) { kill(child, SIGKILL); wait(child); }
+        const started = MonoTime.currTime;
+        try {
+            const writer = awaitLoaded(child, reaped, diagnostic, fifo, 200);
+            close(writer);
+        } catch (Exception error) {
+            refused = error.msg.canFind("CLI readiness: child exited")
+                || error.msg.canFind("CLI readiness: deadline");
+        }
+        assert(refused, "CLI readiness: startup exit and withheld loaded must refuse observation");
+        assert((MonoTime.currTime - started) < 2.seconds,
+            "CLI readiness: startup refusal must be bounded");
+    }
+}
+
 private struct Run { int status; JSONValue[] states, outcomes; string error; }
 private Run runCli(string root, string input, string script, string output, string diagnostics = "", bool observeProcess = false, bool readDiagnostics = true) {
     auto outLog = buildPath(root, "stdout.jsonl"), errLog = buildPath(root, "stderr.log");
@@ -165,6 +242,15 @@ private Run runCli(string root, string input, string script, string output, stri
     if (diagnostics.length) argv ~= ["--state-output", diagnostics];
     auto env = environment.toAA;
     foreach (key; ["DISPLAY", "WAYLAND_DISPLAY", "SDL_VIDEODRIVER"]) env.remove(key);
+    string fifo, payload;
+    if (observeProcess) {
+        enforce(diagnostics.length > 0, "CLI readiness: diagnostics required");
+        payload = readText(script);
+        fifo = script ~ ".fifo";
+        enforce(mkfifo(fifo.toStringz, 0x180) == 0, "CLI readiness: create owned commands FIFO");
+        argv[5] = fifo;
+    }
+    scope(exit) { if (fifo.length && exists(fifo)) remove(fifo); }
     auto pid = spawnProcess(argv, stdin, outFile, errFile, env, Config.newEnv, repo);
     bool reaped;
     void stopOwned() {
@@ -175,20 +261,24 @@ private Run runCli(string root, string input, string script, string output, stri
     }
     scope(exit) stopOwned();
     if (observeProcess) {
+        auto writer = File();
+        writer.fdopen(awaitLoaded(pid, reaped, diagnostics, fifo), "w");
+        scope(exit) writer.close();
         auto proc = "/proc/" ~ pid.processID.to!string;
         assert(readLink(proc ~ "/exe") == argv[0], "CLI process: actual executable is current checkout");
         assert(digest(proc ~ "/exe") == binaryHash, "CLI process: actual executable hash equals fresh binary");
         auto mappings = readText(proc ~ "/maps");
         assert(mappings.length > 100 && mappings.canFind("libc.so"), "CLI process: populated live mappings");
         foreach (name; ["sdl", "libgl", "libegl", "imgui", "libx11", "nfde", "libxcb", "wayland"])
-            assert(!mappings.toLower.canFind(name), "CLI process: forbidden mapping " ~ name);
+            assert(!mappingContains(mappings, name), "CLI process: forbidden mapping " ~ name);
         auto liveEnvironment = readText(proc ~ "/environ");
         foreach (key; ["DISPLAY=", "WAYLAND_DISPLAY=", "SDL_VIDEODRIVER="])
             assert(!liveEnvironment.canFind(key), "CLI process: display variable inherited " ~ key);
         auto cmdline = readText(proc ~ "/cmdline");
-        assert(cmdline.canFind("--state-output") && cmdline.canFind(script), "CLI process: real diagnostic argv");
+        assert(cmdline.canFind("--state-output") && cmdline.canFind(fifo), "CLI process: real diagnostic argv");
         writeln("CLI-PROCESS source=", sourcePin, " binary-sha256=", binaryHash,
             " exe=", readLink(proc ~ "/exe"), " maps-bytes=", mappings.length, " display=unset");
+        writer.rawWrite(payload);
     }
     Run result;
     result.status = wait(pid); reaped = true;
@@ -368,6 +458,7 @@ unittest {
         assert(!dynamic.output.toLower.canFind(name), "CLI runtime: forbidden linked library " ~ name);
     auto root = buildPath("/var/tmp", "vibe3d-cli-test-" ~ thisProcessID.to!string);
     mkdirRecurse(root); scope(exit) rmdirRecurse(root);
+    readinessRefusals(root);
     auto doc = fixture(root);
     string[] selectionRows = [
         `{"id":"mesh.select","params":{"mode":"vertices","indices":[6,1]}}`,
@@ -499,8 +590,7 @@ unittest {
     }
     auto unicode = "{\"id\":\"mesh.select\",\"params\":{\"mode\":\"polygons\",\"indices\":[0],\"bogus\":\"a\u2028b\u2029c\u0085d\"}}";
     differential(root, doc, ["", unicode ~ "\r", `{"id":"mesh.triple","params":{"bogus":1}}`], true, ["applied", "applied"]);
-    // A populated real process gives /proc maps/exe/env/argv witnesses while it
-    // runs a populated registered command; no debug pause flag or alternate CLI exists.
+    // Observe the loaded real host with command EOF withheld, then release the unchanged script.
     auto input = buildPath(root, "input.v3d"), script = buildPath(root, "script.jsonl"), output = buildPath(root, "output.v3d");
     write(input, doc.toString);
     string longScript; foreach (_; 0 .. 300) longScript ~= `{"id":"mesh.select","params":{"mode":"polygons","indices":[0]}}` ~ "\n";

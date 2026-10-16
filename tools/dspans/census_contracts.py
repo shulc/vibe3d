@@ -56,6 +56,10 @@ def production_lexer_census(root):
         if count < floor:
             failures.append(f"dspans lexer census owner {owner} read {count} files; "
                             f"floor {floor} (materialized 2026-10-10)")
+    # Task 20263020: incomplete inventory has no trusted parse scope; see
+    # doc/ci_runner_failures_plan_2026-10-16.md. Complete trees retain every check.
+    if failures:
+        return failures
     for path in files:
         rel = path.relative_to(root).as_posix()
         sp = dspans_client.spans(read_source_text(path, root=root), parse=True)

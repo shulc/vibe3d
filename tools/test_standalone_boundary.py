@@ -10,6 +10,8 @@ import shutil
 import subprocess
 import tempfile
 import unittest
+from unittest.mock import patch
+import ci.preflight as preflight
 import check_standalone_boundary as boundary
 import check_package_support_boundary as support
 
@@ -234,13 +236,48 @@ class BoundaryControls(unittest.TestCase):
             finally:
                 path.unlink()
 
+    def test_ci_prerequisite_refusals(self):
+        workflow = (Path(__file__).resolve().parents[1] / '.github/workflows/ci.yaml').read_text()
+        invocation = workflow.index('      run: python3 tools/ci/preflight.py')
+        self.assertLess(workflow.index('>> "$GITHUB_PATH"'), invocation)
+        self.assertLess(invocation, workflow.index("    - name: 'Build'"))
+        def resolved(name):
+            return '/resolved/' + name
+        good = subprocess.CompletedProcess([], 0, 'LDC - the LLVM D compiler (1.42.0)\n', '')
+        with patch.object(preflight.shutil, 'which', side_effect=resolved), patch.object(preflight.subprocess, 'run', return_value=good):
+            with patch.object(preflight.shutil, 'which', side_effect=lambda name: None if name == 'xdotool' else resolved(name)):
+                with self.assertRaisesRegex(RuntimeError, 'missing or not executable: xdotool'):
+                    preflight.main()
+            with patch.object(preflight.shutil, 'which', side_effect=lambda name: None if name == str(preflight.PINNED_LDC) else resolved(name)):
+                with self.assertRaisesRegex(RuntimeError, 'missing or not executable: .*ldc2'):
+                    preflight.main()
+            wrong = subprocess.CompletedProcess([], 0, 'wrong compiler', '')
+            with patch.object(preflight.subprocess, 'run', return_value=wrong):
+                with self.assertRaisesRegex(RuntimeError, 'pinned LDC identity mismatch'):
+                    preflight.main()
+            bad = subprocess.CompletedProcess([], 2, 'concrete stdout', 'concrete stderr')
+            with patch.object(preflight.subprocess, 'run', return_value=bad):
+                with self.assertRaisesRegex(RuntimeError, 'concrete stdout\nconcrete stderr'):
+                    preflight.main()
+
+    def test_ldc_describe_failure_details(self):
+        bad = subprocess.CompletedProcess(['dub', 'describe'], 2, 'describe stdout', 'compiler unavailable stderr')
+        with patch.object(subprocess, 'run', return_value=bad):
+            with self.assertRaises(AssertionError) as failure:
+                self.test_ldc_mesh_ops_archive_flag_scope()
+            self.assertIn('describe stdout', str(failure.exception))
+            self.assertIn('compiler unavailable stderr', str(failure.exception))
+
     def test_ldc_mesh_ops_archive_flag_scope(self):
         compiler = str(Path.home() / '.local/dlang/ldc2-1.42.0-linux-x86_64/bin/ldc2')
         actual = Path(__file__).resolve().parents[1]
         for relative, config in (('packages/command-runtime', 'modeling-noai'), ('packages/application-core', 'modeling-noai'), ('tests/core', 'core')):
             result = subprocess.run(['dub', 'describe', '--root=' + str(actual / relative),
                 '--config=' + config, '--compiler=' + compiler, '--quiet'],
-                text=True, capture_output=True, check=True)
+                text=True, capture_output=True)
+            self.assertEqual(result.returncode, 0,
+                'LDC dub describe failed: ' + repr(result.args) + '\nstdout:\n' + result.stdout
+                + '\nstderr:\n' + result.stderr)
             description = json.loads(result.stdout.replace(str(actual), str(self.project)))
             root = self.project / relative
             boundary.validate_package_settings(description, root, compiler)

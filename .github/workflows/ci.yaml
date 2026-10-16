@@ -72,6 +72,9 @@ jobs:
     - name: Add runner's user-installed Chromium to PATH
       run: echo "$HOME/.local/bin" >> "$GITHUB_PATH"
 
+    - name: Verify required CI tools and pinned compiler
+      run: python3 tools/ci/preflight.py
+
     # task 2040 — a nightly-perf run that never happened reads identically to
     # one that ran and failed: the run list's "latest" entry is just old, and
     # nothing says so on its own. `schedule` cron delivery is GitHub's own
