@@ -15,17 +15,6 @@ import tests.unit.census_symbols : readText = wave15ReadText, wave19MathMoved, w
     enum utilOwners = ["json-number", "log", "math", "parallel", "plane-bytes", "screen-buckets"];
     enum noCarriers = ["log", "parallel", "plane-bytes", "profiling", "screen-buckets", "mesh-change", "mesh-topology", "http-runtime", "platform-file"];
     enum fixtureOnlyVersions = ["edit-contracts", "mesh", "mesh-change", "mesh-contracts", "mesh-edit-log", "mesh-edit-replay", "mesh-snapshot", "mesh-topology"];
-    string[] testHelpers(string owner) {
-        if (owner == "interactive-tools")
-            return moved(owner)
-                ? ["tests/source/vibe3d/editing/tools/interactive/drag_source_helpers.d", "tests/source/vibe3d/editing/tools/interactive/snap_render_source_helpers.d"]
-                : ["tests/source/drag_source_helpers.d", "tests/source/snap_render_source_helpers.d"];
-        if (owner == "viewport-host")
-            return moved(owner)
-                ? ["tests/source/vibe3d/viewport/host/image_plane_source_cells.d"]
-                : ["tests/source/image_plane_source_cells.d"];
-        return [];
-    }
     JSONValue config(JSONValue raw, string name) {
         foreach (candidate; raw["configurations"].array)
             if (candidate["name"].str == name) return candidate;
@@ -43,6 +32,17 @@ import tests.unit.census_symbols : readText = wave15ReadText, wave19MathMoved, w
         return relativePath(wave19MathPhysicalPath(buildPath(root, oldRoot(owner)), root), root);
     }
     bool moved(string owner) { return selectedRoot(owner) != oldRoot(owner); }
+    string[] testHelpers(string owner) {
+        if (owner == "interactive-tools")
+            return moved(owner)
+                ? ["tests/source/vibe3d/editing/tools/interactive/drag_source_helpers.d", "tests/source/vibe3d/editing/tools/interactive/snap_render_source_helpers.d"]
+                : ["tests/source/drag_source_helpers.d", "tests/source/snap_render_source_helpers.d"];
+        if (owner == "viewport-host")
+            return moved(owner)
+                ? ["tests/source/vibe3d/viewport/host/image_plane_source_cells.d"]
+                : ["tests/source/image_plane_source_cells.d"];
+        return [];
+    }
     string packageId(string owner) { return (moved(owner) ? "vibe3d:" : "vibe3d-") ~ owner; }
     auto desktop = parseJSON(readText(buildPath(root, "dub.json")));
     auto tests = config(desktop, "tests");
