@@ -43,8 +43,7 @@ import vibe3d.mesh.ops.mesh_edge_slice : splitFaceByVertices;
 
 import std.algorithm.sorting   : sort;
 import std.array               : join, split;
-import std.file : SpanMode;
-import tests.unit.census_symbols : readText = wave15ReadText, exists = wave15Exists, isDir = wave15IsDir, dirEntries = wave15DirEntries;
+import std.file : SpanMode, readText, exists, isDir, dirEntries;
 import std.format              : format;
 import std.path                : buildPath, dirName, relativePath;
 import std.string              : indexOf, strip, startsWith;
@@ -1002,7 +1001,7 @@ private string[] scanArmSites(string rel, string text)
     // four `@property`, three `pragma(inline, true)`, two `ref` returns and
     // twelve `version (unittest) [private] …` helpers. One of the twenty-one
     // is not merely missed but MIS-READ: `ref inout(Mesh) mesh() inout
-    // return` in `packages/mesh/source/mesh.d` records its owner as `inout`, a name that
+    // return` in `libraries/mesh/core/source/vibe3d/mesh/core/mesh.d` records its owner as `inout`, a name that
     // is not a function at all.
     // A missed declaration leaves `owner` at the PREVIOUS name, so an arm
     // added inside one is attributed to a kernel that does not hold it —
@@ -1147,12 +1146,12 @@ unittest // the resolver itself, on hand-written text — it is the census's onl
 /// the cheaper `AddFaces` + `ReshapeFaces`.
 private static immutable string[] kArmedSites = [
     // task 3240 (plan 2910 step 3): the edge-slice family left `struct Mesh`
-    // for `packages/mesh-ops/source/mesh_edge_slice.d`. The kernel and its arm are byte-
+    // for `libraries/mesh/ops/source/vibe3d/mesh/ops/mesh_edge_slice.d`. The kernel and its arm are byte-
     // identical; only the file changed. `productionTargets()` below grew to
     // include that file in the SAME commit — dropping the row instead would
     // have left the only `Kind.FaceReindex` arm in the chord-split path
     // unguarded while this census went green.
-    "packages/mesh-ops/source/mesh_edge_slice.d:rebuildFacesWithChordSplits",
+    "libraries/mesh/ops/source/vibe3d/mesh/ops/mesh_edge_slice.d:rebuildFacesWithChordSplits",
     // Task 1903 Stage L10. The weld's OTHER apply half — the twin L5-a
     // deliberately left alone — reached by `weldVerticesByMask` (and so by
     // `collapse`, `vert_join`, `vert_merge` and `reduce`) and by
@@ -1165,15 +1164,15 @@ private static immutable string[] kArmedSites = [
     // drops a triangle below the arity floor. Log `[FaceReindex RemoveVerts
     // Reindex]` on both, and V, F and E all land on their pre-op values
     // (disarmed: E 11 of 12 and F 2 of 3, with `revert()` answering TRUE).
-    "packages/mesh/source/mesh.d:applyVertexRemapAndRebuild",
+    "libraries/mesh/core/source/vibe3d/mesh/core/mesh.d:applyVertexRemapAndRebuild",
     // Task 1903 Stage L5-a. The weld's apply half, reached by
     // `weldCoincidentVertices` and therefore by `mesh_ops/cleanup.cleanupMesh`
     // (L5), by `arrayFaces` / `radialArrayFaces` / `mirrorFacesPlane` (L6) and
     // by the reduce family (L10). Its TWIN — same file, reached by
     // `weldVerticesByMask` / `weldVertexPairs` — was deliberately NOT here
     // until Stage L10 measured it and armed it; the entry above is that arm.
-    "packages/mesh/source/mesh.d:applyVertexRemap",
-    "packages/mesh-ops/source/mesh_ops/triangulate.d:triangulateFacesByMask",
+    "libraries/mesh/core/source/vibe3d/mesh/core/mesh.d:applyVertexRemap",
+    "libraries/mesh/ops/source/vibe3d/mesh/ops/mesh_ops/triangulate.d:triangulateFacesByMask",
     // Task 1903 Stage L7-d — the VERTEX chamfer, and the entry that INVERTS
     // Stage K's refusal. K left it out under "do not arm when a VALUE is
     // lost": its residual then held `meshMaps["W"]` (a Point-domain map
@@ -1183,21 +1182,21 @@ private static immutable string[] kArmedSites = [
     // from L7-P3 (task 2330) — so the loss is gone and the rule permits the
     // arm. RE-MEASURED before arming, three operands, EXACT residual both
     // ways: the `bevelVerticesByMask` cell in block 2 is that row.
-    "packages/mesh-ops/source/mesh_ops/bevel_vertex.d:bevelVerticesByMask",
-    "packages/mesh-ops/source/mesh_ops/cleanup.d:cleanDegenerateFaces",
-    "packages/mesh-ops/source/mesh_ops/extrude.d:extrudeFacesByMask",
-    "packages/mesh-ops/source/mesh_ops/extrude.d:extrudeVerticesByMask",
-    "packages/mesh-ops/source/mesh_ops/extrude.d:smoothShiftFacesByMask",
-    "packages/mesh-ops/source/mesh_ops/loop_slice.d:insertEdgeLoopsMulti",
-    "packages/mesh-ops/source/mesh_ops/revolve.d:extrudePathStep_",
+    "libraries/mesh/ops/source/vibe3d/mesh/ops/mesh_ops/bevel_vertex.d:bevelVerticesByMask",
+    "libraries/mesh/ops/source/vibe3d/mesh/ops/mesh_ops/cleanup.d:cleanDegenerateFaces",
+    "libraries/mesh/ops/source/vibe3d/mesh/ops/mesh_ops/extrude.d:extrudeFacesByMask",
+    "libraries/mesh/ops/source/vibe3d/mesh/ops/mesh_ops/extrude.d:extrudeVerticesByMask",
+    "libraries/mesh/ops/source/vibe3d/mesh/ops/mesh_ops/extrude.d:smoothShiftFacesByMask",
+    "libraries/mesh/ops/source/vibe3d/mesh/ops/mesh_ops/loop_slice.d:insertEdgeLoopsMulti",
+    "libraries/mesh/ops/source/vibe3d/mesh/ops/mesh_ops/revolve.d:extrudePathStep_",
 ];
 
 private string[] productionTargets()
 {
-    string[] targets = [buildPath(repoRoot, "packages", "mesh", "source", "mesh.d")];
-    immutable opsDir = buildPath(repoRoot, "packages/mesh-ops/source", "mesh_ops");
+    string[] targets = [buildPath(repoRoot, "libraries/mesh/core/source/vibe3d/mesh/core/mesh.d")];
+    immutable opsDir = buildPath(repoRoot, "libraries/mesh/ops/source/vibe3d/mesh/ops/mesh_ops");
     assert(exists(opsDir) && isDir(opsDir),
-           "the census cannot find packages/mesh-ops/source/mesh_ops/ at " ~ opsDir);
+           "the census cannot find libraries/mesh/ops/source/vibe3d/mesh/ops/mesh_ops/ at " ~ opsDir);
     foreach (entry; dirEntries(opsDir, SpanMode.shallow)) {
         if (!entry.isFile) continue;
         if (entry.name.length < 2 || entry.name[$ - 2 .. $] != ".d") continue;
@@ -1206,16 +1205,16 @@ private string[] productionTargets()
     // `mesh_edit_delta.d` calls `rewriteFaces` too — on the REPLAY path, where
     // no batch is recording — so it is scanned as well: an arm appearing there
     // would mean a replay re-recording its own entry.
-    targets ~= buildPath(repoRoot, "packages", "mesh-edit-log", "source", "mesh_edit_delta.d");
-    targets ~= buildPath(repoRoot, "packages", "mesh-edit-replay", "source", "mesh_edit_replay.d");
-    targets ~= buildPath(repoRoot, "packages", "mesh", "source", "mesh_planes.d");
+    targets ~= buildPath(repoRoot, "libraries/mesh/edit-log/source/vibe3d/mesh/edit_log/mesh_edit_delta.d");
+    targets ~= buildPath(repoRoot, "libraries/mesh/edit-replay/source/vibe3d/mesh/edit_replay/mesh_edit_replay.d");
+    targets ~= buildPath(repoRoot, "libraries/mesh/core/source/vibe3d/mesh/core/mesh_planes.d");
     // The satellites plan 2910 is carving out of `struct Mesh`, one per step.
     // `mesh_edge_slice.d` (step 3) holds `rebuildFacesWithChordSplits` and so
     // holds a real arm; `mesh_visibility.d` (step 2) holds none and is listed
     // so that the rule — every satellite is scanned — is what the list says,
     // not an accident of where the arms happen to be today.
-    foreach (sat; ["packages/interaction-query/source/mesh_visibility.d",
-                  "packages/mesh-ops/source/mesh_edge_slice.d"]) {
+    foreach (sat; ["libraries/editing/selection/query/source/vibe3d/editing/selection/query/mesh_visibility.d",
+                  "libraries/mesh/ops/source/vibe3d/mesh/ops/mesh_edge_slice.d"]) {
         immutable satPath = buildPath(repoRoot, sat);
         assert(exists(satPath),
                "the census cannot find the struct-Mesh satellite " ~ satPath);
@@ -1234,7 +1233,7 @@ unittest // the census: exactly these kernels arm FaceReindex, and no others
     }
     assert(scanned >= 12,
         format("only %d file(s) scanned — the walk is not reaching the tree "
-             ~ "it claims to guard (packages/mesh-ops/source/mesh_ops/ alone has 15 files as of "
+             ~ "it claims to guard (libraries/mesh/ops/source/vibe3d/mesh/ops/mesh_ops/ alone has 15 files as of "
              ~ "this writing), so an empty result would mean nothing", scanned));
 
     found.sort();
@@ -1295,7 +1294,7 @@ unittest // the census: exactly these kernels arm FaceReindex, and no others
 //
 // The census above pins the set of lines that say `faceReindexScope()`. It
 // cannot pin the RULE, because `MeshEditTracker.wantsFaceReindex` is a PUBLIC
-// field (`packages/mesh-edit-log/source/mesh_edit_delta.d`) and a kernel can arm itself without
+// field (`libraries/mesh/edit-log/source/vibe3d/mesh/edit_log/mesh_edit_delta.d`) and a kernel can arm itself without
 // spelling the scope at all.
 //
 // Measured, not argued (Stage K review, MAJOR-2): with
@@ -1350,7 +1349,7 @@ private bool isFlagWriteLine(string line)
 }
 
 /// The line ranges (0-based, inclusive) of the two blocks that OWN the flag.
-/// Empty for every file but `packages/mesh/source/mesh.d`.
+/// Empty for every file but `libraries/mesh/core/source/vibe3d/mesh/core/mesh.d`.
 private size_t[2][] flagOwnerRanges(string[] lines)
 {
     size_t[2][] ranges;
@@ -1387,7 +1386,7 @@ private string[] scanFlagWrites(string rel, string text, out size_t insideCount)
     auto lines  = text.split("\n");
     auto owned  = flagOwnerRanges(lines);
     size_t[2][] checkpointOwned;
-    if (rel == "packages/mesh-edit-log/source/mesh_edit_delta.d") {
+    if (rel == "libraries/mesh/edit-log/source/vibe3d/mesh/edit_log/mesh_edit_delta.d") {
         foreach (i, line; lines) if (line.strip == "void restore(ref Checkpoint c) nothrow @nogc {") {
             int depth;
             foreach (j; i .. lines.length) {
@@ -1460,60 +1459,63 @@ unittest // the flag-write resolver, on hand-written text
              ~ "that sits outside both owner blocks", got));
 }
 
-/// Every `.d` file under `source/`. WIDER than `productionTargets()` above on
+/// Every production `.d` file under `libraries/` and `apps/`. WIDER than
+/// `productionTargets()` above on
 /// purpose: the arm-site census only has to look where `rewriteFaces` is
 /// called, but a bare `wantsFaceReindex = true` needs no rewrite anywhere near
 /// it and would arm every rewrite the batch runs afterwards from any file at
 /// all.
 private string[] productionSourceTree()
 {
-    immutable srcDir = buildPath(repoRoot, "source");
-    assert(exists(srcDir) && isDir(srcDir),
-           "the flag census cannot find source/ at " ~ srcDir);
     string[] targets;
-    foreach (scanSourceRoot; [srcDir, buildPath(repoRoot, "packages/command-runtime/source"), buildPath(repoRoot, "packages/application-core/source"), buildPath(repoRoot, "packages/camera-model/source"), buildPath(repoRoot, "packages/document-channels/source"), buildPath(repoRoot, "packages/image-codec/source"), buildPath(repoRoot, "packages/document-io/source"), buildPath(repoRoot, "packages/document-model/source"), buildPath(repoRoot, "packages/param-schema/source"), buildPath(repoRoot, "packages/pipe-runtime/source"), buildPath(repoRoot, "packages/mesh-ops/source"), buildPath(repoRoot, "packages/interchange/source"), buildPath(repoRoot, "packages/interaction-query/source"), buildPath(repoRoot, "packages/pipe-evaluation/source"), buildPath(repoRoot, "packages/tool-state/source"), buildPath(repoRoot, "packages/transform-ops/source"), buildPath(repoRoot, "packages/creation-ops/source"), buildPath(repoRoot, "packages/alignment-ops/source"), buildPath(repoRoot, "packages/input-events/source"), buildPath(repoRoot, "packages/display-policy/source"), buildPath(repoRoot, "packages/viewport-gpu/source"), buildPath(repoRoot, "packages/subpatch-preview/source"), buildPath(repoRoot, "packages/edit-contracts/source"), buildPath(repoRoot, "packages/mesh-change/source"), buildPath(repoRoot, "packages/mesh-contracts/source"), buildPath(repoRoot, "packages/mesh-edit-log/source"), buildPath(repoRoot, "packages/mesh-edit-replay/source"), buildPath(repoRoot, "packages/mesh-snapshot/source"), buildPath(repoRoot, "packages/mesh-topology/source"), buildPath(repoRoot, "packages/mesh/source"), buildPath(repoRoot, "packages/profiling/source"), buildPath(repoRoot, "packages/spatial/source"), buildPath(repoRoot, "util/log/source"), buildPath(repoRoot, "util/math/source"), buildPath(repoRoot, "util/parallel/source"), buildPath(repoRoot, "util/plane-bytes/source"), buildPath(repoRoot, "util/screen-buckets/source"), buildPath(repoRoot, "packages/pipe-contracts/source"), buildPath(repoRoot, "packages/mesh-preview/source"), buildPath(repoRoot, "util/json-number/source"), buildPath(repoRoot, "packages/selection-model/source"), buildPath(repoRoot, "packages/scene-query/source"), buildPath(repoRoot, "packages/editor-commands/source")])
-
-    foreach (entry; dirEntries(scanSourceRoot, SpanMode.depth)) {
-        if (!entry.isFile) continue;
-        if (entry.name.length < 2 || entry.name[$ - 2 .. $] != ".d") continue;
-        targets ~= entry.name;
+    // Read physical production sources in every migrated owner. Test carriers
+    // containing former private cells are added explicitly below.
+    foreach (root; ["libraries", "apps"]) {
+        immutable sourceRoot = buildPath(repoRoot, root);
+        assert(exists(sourceRoot) && isDir(sourceRoot),
+               "the flag census cannot find " ~ sourceRoot);
+        foreach (entry; dirEntries(sourceRoot, "*.d", SpanMode.depth)) {
+            if (!entry.isFile) continue;
+            immutable relative = relativePath(entry.name, sourceRoot);
+            if (relative.indexOf("/source/") < 0 || relative.indexOf("/tests/") >= 0)
+                continue;
+            targets ~= entry.name;
+        }
     }
     const string[] sourceCarriersWave14_1 = [
-        "packages/camera-model/tests/source/tests/unit/view_source_cells_test.d",
-        "packages/image-codec/tests/source/tests/unit/io/image_decode_source_cells_test.d",
-        "packages/document-io/tests/source/tests/unit/io/native_source_cells_test.d",
-        "packages/command-runtime/tests/source/tests/unit/command_history_source_public_test.d",
-        "packages/command-runtime/tests/source/tests/unit/command_source_public_test.d",
-        "packages/command-runtime/tests/source/tests/unit/commands/mesh/session_edit_source_public_test.d",
-        "packages/command-runtime/tests/source/tests/unit/commands/select/element_source_public_test.d",
-        "packages/command-runtime/tests/source/tests/unit/record_observer_hub_source_public_test.d",
-        "packages/editor-commands/tests/source/tests/unit/commands/mesh/edge_crease_source_public_test.d",
-        "packages/editor-commands/tests/source/tests/unit/commands/mesh/remove_source_public_test.d",
-        "packages/editor-commands/tests/source/tests/unit/commands/mesh/symmetrize_source_public_test.d",
-        "packages/editor-commands/tests/source/tests/unit/commands/mesh/vertex_set_source_public_test.d",
-        "packages/editor-commands/tests/source/tests/unit/commands/select/boundary_source_public_test.d",
-        "packages/editor-commands/tests/source/tests/unit/commands/select/by_stat_source_public_test.d",
-        "packages/editor-commands/tests/source/tests/unit/commands/select/by_tag_source_public_test.d",
-        "packages/editor-commands/tests/source/tests/unit/commands/select/type_from_source_public_test.d",
-        "packages/selection-model/tests/source/tests/unit/selection_product_source_public_test.d",
+        "libraries/viewport/camera/tests/source/vibe3d/viewport/camera/tests/unit/view_source_cells_test.d",
+        "libraries/documents/image-codec/tests/source/vibe3d/documents/image_codec/tests/unit/io/image_decode_source_cells_test.d",
+        "libraries/documents/io/tests/source/vibe3d/documents/io/tests/unit/io/native_source_cells_test.d",
+        "libraries/editing/commands/runtime/tests/source/vibe3d/editing/commands/runtime/tests/unit/command_history_source_public_test.d",
+        "libraries/editing/commands/runtime/tests/source/vibe3d/editing/commands/runtime/tests/unit/command_source_public_test.d",
+        "libraries/editing/commands/runtime/tests/source/vibe3d/editing/commands/runtime/tests/unit/commands/mesh/session_edit_source_public_test.d",
+        "libraries/editing/commands/runtime/tests/source/vibe3d/editing/commands/runtime/tests/unit/commands/select/element_source_public_test.d",
+        "libraries/editing/commands/runtime/tests/source/vibe3d/editing/commands/runtime/tests/unit/record_observer_hub_source_public_test.d",
+        "libraries/editing/commands/editor/tests/source/vibe3d/editing/commands/editor/tests/unit/commands/mesh/edge_crease_source_public_test.d",
+        "libraries/editing/commands/editor/tests/source/vibe3d/editing/commands/editor/tests/unit/commands/mesh/remove_source_public_test.d",
+        "libraries/editing/commands/editor/tests/source/vibe3d/editing/commands/editor/tests/unit/commands/mesh/symmetrize_source_public_test.d",
+        "libraries/editing/commands/editor/tests/source/vibe3d/editing/commands/editor/tests/unit/commands/mesh/vertex_set_source_public_test.d",
+        "libraries/editing/commands/editor/tests/source/vibe3d/editing/commands/editor/tests/unit/commands/select/boundary_source_public_test.d",
+        "libraries/editing/commands/editor/tests/source/vibe3d/editing/commands/editor/tests/unit/commands/select/by_stat_source_public_test.d",
+        "libraries/editing/commands/editor/tests/source/vibe3d/editing/commands/editor/tests/unit/commands/select/by_tag_source_public_test.d",
+        "libraries/editing/commands/editor/tests/source/vibe3d/editing/commands/editor/tests/unit/commands/select/type_from_source_public_test.d",
+        "libraries/editing/selection/model/tests/source/vibe3d/editing/selection/model/tests/unit/selection_product_source_public_test.d",
 ];
 
-import tests.unit.census_symbols : exists = wave15Exists;
-    import std.path : buildPath;
     foreach (relative; [
-        "packages/editor-commands/tests/source/tests/unit/commands/mesh/edge_crease_source_public_test.d",
-        "packages/editor-commands/tests/source/tests/unit/commands/mesh/remove_source_public_test.d",
-        "packages/editor-commands/tests/source/tests/unit/commands/mesh/symmetrize_source_public_test.d",
-        "packages/editor-commands/tests/source/tests/unit/commands/mesh/vertex_set_source_public_test.d",
-        "packages/editor-commands/tests/source/tests/unit/commands/select/boundary_source_public_test.d",
-        "packages/editor-commands/tests/source/tests/unit/commands/select/by_stat_source_public_test.d",
-        "packages/editor-commands/tests/source/tests/unit/commands/select/by_tag_source_public_test.d",
-        "packages/editor-commands/tests/source/tests/unit/commands/select/type_from_source_public_test.d",
-        "packages/selection-model/tests/source/tests/unit/selection_product_source_public_test.d",
+        "libraries/editing/commands/editor/tests/source/vibe3d/editing/commands/editor/tests/unit/commands/mesh/edge_crease_source_public_test.d",
+        "libraries/editing/commands/editor/tests/source/vibe3d/editing/commands/editor/tests/unit/commands/mesh/remove_source_public_test.d",
+        "libraries/editing/commands/editor/tests/source/vibe3d/editing/commands/editor/tests/unit/commands/mesh/symmetrize_source_public_test.d",
+        "libraries/editing/commands/editor/tests/source/vibe3d/editing/commands/editor/tests/unit/commands/mesh/vertex_set_source_public_test.d",
+        "libraries/editing/commands/editor/tests/source/vibe3d/editing/commands/editor/tests/unit/commands/select/boundary_source_public_test.d",
+        "libraries/editing/commands/editor/tests/source/vibe3d/editing/commands/editor/tests/unit/commands/select/by_stat_source_public_test.d",
+        "libraries/editing/commands/editor/tests/source/vibe3d/editing/commands/editor/tests/unit/commands/select/by_tag_source_public_test.d",
+        "libraries/editing/commands/editor/tests/source/vibe3d/editing/commands/editor/tests/unit/commands/select/type_from_source_public_test.d",
+        "libraries/editing/selection/model/tests/source/vibe3d/editing/selection/model/tests/unit/selection_product_source_public_test.d",
     ]) {
         size_t occurrences;
         foreach (candidate; sourceCarriersWave14_1) if (candidate == relative) ++occurrences;
-        assert(occurrences == 1, "Wave14 logical source input missing/duplicate: " ~ relative);
+        assert(occurrences == 1, "Wave14 source carrier input missing/duplicate: " ~ relative);
 
     }
     foreach (sourceCarrier; sourceCarriersWave14_1) {

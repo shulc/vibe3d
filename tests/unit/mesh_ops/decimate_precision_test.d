@@ -4,7 +4,7 @@ import vibe3d.util.math.math;
 import vibe3d.mesh.core.mesh;
 import vibe3d.mesh.edit_log.mesh_edit_delta : MeshEditScope;
 import vibe3d.mesh.ops.mesh_ops.decimate;
-import tests.unit.census_symbols : stripCommentsAndStrings = blankNonCode;
+import tools.harness.dsource : stripCommentsAndStrings = blankNonCode;
 
 private uint floatBits(float value)
 {
@@ -106,7 +106,7 @@ unittest { // source census pins all four call sites and the no-inline boundary
     import std.string : splitLines, strip;
 
     enum repoRoot = dirName(dirName(dirName(dirName(__FILE_FULL_PATH__))));
-    immutable path = buildPath(repoRoot, "packages/mesh-ops/source", "mesh_ops", "decimate.d");
+    immutable path = buildPath(repoRoot, "libraries/mesh/ops/source/vibe3d/mesh/ops/mesh_ops/decimate.d");
     immutable src = stripCommentsAndStrings(readText(path));
     immutable body = functionBody(src, "size_t reduceToTarget(");
 
@@ -135,7 +135,7 @@ unittest { // source census pins all four call sites and the no-inline boundary
 
     enum pragmaMessage =
         "pragma(inline, false) не стоит непосредственно над `private float norm3(` в\n"
-      ~ "packages/mesh-ops/source/mesh_ops/decimate.d. Эта строка — ЕДИНСТВЕННЫЙ страж: ни одна полоса\n"
+      ~ "libraries/mesh/ops/source/vibe3d/mesh/ops/mesh_ops/decimate.d. Эта строка — ЕДИНСТВЕННЫЙ страж: ни одна полоса\n"
       ~ "в дереве не собирает dmd с оптимизацией (dub build / dub test / perf-count —\n"
       ~ "без -O; всякая оптимизированная сборка идёт на LDC, .github/workflows/\n"
       ~ "build.yml:347), поэтому её снятие не может покраснеть поведенчески.\n"

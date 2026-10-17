@@ -11,13 +11,13 @@ import std.file : remove, tempDir;
 import tests.unit.census_symbols : exists = wave15Exists, readText = wave15ReadText;
 import std.format : format;
 import std.json : parseJSON;
-import std.path : buildPath, dirName;
+import std.path : buildNormalizedPath, buildPath, dirName;
 import std.process : Config, execute, thisProcessID;
 import std.string : indexOf, splitLines;
 import vibe3d.apps.desktop.web_gl_loader : WebGlProcLookup, loadWebOpenGL,
     optionalDesktopGlSymbols, requiredWebGlSymbols, webClosureGlSymbols;
 
-private enum repoRoot = dirName(dirName(dirName(__FILE_FULL_PATH__)));
+private enum repoRoot = buildNormalizedPath(dirName(dirName(dirName(__FILE_FULL_PATH__))));
 
 private __gshared const(char)* gMissingSymbol;
 
@@ -349,7 +349,7 @@ D";
            buildWebRaw.canFind(".build/web-dub-home") &&
            buildWebRaw.canFind(".build/web-link") &&
            buildWebRaw.canFind("--dest=\"$link_root\"") &&
-           buildWebRaw.canFind("cmake -E touch \"$repo_root/source/app.d\"") &&
+           buildWebRaw.canFind("cmake -E touch \"$repo_root/apps/desktop/source/vibe3d/apps/desktop/app.d\"") &&
            buildWebRaw.canFind("shared_archives_before") &&
            buildWebRaw.canFind("shared_archives_after") &&
            buildWebRaw.canFind("WEB-DYNAMIC-LINKS rpath=0 runpath=0"),

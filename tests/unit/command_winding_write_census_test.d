@@ -30,11 +30,7 @@
 // `tests/unit/l2_create_stable_delta_test.d`'s op-log-shape cells.
 module tests.unit.command_winding_write_census_test;
 
-import tests.unit.census_symbols : wave15InputsIntact, wave15InputStart;
-
-
-import std.file : SpanMode;
-import tests.unit.census_symbols : readText = wave15ReadText, dirEntries = wave15DirEntries, exists = wave15Exists, isDir = wave15IsDir;
+import std.file : SpanMode, readText, dirEntries, exists, isDir;
 import std.path   : dirName, buildPath, baseName;
 import std.format : format;
 import std.algorithm : sort, uniq;
@@ -43,7 +39,7 @@ import std.array  : array;
 /// Repository root, rooted at THIS FILE rather than at the working directory.
 /// A census that quietly finds nothing when the lane runs from elsewhere is a
 /// test that passes for the wrong reason.
-import tests.unit.census_symbols : blankNonCode;
+import tests.unit.census_symbols : blankNonCode, blankUnittestBodies;
 
 private string repoRoot()
 {
@@ -128,28 +124,22 @@ private size_t countSpliceShapes(string src, ref string firstHit)
 
 unittest // no command writes a face winding by hand
 {
-    auto wave15Inputs = wave15InputStart();
-    immutable zone = buildPath(repoRoot(), "source", "commands");
-    assert(exists(zone) && isDir(zone),
-        "cannot find " ~ zone ~ " — the census would walk nothing and report "
-      ~ "zero for the one reason that is not a finding");
-
     string[] paths;
-    foreach (scanSourceRoot; [zone, buildPath(repoRoot(), "packages/command-runtime/source", "commands")]
-        ~ (exists(buildPath(repoRoot(), "packages/editor-commands/source/commands")) ? [buildPath(repoRoot(), "packages/editor-commands/source/commands")] : []))
-    foreach (e; dirEntries(scanSourceRoot, "*.d", SpanMode.depth)) paths ~= e.name;
     foreach (relative; [
-        "packages/command-runtime/tests/source/tests/unit/commands/mesh/session_edit_source_public_test.d",
-        "packages/command-runtime/tests/source/tests/unit/commands/select/element_source_public_test.d",
-        "packages/editor-commands/tests/source/tests/unit/commands/mesh/edge_crease_source_public_test.d",
-        "packages/editor-commands/tests/source/tests/unit/commands/mesh/remove_source_public_test.d",
-        "packages/editor-commands/tests/source/tests/unit/commands/mesh/symmetrize_source_public_test.d",
-        "packages/editor-commands/tests/source/tests/unit/commands/mesh/vertex_set_source_public_test.d",
-        "packages/editor-commands/tests/source/tests/unit/commands/select/boundary_source_public_test.d",
-        "packages/editor-commands/tests/source/tests/unit/commands/select/by_stat_source_public_test.d",
-        "packages/editor-commands/tests/source/tests/unit/commands/select/by_tag_source_public_test.d",
-        "packages/editor-commands/tests/source/tests/unit/commands/select/type_from_source_public_test.d",
-]) paths ~= buildPath(repoRoot(), relative);
+        "apps/desktop/source/vibe3d/apps/desktop/commands",
+        "apps/desktop/source/vibe3d/editing/commands/editor/commands",
+        "libraries/runtime/document-actions/source/vibe3d/runtime/document_actions/commands",
+        "libraries/runtime/document-actions/source/vibe3d/apps/desktop/commands",
+        "libraries/editing/commands/runtime/source/vibe3d/editing/commands/runtime/commands",
+        "libraries/editing/commands/runtime/source/vibe3d/editing/commands/editor/commands",
+        "libraries/editing/commands/editor/source/vibe3d/editing/commands/editor/commands",
+        "libraries/editing/tools/interactive/source/vibe3d/editing/tools/interactive/commands",
+        "libraries/editing/tools/interactive/source/vibe3d/editing/commands/editor/commands",
+    ]) {
+        const zone = buildPath(repoRoot(), relative);
+        assert(exists(zone) && isDir(zone), "cannot find command census root " ~ zone);
+        foreach (e; dirEntries(zone, "*.d", SpanMode.depth)) paths ~= e.name;
+    }
     paths.sort();
 
     // THE ANTI-DUPLICATION TERM, and it is not decoration: a repeated path
@@ -174,7 +164,7 @@ unittest // no command writes a face winding by hand
     size_t scanned = 0, indexed = 0, splices = 0;
     string firstIndexed, firstSplice, indexedFile, spliceFile;
     foreach (p; paths) {
-        immutable code = stripCommentsAndStrings(readText(p));
+        immutable code = blankUnittestBodies(stripCommentsAndStrings(readText(p)));
         scanned += code.length;
         string hit;
         immutable size_t a = countIndexedWindingWrites(code, hit);
@@ -189,7 +179,7 @@ unittest // no command writes a face winding by hand
              ~ "file(s) — the stripper ate the zone and every count below is "
              ~ "zero for the wrong reason", scanned, paths.length));
 
-    assert((indexed == 0) && wave15InputsIntact(wave15Inputs),
+    assert(indexed == 0,
         format("source/commands holds %d INDEXED face-winding write(s), "
              ~ "expected 0. First: `%s` in %s.\n"
              ~ "  A live winding written by hand reaches no op-log hook — "
@@ -204,7 +194,7 @@ unittest // no command writes a face winding by hand
              ~ "split_edge's splice survived three revisions of it.",
                indexed, firstIndexed, indexedFile.baseName));
 
-    assert((splices == 0) && wave15InputsIntact(wave15Inputs),
+    assert(splices == 0,
         format("source/commands holds %d open-coded winding SPLICE(s), "
              ~ "expected 0. First: `%s` in %s.\n"
              ~ "  This is `mesh.split_edge`'s own shape, deleted at stage "

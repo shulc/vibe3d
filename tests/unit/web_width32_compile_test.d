@@ -11,11 +11,11 @@ import std.file : dirEntries, exists, mkdir, readText, remove, rmdirRecurse,
     SpanMode, tempDir, write;
 import std.format : format;
 import std.stdio : writefln;
-import std.path : buildPath, dirName;
+import std.path : buildNormalizedPath, buildPath, dirName;
 import std.process : Config, execute, thisProcessID;
 import std.string : indexOf, lastIndexOf, splitLines, strip;
 
-private enum repoRoot = dirName(dirName(dirName(__FILE_FULL_PATH__)));
+private enum repoRoot = buildNormalizedPath(dirName(dirName(dirName(__FILE_FULL_PATH__))));
 
 private struct DepNode
 {
@@ -789,7 +789,10 @@ flags=$(dub describe --config=web \
 mapfile -t files < "$3"
 unittestImports=()
 if [[ ${6:-} == "-unittest" ]]; then
-    unittestImports=(-Ipackages/interactive-tools/tests/source -Ipackages/viewport-host/tests/source)
+    unittestImports=(
+        -Ilibraries/editing/tools/interactive/tests/source
+        -Ilibraries/viewport/host/tests/source
+    )
 fi
 python3 tools/ci/dmd_with_dub_flags.py "$flags" -v -m32 ${6:+"$6"} "${unittestImports[@]}" -o- -c -od="$5" "${files[@]}" "$4"
 SH";

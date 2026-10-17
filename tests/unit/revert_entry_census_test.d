@@ -64,9 +64,8 @@
 // ToolLifecycle, Case A and Case B. Strict lifecycle LIFO removed all three
 // branches and added one common-tail call in the same function. The table
 // below records that seven-site result and the gate still aggregates by
-// (file, function) to compare COUNTS, the same move
-// `command_tail_publisher_census_test.d` makes for the reason R2-4 already
-// gave: a per-name count is immune to line drift, a per-line table is not.
+// (file, function) to compare counts: a per-name count is immune to line
+// drift, a per-line table is not.
 module tests.unit.revert_entry_census_test;
 
 import tests.unit.census_symbols : wave15InputsIntact, wave15InputStart;

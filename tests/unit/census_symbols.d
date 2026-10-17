@@ -3567,6 +3567,22 @@ private string mathRelative(string name, bool moved) {
         ~ name.replace(".", "/") ~ ".d";
 }
 
+// A reader operation is synchronous and has no mutation callbacks. Validate
+// each owner once inside that operation, then discard every cached decision so
+// a later read observes changed recipes, missing files and declarations again.
+private size_t wave19ReadDepth;
+private bool[string] wave19OwnerSelections;
+private bool[string] wave19DesktopSelections;
+private struct Wave19ReadScope {
+    this(bool active) { ++wave19ReadDepth; }
+    ~this() {
+        if (--wave19ReadDepth == 0) {
+            wave19OwnerSelections = null;
+            wave19DesktopSelections = null;
+        }
+    }
+}
+
 // Select the complete real owner. Optional facade/shim files are outside this
 // roster and can never stand in for a missing original definition or carrier.
 // Proposed inline addition to existing census_symbols.d; source-only. The
@@ -3578,6 +3594,8 @@ private bool wave19DesktopRowMoved(string root, const Wave19Module target) {
     import std.json : parseJSON;
     import std.path : buildPath;
     const base = wave15Normalize(root);
+    const cacheKey = base ~ "\0" ~ target.oldPath;
+    if (wave19ReadDepth) if (auto cached = cacheKey in wave19DesktopSelections) return *cached;
     auto recipe = parseJSON(readText(buildPath(base, "dub.json")));
     assert(recipe["name"].str == "vibe3d", "Wave19 root application identity");
     string[] roots;
@@ -3629,6 +3647,7 @@ private bool wave19DesktopRowMoved(string root, const Wave19Module target) {
     }
     size_t population, targetHits;
     bool selected;
+    bool[string] selections;
     bool[string] oldPaths, newPaths;
     foreach (row; wave19Modules) {
         if (row.owner != "desktop") continue;
@@ -3637,6 +3656,7 @@ private bool wave19DesktopRowMoved(string root, const Wave19Module target) {
             "Wave19 duplicate desktop coordinate");
         oldPaths[row.oldPath] = true; newPaths[row.newPath] = true;
         const moved = finalState || explicitSources.canFind(row.newPath);
+        selections[base ~ "\0" ~ row.oldPath] = moved;
         const active = buildPath(base, moved ? row.newPath : row.oldPath);
         const other = buildPath(base, moved ? row.oldPath : row.newPath);
         assert(exists(active) && isFile(active) && !exists(other),
@@ -3648,6 +3668,7 @@ private bool wave19DesktopRowMoved(string root, const Wave19Module target) {
     assert(population == 79, "Wave19 desktop frozen79 coordinate population");
     assert(target.owner == "desktop" && targetHits == 1,
         "Wave19 desktop selected target identity");
+    if (wave19ReadDepth) foreach (key, value; selections) wave19DesktopSelections[key] = value;
     return selected;
 }
 
@@ -3656,6 +3677,8 @@ private bool wave19OwnerMoved(string root, const Wave19Owner owner) {
     import std.file : exists, isFile, readText;
     import std.json : parseJSON;
     const base = wave15Normalize(root);
+    const cacheKey = base ~ "\0" ~ owner.name;
+    if (wave19ReadDepth) if (auto cached = cacheKey in wave19OwnerSelections) return *cached;
     const oldRecipe = buildPath(base, owner.oldRoot, "dub.json");
     const newRecipe = buildPath(base, owner.newRoot, "dub.json");
     const oldPresent = exists(oldRecipe), newPresent = exists(newRecipe);
@@ -3680,14 +3703,15 @@ private bool wave19OwnerMoved(string root, const Wave19Owner owner) {
         const expected = moved ? row.newModule : row.oldModule;
         const code = blankNonCode(readText(physical));
         size_t count;
-        foreach (declaration; matchAll(code, regex(`\bmodule\b`))) ++count;
+        foreach (declaration; matchAll(code, ctRegex!(`\bmodule\b`))) ++count;
         assert(count == 1, "Wave19 requires one real module declaration: " ~ row.oldPath);
         auto declaration = matchFirst(code,
-            regex(`\bmodule\s+([A-Za-z_][A-Za-z_0-9.]*)\s*;`));
+            ctRegex!(`\bmodule\s+([A-Za-z_][A-Za-z_0-9.]*)\s*;`));
         assert(!declaration.empty && declaration[1] == expected,
             "Wave19 real module identity: " ~ row.oldPath);
     }
     assert(population != 0, "Wave19 selected owner must have original real inputs: " ~ owner.name);
+    if (wave19ReadDepth) wave19OwnerSelections[cacheKey] = moved;
     return moved;
 }
 
@@ -3711,9 +3735,9 @@ private bool wave19TargetMoved(string root, string target) {
         ++hits; selected = wave19RowMoved(root, row);
         const physical = buildPath(wave15Normalize(root), selected ? row.newPath : row.oldPath);
         const code = blankNonCode(readText(physical));
-        auto declaration = matchFirst(code, regex(`\bmodule\s+([A-Za-z_][A-Za-z_0-9.]*)\s*;`));
+        auto declaration = matchFirst(code, ctRegex!(`\bmodule\s+([A-Za-z_][A-Za-z_0-9.]*)\s*;`));
         size_t count;
-        foreach (item; matchAll(code, regex(`\bmodule\b`))) ++count;
+        foreach (item; matchAll(code, ctRegex!(`\bmodule\b`))) ++count;
         assert(count == 1 && !declaration.empty
             && declaration[1] == (selected ? row.newModule : row.oldModule),
             "Wave19 exact referenced target declaration");
@@ -3744,6 +3768,7 @@ public bool wave19MathMoved(string root) {
 // Only frozen real files and their original scan roots are coordinates. Reject
 // missing/mixed owner states before returning a selected physical input.
 public string wave19PhysicalPath(string path, string root = repoRoot) {
+    auto readScope = Wave19ReadScope(true);
     import std.file : readText;
     import std.json : parseJSON;
     const normal = wave15Normalize(path), base = wave15Normalize(root);
@@ -4292,16 +4317,20 @@ private string wave19IdentityLogicalText(string source, string path, string root
     import std.digest.sha : sha256Of;
     import std.digest : toHexString;
     import std.string : toLower, lastIndexOf;
-    string manifest;
-    foreach (i, row; wave19Identities) {
-        foreach (other; wave19Identities[i + 1 .. $])
-            assert(row.id != other.id, "Wave19 duplicate approved identity");
-        manifest ~= row.id ~ "\t" ~ row.path ~ "\t" ~ row.owner ~ "\t" ~ row.target ~ "\t"
-            ~ row.anchor ~ "\t" ~ row.offset.to!string ~ "\t" ~ row.oldText ~ "\t" ~ row.newText
-            ~ "\t" ~ (row.literal ? "1" : "0") ~ "\n";
+    static bool manifestValidated;
+    if (!manifestValidated) {
+        string manifest;
+        foreach (i, row; wave19Identities) {
+            foreach (other; wave19Identities[i + 1 .. $])
+                assert(row.id != other.id, "Wave19 duplicate approved identity");
+            manifest ~= row.id ~ "\t" ~ row.path ~ "\t" ~ row.owner ~ "\t" ~ row.target ~ "\t"
+                ~ row.anchor ~ "\t" ~ row.offset.to!string ~ "\t" ~ row.oldText ~ "\t" ~ row.newText
+                ~ "\t" ~ (row.literal ? "1" : "0") ~ "\n";
+        }
+        assert(wave19Identities.length == 460 && sha256Of(manifest).toHexString.toLower == "32101d7bb8bf913fbf8586377c34ff18a0b21c097eccdf5cd2fb045215dbf7b9",
+            "Wave19 frozen approved identity population");
+        manifestValidated = true;
     }
-    assert(wave19Identities.length == 460 && sha256Of(manifest).toHexString.toLower == "32101d7bb8bf913fbf8586377c34ff18a0b21c097eccdf5cd2fb045215dbf7b9",
-        "Wave19 frozen approved identity population");
     const normal = wave19LogicalPath(path, root), base = wave15Normalize(root);
     const code = blankNonCode(source), literals = blankNonCode(source, true);
     struct Edit { size_t begin, end; string text; }
@@ -4453,8 +4482,16 @@ public string wave15PhysicalPath(string path) {
 public bool wave15Exists(string path) {
     import std.file : exists;
     import std.algorithm : startsWith;
-    const normal = wave19MathPhysicalPath(wave19MathLogicalPath(path));
+    const logical = wave19MathLogicalPath(path);
+    const normal = wave19MathPhysicalPath(logical);
     if (exists(normal)) return true;
+    // Nested logical directories need not have one physical directory: their
+    // original files remain members after the qualified module relocation.
+    const base = wave15Normalize(repoRoot);
+    foreach (row; wave19Modules) {
+        const child = buildPath(base, row.oldPath);
+        if (child.startsWith(logical ~ "/") && exists(wave19PhysicalPath(child))) return true;
+    }
     foreach (move; wave15Moves) {
         string root;
         if (wave15Match(normal, move.oldPath, root)
@@ -4738,6 +4775,7 @@ private string wave15WithoutCarrierImports(string source) {
 }
 
 public string wave15ReadText(string path) {
+    auto readScope = Wave19ReadScope(true);
     import std.file : exists, readText;
     const normal = wave15Normalize(wave15LogicalPath(path));
     // ImportC is an exact whole-file native input, outside the D move roster.
@@ -4861,6 +4899,7 @@ public struct Wave15Entry {
 
 public Wave15Entry[] wave15DirEntries(string directory, string pattern,
         SpanMode span, bool followSymlink = true, string mathRoot = repoRoot) {
+    auto readScope = Wave19ReadScope(true);
     import std.file : dirEntries, exists, isFile, isDir, getSize;
     import std.path : baseName, dirName, globMatch, relativePath, isAbsolute;
     import std.algorithm : startsWith, canFind;
@@ -5047,7 +5086,22 @@ unittest { // Wave19 math: real selected inputs, exact coordinates and span-only
     assert(wave15DirEntries(buildPath(scratch, "util/math/source"), "*.d", SpanMode.shallow, true, scratch ~ "/.").length == 5
         && wave15DirEntries(buildPath(scratch, "util/math/tests/source"), "*.d", SpanMode.shallow, true, scratch ~ "/.").length == 0,
         "Wave19 math moved logical shallow walk retains original layout");
+    // Operation-local memoization must expire on both success and refusal.
+    const sourceDirectory = buildPath(scratch, "util/math/source");
+    const mathInputPath = "libraries/util/math/source/vibe3d/util/math/math_vector.d";
+    put(mathInputPath, "module vibe3d.util.math.math_wector;\n"); // same-length changed input
+    assertThrown!AssertError(wave19MathPhysicalPath(logical, scratch));
+    assertThrown!AssertError(wave15DirEntries(sourceDirectory, "*.d", SpanMode.depth, true, scratch));
+    put(mathInputPath, "module vibe3d.util.math.math_vector;\n");
+    assert(wave19MathPhysicalPath(logical, scratch) == physical,
+        "Wave19 reader recovers after refused source without a stale selection");
+    put("libraries/util/math/dub.json", `{"name":"wrong"}`);
+    assertThrown!AssertError(wave15DirEntries(sourceDirectory, "*.d", SpanMode.depth, true, scratch));
+    put("libraries/util/math/dub.json", `{"name":"math"}`);
+    assert(wave15DirEntries(sourceDirectory, "*.d", SpanMode.depth, true, scratch).length == 5,
+        "Wave19 reader sees changed recipe and restored inputs on the next call");
     remove(physical);
+    assertThrown!AssertError(wave19MathPhysicalPath(logical, scratch));
     assertThrown!AssertError(wave19MathMoved(scratch)); // shim cannot replace missing real file
     put("libraries/util/math/source/vibe3d/util/math/math_vector.d", "module wrong;");
     assertThrown!AssertError(wave19MathMoved(scratch));
@@ -5280,6 +5334,18 @@ unittest { // Wave19 D1: frozen real-row bijection and each complete selected ow
                 && wave19MathLogicalText(std.file.readText(physical)).canFind("module " ~ row.oldModule ~ ";"),
                 "Wave19 actual selected real source/carrier reaches original module: " ~ row.oldPath);
         }
+    }
+    // Virtual nested-directory predicates agree with the existing member walk.
+    foreach (relative; ["packages/editor-commands/source/commands/mesh",
+            "packages/command-runtime/source/commands/mesh",
+            "util/math/tests/source/tests/unit"]) {
+        const directory = buildPath(repoRoot, relative);
+        assert(wave15DirEntries(directory, "*.d", SpanMode.shallow).length != 0
+            && wave15Exists(directory) && wave15IsDir(directory),
+            "Wave19 nested logical directory remains discoverable: " ~ relative);
+        assert(!wave15Exists(directory ~ "/not-a-real-directory")
+            && !wave15IsDir(directory ~ "/not-a-real-directory"),
+            "Wave19 unlisted directory must remain absent");
     }
     // Bounded new role controls remain in the original all-owner cell.
     import std.json : parseJSON, JSONValue;

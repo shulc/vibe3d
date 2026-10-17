@@ -395,13 +395,13 @@ unittest { // real desktop factories and draw calls remain wiring witnesses
     const app = blankNonCode(readText(wave19MathPhysicalPath(buildPath(root, "source/app.d"))));
     assert(countIdent(factory, "bindPanelHostRoles") == 1,
         "W18 desktop role factory declaration floor");
-    assert(app.indexOf("drawTabPanel(editor_app.bindPanelHostRoles!(TabPanelRole)(app)") >= 0,
+    assert(app.indexOf("drawTabPanel(vibe3d.apps.desktop.editor_app.bindPanelHostRoles!(TabPanelRole)(app)") >= 0,
         "W18 TabPanelRole production draw uses the live factory");
-    assert(app.indexOf("drawSidePanel(editor_app.bindPanelHostRoles!(SidePanelRole)(app)") >= 0,
+    assert(app.indexOf("drawSidePanel(vibe3d.apps.desktop.editor_app.bindPanelHostRoles!(SidePanelRole)(app)") >= 0,
         "W18 SidePanelRole production draw uses the live factory");
-    assert(app.indexOf("drawStatusBar(editor_app.bindPanelHostRoles!(StatusPanelRole)(app)") >= 0,
+    assert(app.indexOf("drawStatusBar(vibe3d.apps.desktop.editor_app.bindPanelHostRoles!(StatusPanelRole)(app)") >= 0,
         "W18 StatusPanelRole production draw uses the live factory");
-    assert(app.indexOf("drawAi3dModal(editor_app.bindPanelHostRoles!(Ai3dPanelRole)(app)") >= 0,
+    assert(app.indexOf("drawAi3dModal(vibe3d.apps.desktop.editor_app.bindPanelHostRoles!(Ai3dPanelRole)(app)") >= 0,
         "W18 Ai3dPanelRole production draw uses the live factory");
 }
 

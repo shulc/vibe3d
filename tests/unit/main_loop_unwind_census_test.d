@@ -271,7 +271,9 @@ private AddressLocal[] escapedAddressLocals(ref AstView ast, size_t anchor)
 
         size_t declaration = size_t.max;
         foreach (i; ast.mainOpen + 1 .. anchor)
-            if (ast.tokens[i].text == name)
+            if (ast.tokens[i].text == name
+                    && ast.tokens[i - 1].text != "."
+                    && (i + 1 >= anchor || ast.tokens[i + 1].text != "."))
             {
                 declaration = i;
                 break;
@@ -279,7 +281,7 @@ private AddressLocal[] escapedAddressLocals(ref AstView ast, size_t anchor)
         if (declaration == size_t.max) continue;
         if (declaration + 1 >= anchor
                 || !["=", ";", ","].canFind(ast.tokens[declaration + 1].text))
-            continue; // Function/delegate name or ordinary use, not a local declaration.
+            continue; // The first unqualified name is a function or ordinary use.
 
         size_t declarationScope = size_t.max;
         foreach (open, close; ast.closeBrace)
@@ -343,6 +345,24 @@ SH";
 
 unittest
 {
+    // A qualified type can contain the local's name before its declaration:
+    // `vibe3d.viewport.gpu.mesh_gpu.GpuMesh gpu`. That namespace segment is
+    // not a local and must not hide the actual addressed declaration. A
+    // callback's declaration must still exclude its later address argument.
+    auto qualified = parseAst(q{
+        void main() {
+            host.gpu.GpuMesh gpu;
+            void callback() {}
+            auto owner = Registration(&callback, 0);
+            void frame() { auto p = &gpu; }
+            for (; running;) {}
+        }
+    });
+    const qualifiedAnchor = qualified.findAnchor("modeling");
+    const qualifiedLocals = qualified.escapedAddressLocals(qualifiedAnchor);
+    assert(qualifiedLocals.length == 1 && qualifiedLocals[0].name == "gpu",
+        format("W16-M qualified type must retain gpu and exclude callback: %s", qualifiedLocals));
+
     // This census intentionally covers modeling and web only. WithRender has
     // a different cleanup population and is outside W16-M's permanent gate.
     foreach (config; ["modeling", "web"])

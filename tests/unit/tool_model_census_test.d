@@ -52,13 +52,15 @@ import std.algorithm : canFind, endsWith, sort, startsWith;
 import std.array     : appender, array, join, split;
 import std.conv      : to;
 import std.file : SpanMode;
+static import std.file;
+import tests.unit.census_symbols : wave15PhysicalPath;
 import tests.unit.census_symbols : dirEntries = wave15DirEntries, readText = wave15ReadText;
 import std.format    : format;
-import std.path      : buildPath, dirName;
+import std.path      : buildPath, dirName, buildNormalizedPath;
 import std.stdio     : writeln;
 import std.string    : indexOf, strip, replace, splitLines;
 
-private enum repoRoot = dirName(dirName(dirName(__FILE_FULL_PATH__)));
+private enum repoRoot = buildNormalizedPath(dirName(dirName(dirName(__FILE_FULL_PATH__))));
 private enum ledgerPath = "tests/unit/tool_model_census_ledger.txt";
 private enum size_t[2] kNoKeys = [0, 0];
 
@@ -79,8 +81,10 @@ private enum string[] kHookKeys = ["has", "cancel", "resync", "commit"];
 /// start with `tests.`, so membership in the SOURCE module set is the filter
 /// and these four are the only remaining non-tools.
 private enum string[] kNamedExceptions = [
-    "registry._TypedFactoryTool", "registry._RegParamTool",
-    "registry._RegFreeTool", "tool.RecordingTool",
+    "vibe3d.editing.tools.interactive.registry._TypedFactoryTool",
+    "vibe3d.editing.tools.interactive.registry._RegParamTool",
+    "vibe3d.editing.tools.interactive.registry._RegFreeTool",
+    "vibe3d.editing.tools.interactive.tool.RecordingTool",
 ];
 
 /// Public `CommandHistory` methods seen by the census build (which is always a
@@ -331,7 +335,44 @@ private bool derivesFromTool(TypeInfo_Class c) {
 // Source text.
 // ---------------------------------------------------------------------------
 
-private struct SrcFile { string path; string mod; string src; }
+private struct SrcFile { string path; string mod; string src; string logicalMod; }
+
+// The scanner keeps its logical paths/text, while compiler identities come
+// from the actual source declaration selected by the existing reader.
+private string compiledModuleName(string path) {
+    return moduleName(blankNonCode(std.file.readText(wave15PhysicalPath(path))));
+}
+
+private string compiledClassName(string name, const string[string] modules) {
+    string result = name;
+    size_t matched;
+    foreach (logical, compiled; modules)
+        if (logical.length > matched && name.startsWith(logical ~ ".")) {
+            result = compiled ~ name[logical.length .. $];
+            matched = logical.length;
+        }
+    return result;
+}
+
+// Only class identities in tool rows change coordinates; paths, counts,
+// classifications, explanations and all other ledger rows stay verbatim.
+private string compiledLedgerText(string text, const string[string] modules) {
+    auto lines = text.split("\n");
+    foreach (ref line; lines) {
+        if (!line.startsWith("tool ")) continue;
+        const bar = line.indexOf(" |");
+        const end = bar >= 0 ? cast(size_t)bar : line.length;
+        auto fields = line[0 .. end].split(" ");
+        fields[1] = compiledClassName(fields[1], modules);
+        foreach (ref field; fields[2 .. $]) {
+            const eq = field.indexOf('=');
+            if (eq < 0 || !kHookKeys.canFind(field[0 .. eq])) continue;
+            field = field[0 .. eq + 1] ~ compiledClassName(field[eq + 1 .. $], modules);
+        }
+        line = fields.join(" ") ~ line[end .. $];
+    }
+    return lines.join("\n");
+}
 
 /// Every `source/**.d` file with the name from its OWN `module` line (nine
 /// modules here declare a name that is not their path).
@@ -344,7 +385,9 @@ private SrcFile[] sourceFiles(out size_t withoutModuleLine) {
         const rel = de.name[repoRoot.length + 1 .. $];
         const mod = moduleName(blankNonCode(src));
         if (mod.length == 0) { ++withoutModuleLine; continue; }
-        files ~= SrcFile(rel, mod, src);
+        const compiledMod = compiledModuleName(de.name);
+        assert(compiledMod.length > 0, "tool census: selected source has no compiled module: " ~ rel);
+        files ~= SrcFile(rel, compiledMod, src, mod);
     }
     const string[] sourceCarriersWave14_1 = [
         "packages/camera-model/tests/source/tests/unit/view_source_cells_test.d",
@@ -390,7 +433,9 @@ import tests.unit.census_symbols : exists = wave15Exists;
         const rel = sourceCarrierPath[repoRoot.length + 1 .. $];
         const mod = moduleName(blankNonCode(src));
         if (mod.length == 0) { ++withoutModuleLine; continue; }
-        files ~= SrcFile(rel, mod, src);
+        const compiledMod = compiledModuleName(sourceCarrierPath);
+        assert(compiledMod.length > 0, "tool census: selected carrier has no compiled module: " ~ rel);
+        files ~= SrcFile(rel, compiledMod, src, mod);
 
     }
     files.sort!((a, b) => a.path < b.path);
@@ -913,7 +958,7 @@ private string renderLedger(const Ledger l) {
 
 private string[] axis1Violators(const ToolRow[string] rows) {
     string[] v;
-    foreach (n, r; rows) if (r.live == "yes" && r.owners[0] == "tool.Tool") v ~= n;
+    foreach (n, r; rows) if (r.live == "yes" && r.owners[0] == typeid(Tool).name) v ~= n;
     return v.sort.array;
 }
 
@@ -971,8 +1016,13 @@ unittest {
     assert(noModule == 0 && files.length > 0,
            format("tool census: source module set degenerate (%s files, %s without a module line)",
                   files.length, noModule));
-    string[string] fileOfModule;
-    foreach (f; files) fileOfModule[f.mod] = f.path;
+    string[string] fileOfModule, compiledModules;
+    foreach (f; files) {
+        fileOfModule[f.mod] = f.path;
+        assert(f.logicalMod !in compiledModules || compiledModules[f.logicalMod] == f.mod,
+            "tool census: one logical module maps to different compiled modules: " ~ f.logicalMod);
+        compiledModules[f.logicalMod] = f.mod;
+    }
 
     // Axis 2 needle controls.
     size_t[2][string] keyMeasured;
@@ -1061,7 +1111,8 @@ unittest {
             }
     }
 
-    const recordedText = readText(buildPath(repoRoot, ledgerPath));
+    const recordedText = compiledLedgerText(
+        readText(buildPath(repoRoot, ledgerPath)), compiledModules);
     const recorded = parseLedger(recordedText);
 
     Ledger measured;

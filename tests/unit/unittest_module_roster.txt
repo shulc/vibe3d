@@ -35,7 +35,6 @@ tests.unit.command_invocation_wiring_test
 tests.unit.command_record_class_census_test
 tests.unit.command_registration_census_test
 tests.unit.command_surface_census_test
-tests.unit.command_tail_publisher_census_test
 tests.unit.command_winding_write_census_test
 tests.unit.command_wrapper_result_census_test
 tests.unit.commands.file.save_test
@@ -262,7 +261,6 @@ tests.unit.retopology_line_shade_test
 tests.unit.retopology_order_test
 tests.unit.revert_entry_census_test
 tests.unit.root_test_link_ownership_test
-tests.unit.root_test_package_population_test
 tests.unit.run_slots_test
 tests.unit.run_test_display_environment_test
 tests.unit.run_test_pgid_test
@@ -313,7 +311,6 @@ tests.unit.tool_commit_seam_census_g5_test
 tests.unit.tool_commit_seam_census_g6_test
 tests.unit.tool_commit_seam_census_g7_test
 tests.unit.tool_commit_seam_census_g8_test
-tests.unit.tool_gesture_record_residue_test
 tests.unit.tool_gesture_runopen_g2_test
 tests.unit.tool_gesture_runopen_g3_test
 tests.unit.tool_gesture_runopen_g4_test

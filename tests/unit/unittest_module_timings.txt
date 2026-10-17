@@ -208,7 +208,6 @@ UT 0.013 tests.unit.command_history_test
 UT 977.661 tests.unit.command_record_class_census_test
 UT 2753.696 tests.unit.command_registration_census_test
 UT 22.862 tests.unit.command_surface_census_test
-UT 452.837 tests.unit.command_tail_publisher_census_test
 UT 45.790 tests.unit.command_winding_write_census_test
 UT 679.619 tests.unit.command_wrapper_result_census_test
 UT 0.032 tests.unit.command_wrapper_result_test
@@ -520,7 +519,6 @@ UT 1021.255 tests.unit.tool_commit_seam_census_g5_test
 UT 35.082 tests.unit.tool_commit_seam_census_g6_test
 UT 239.008 tests.unit.tool_commit_seam_census_g7_test
 UT 893.408 tests.unit.tool_commit_seam_census_g8_test
-UT 343.891 tests.unit.tool_gesture_record_residue_test
 UT 0.037 tests.unit.tool_gesture_runopen_g2_test
 UT 0.008 tests.unit.tool_gesture_runopen_g3_test
 UT 0.006 tests.unit.tool_gesture_runopen_g4_test

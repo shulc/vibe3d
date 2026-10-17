@@ -250,10 +250,57 @@ private struct BypassCounts {
     size_t mixes;
 }
 
+// Ignore mixin-looking prose and literals while retaining the raw operands of
+// actual string mixins, including Registry references inside their literals.
+private string[] stringMixinOperands(string raw) {
+    import std.ascii : isWhite;
+    const code = blankNonCode(raw);
+    string[] operands;
+    size_t from;
+    while (from < code.length) {
+        const relative = code[from .. $].indexOf("mixin");
+        if (relative < 0) break;
+        const at = from + cast(size_t)relative;
+        from = at + "mixin".length;
+        const before = at > 0 ? at - 1 : at;
+        const after = from < code.length ? from + 1 : from;
+        if (!hasIdentifier(code[before .. after], "mixin"))
+            continue;
+        size_t open = from;
+        while (open < code.length && isWhite(code[open])) ++open;
+        if (open == code.length || code[open] != '(') continue;
+        size_t close = open + 1, depth = 1;
+        for (; close < code.length && depth; ++close) {
+            if (code[close] == '(') ++depth;
+            else if (code[close] == ')') --depth;
+        }
+        assert(depth == 0, "6510 unterminated string-mixin expression");
+        operands ~= raw[open + 1 .. close - 1];
+        from = close;
+    }
+    return operands;
+}
+
+// The two locator-arithmetic witnesses compile only the frozen path blocks
+// already compared with wave19Locators by census_symbols' own unittests.
+private size_t pathArithmeticMixins(string relative, string raw) {
+    import std.string : strip;
+    if (relative != "tests/unit/census_symbols.d") return 0;
+    const code = blankNonCode(raw);
+    if (hasIdentifier(code, "Registry") || hasIdentifier(code, "CommandRegistry"))
+        return 0;
+    enum arithmeticOperand = q{block.replace("__FILE_FULL_PATH__", "\"" ~ spelling ~ "\"")};
+    size_t permitted;
+    foreach (operand; stringMixinOperands(raw))
+        if (operand.strip == arithmeticOperand) ++permitted;
+    assert(permitted <= 2, "6510 path-arithmetic mixin population grew");
+    return permitted;
+}
+
 private BypassCounts bypassCounts(string raw) {
     const code = blankNonCode(raw);
     return BypassCounts(code.count(".tupleof"),
-        code.count("__traits(getMember"), raw.count("mixin" ~ "("));
+        code.count("__traits(getMember"), stringMixinOperands(raw).length);
 }
 
 private bool hasIdentifier(string code, string identifier) {
@@ -465,7 +512,10 @@ unittest {
             const counts = bypassCounts(raw);
             if (counts.tuples) foundTuple[relative] = counts.tuples;
             if (counts.members) foundMember[relative] = counts.members;
-            mixes += counts.mixes;
+            const permitted = pathArithmeticMixins(relative, raw);
+            if (relative == "tests/unit/census_symbols.d")
+                assert(permitted == 2, "6510 both path-arithmetic witnesses must remain classified");
+            mixes += counts.mixes - permitted;
 
     }
     assert(scopeFiles >= 50 && codeBytes > 1_000_000,
@@ -491,6 +541,24 @@ unittest {
         "6510 getMember ratchet positive controls do not discriminate existing/new rows");
     assert(bypassCounts("Registry r; " ~ "mixin" ~ "(`r.tupleof[0];`);").mixes == 1,
         "6510 string-mixin bypass control is blind");
+    enum arithmeticOperand = q{block.replace("__FILE_FULL_PATH__", "\"" ~ spelling ~ "\"")};
+    const arithmetic = "mixin" ~ "(" ~ arithmeticOperand ~ ");\n";
+    assert(pathArithmeticMixins("tests/unit/census_symbols.d", arithmetic ~ arithmetic) == 2,
+        "6510 both existing arithmetic operands must remain classified");
+    assert(pathArithmeticMixins("source/registry.d", arithmetic) == 0
+        && pathArithmeticMixins("tests/unit/census_symbols.d", "Registry r; " ~ arithmetic) == 0,
+        "6510 the arithmetic exception must not admit another owner or Registry code");
+    const indirect = "enum block = `Registry r; auto x = r.tupleof[0];`; mixin" ~ "(block);";
+    assert(hasIdentifier(indirect, "Registry") && bypassCounts(indirect).mixes == 1
+        && pathArithmeticMixins("tests/unit/census_symbols.d", indirect) == 0,
+        "6510 indirect Registry-bearing string operands must remain forbidden");
+    assert(bypassCounts("Registry r; mixin" ~ " /* gap */ ( `r.tupleof[0];` );").mixes == 1,
+        "6510 whitespace and comments must not hide a real string mixin");
+    assert(bypassCounts("Registry r; // mixin" ~ "(`r.tupleof[0];`);\n"
+        ~ "enum fixture = `mixin" ~ "(x);`; ").mixes == 0,
+        "6510 mixin-looking comments and literals are not executed string mixins");
+    assert(bypassCounts("Registry r; mymixin" ~ "(x); mixinTemplate!(int) x;").mixes == 0,
+        "6510 only the whole mixin keyword followed by parentheses is a string mixin");
     assert("Registry.tupleof".count("Registry.tupleof") == 1,
         "6510 Registry.tupleof control is blind");
     assert(hasIdentifier("commandFactories_", "commandFactories_")

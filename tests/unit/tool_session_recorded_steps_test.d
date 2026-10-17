@@ -938,11 +938,18 @@ unittest {
 unittest {
     import vibe3d.apps.desktop.create_tool_registration, vibe3d.apps.desktop.edit_tool_registration, vibe3d.apps.desktop.transform_tool_registration;
     import core.memory : GC;
-    import std.algorithm : sort;
+    import std.algorithm : sort, startsWith, any;
     import std.stdio : writeln;
+    enum toolModulePrefixes = [
+        "vibe3d.editing.tools.interactive.tools.",
+        "vibe3d.editing.tools.state.tools.",
+        "vibe3d.editing.tools.transform.tools.",
+        "vibe3d.editing.tools.creation.tools.",
+        "vibe3d.editing.tools.alignment.tools.",
+    ];
     string[] reached;
     foreach (moduleInfo; ModuleInfo) {
-        if (moduleInfo is null || moduleInfo.name.length < 6 || moduleInfo.name[0..6] != "tools.") continue;
+        if (moduleInfo is null || !toolModulePrefixes.any!(prefix => moduleInfo.name.startsWith(prefix))) continue;
         foreach (cls; moduleInfo.localClasses) {
             bool toolClass;
             for (auto parent=cls; parent !is null; parent=parent.base)

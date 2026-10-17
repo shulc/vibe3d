@@ -501,97 +501,40 @@ class BoundaryControls(unittest.TestCase):
                 with self.assertRaisesRegex(ValueError, 'Wave19 old-coordinate prior import population'):
                     census._wave19_import_original(control_path, '', actual)
 
-    def test_current_captured_client_import_projection(self):
-        import hashlib
+    def test_client_import_projection_coordinates(self):
         import sys
-        with patch.object(sys, 'path', [str(Path(__file__).resolve().parents[1] / 'tools/dspans'), *sys.path]):
-            import census_contracts as census
         actual = Path(__file__).resolve().parents[1]
-        source = actual / 'tools/dspans/census_contracts.py'
-        tree = ast.parse(source.read_text())
-        names = ('_WAVE19_OWNERS', '_WAVE19_COORDINATES', '_WAVE19_CLIENT_IMPORTS',
-                 '_WAVE19_COORDINATE_PRIOR_IMPORTS', '_WAVE19_IDENTITIES', '_WAVE19_IDENTITY_PIN',
-                 '_WAVE19_APP_PEER_GROUPS', '_WAVE19_HOST_PEER_OWNERS', '_WAVE19_LOCATORS')
-        namespace = {'_source_validity': [], 'dspans_client': census.dspans_client}
-        for node in tree.body:
-            if (isinstance(node, ast.Assign) and isinstance(node.targets[0], ast.Name)
-                    and node.targets[0].id in names):
-                namespace[node.targets[0].id] = ast.literal_eval(node.value)
-        functions = ('_wave19_moved', '_wave19_original', '_wave19_coordinate',
-                     '_wave19_identity_intact', '_wave19_import_original', '_wave19_app_state',
-                     '_wave19_row_moved', '_wave19_target_moved', '_wave19_special_operand_moved',
-                     '_wave19_locator_intact')
-        nodes = [node for node in tree.body
-                 if isinstance(node, ast.FunctionDef) and node.name in functions]
-        self.assertEqual({node.name for node in nodes}, set(functions))
-        exec(compile(ast.Module(body=nodes, type_ignores=[]), str(source), 'exec'), namespace)
-        clients = namespace['_WAVE19_CLIENT_IMPORTS']
-        self.assertEqual(len(clients), 390)
-        self.assertEqual(sum(map(len, clients.values())), 3359)
-        inverse = namespace['_wave19_import_original']
-        hashes = []
-        for relative in sorted(clients):
-            with self.subTest(path=relative):
-                logical = inverse(actual / relative, (actual / relative).read_text(), actual)
-                hashes.append((relative, hashlib.sha256(logical.encode()).hexdigest()))
-        # Independently reconstructed immutable90 bodies plus five explicitly
-        # reviewed D1 body deltas and three finite D2 reader/control transforms.
-        # Expected construction never reads candidate client source for hashes.
-        digest = hashlib.sha256(json.dumps(hashes, separators=(',', ':')).encode()).hexdigest()
-        self.assertEqual(digest, '90297c51262a5d32a5b86d1d4bcfa0a887534abe9558348052507da8e25f3bef',
-                         'Wave19 all390 current logical client bodies')
-        # Newly owned sources retain their prior-D1 imported spelling only
-        # while the D2 owner itself remains at the old coordinate. Exercise the
-        # actual read_source_text old-coordinate branch for every37 source/84
-        # imports, with independently frozen90 full-body hashes.
-        prior = namespace['_WAVE19_COORDINATE_PRIOR_IMPORTS']
-        self.assertEqual(len(prior), 37)
-        self.assertEqual(sum(map(len, prior.values())), 84)
-        self.assertFalse(set(prior) & set(clients))
-        d2_owners = ('camera-model', 'image-codec', 'input-events', 'mesh-edit-log', 'mesh-topology', 'render-model', 'mesh', 'document-model', 'mesh-edit-replay', 'mesh-ops', 'mesh-preview', 'mesh-snapshot', 'pipe-contracts')
-        owned_hashes = []
-        with tempfile.TemporaryDirectory(prefix='boundary-prior-client-') as directory:
-            root = Path(directory)
-            for owner, old_root, new_root in census._WAVE19_OWNERS:
-                moved = owner not in d2_owners
-                recipe = root / (new_root if moved else old_root) / 'dub.json'
-                recipe.parent.mkdir(parents=True, exist_ok=True)
-                recipe.write_text(json.dumps({'name': owner if moved else 'vibe3d-' + owner}))
-            for owner, old, new, spans in census._WAVE19_COORDINATES:
-                moved = owner not in d2_owners
-                offset, current, original = spans[0]
-                physical = root / (new if moved else old)
-                physical.parent.mkdir(parents=True, exist_ok=True)
-                physical.write_text(' ' * (offset - 7) + 'module '
-                                    + (current if moved else original) + ';\n')
-            for relative in sorted(prior):
-                owner, old, new, spans = next(row for row in census._WAVE19_COORDINATES
-                                             if row[1] == relative)
-                logical = namespace['_wave19_original']((actual / new).read_text(), spans)
-                # Reapply only the captured prior-D1 imports to an original
-                # body; D2 referenced owners remain old in this fixture.
-                current = logical
-                for offset, chosen, original, referenced_owner in reversed(prior[relative]):
-                    self.assertNotIn(referenced_owner, d2_owners)
-                    self.assertEqual(current[offset:offset + len(original)], original)
-                    current = current[:offset] + chosen + current[offset + len(original):]
-                (root / relative).write_text(current)
-                projected = census.read_source_text(root / relative, root=root)
-                owned_hashes.append((relative, hashlib.sha256(projected.encode()).hexdigest()))
-        owned_digest = hashlib.sha256(json.dumps(owned_hashes, separators=(',', ':')).encode()).hexdigest()
-        self.assertEqual(owned_digest, 'f38ab2d9fccfbcc20a8fb4f5593da678517c03bec2a0968e4cca23f7346dfa67',
-                         'Wave19 all37 old-coordinate prior-import original90 bodies')
-        relative = 'tests/unit/mesh_test.d'
-        text = (actual / relative).read_text()
-        for corrected, stale in ((44323, 44292), (223235, 223204)):
-            rows = clients[relative]
-            self.assertEqual(sum(row[0] == corrected for row in rows), 1)
-            malformed = dict(clients)
-            malformed[relative] = tuple((stale, *row[1:]) if row[0] == corrected else row
-                                        for row in rows)
-            with self.subTest(stale=stale), patch.dict(namespace, _WAVE19_CLIENT_IMPORTS=malformed):
-                with self.assertRaisesRegex(ValueError, 'Wave19 declaration/import coordinate'):
-                    inverse(actual / relative, text, actual)
+        with patch.object(sys, 'path', [str(actual / 'tools/dspans'), *sys.path]):
+            import census_contracts as census
+        # Check the inverse on a bounded import fixture. Wave19's historical
+        # full-body hashes also froze unrelated host-test code and refused later
+        # reader fixes; they are migration receipts, not a library boundary.
+        original = 'import math;\nimport app;\n'
+        rows = ((original.index('math'), 'vibe3d.util.math.math', 'math', 'math'),
+                (original.index('app'), 'vibe3d.apps.desktop.app', 'app', 'desktop'))
+        current = original
+        for offset, selected, previous, owner in reversed(rows):
+            current = current[:offset] + selected + current[offset + len(previous):]
+        relative = 'tests/unit/wave19-import-coordinate-control.d'
+        clients = dict(census._WAVE19_CLIENT_IMPORTS)
+        replaced = next(path for path, imports in clients.items() if len(imports) == len(rows))
+        del clients[replaced]
+        clients[relative] = rows
+        path = actual / relative
+        with patch.object(census, '_WAVE19_CLIENT_IMPORTS', clients):
+            self.assertEqual(census._wave19_import_original(path, current, actual), original)
+            with self.assertRaisesRegex(ValueError, 'Wave19 declaration/import coordinate'):
+                census._wave19_import_original(path, current.replace('vibe3d.util.math.math',
+                    'vibe3d.util.math.nope'), actual)
+            with self.assertRaisesRegex(ValueError, 'Wave19 exact special-role client target'):
+                census._wave19_import_original(path, current.replace('vibe3d.apps.desktop.app',
+                    'vibe3d.apps.desktop.absent'), actual)
+        # A stale numerical offset must still refuse; no permissive operand
+        # search replaces the exact captured-coordinate check.
+        clients[relative] = ((rows[0][0] - 1, *rows[0][1:]), rows[1])
+        with patch.object(census, '_WAVE19_CLIENT_IMPORTS', clients):
+            with self.assertRaisesRegex(ValueError, 'Wave19 declaration/import coordinate'):
+                census._wave19_import_original(path, current, actual)
 
     def test_current_support_runtime_identities(self):
         # Independently frozen D1+D2 enabled cells plus the unchanged math pilot.
