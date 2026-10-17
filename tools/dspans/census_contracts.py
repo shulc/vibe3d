@@ -622,19 +622,18 @@ _WAVE19_COORDINATES = (('ai-advisor',
  'packages/alignment-ops/source/tools/alignment/align_kernels.d',
  'libraries/editing/tools/alignment/source/vibe3d/editing/tools/alignment/tools/alignment/align_kernels.d',
  ((7, 'vibe3d.editing.tools.alignment.tools.alignment.align_kernels', 'tools.alignment.align_kernels'),
-  (2745, 'vibe3d.mesh.core.', ''),
-  (2795, 'vibe3d.editing.contracts.', ''),
-  (2848, 'vibe3d.util.math.', ''),
-  (15198, 'vibe3d.editing.selection.query.', ''),
-  (19868, 'vibe3d.editing.selection.query.', ''),
-  (21179, 'vibe3d.editing.selection.query.', ''),
-  (25758,
-   '    import std.path : buildNormalizedPath, buildPath, dirName;\n'
-   '    enum root = '
-   'buildPath(dirName(dirName(dirName(dirName(dirName(dirName(dirName(dirName(dirName(dirName(dirName(dirName(buildNormalizedPath(__FILE_FULL_PATH__))))))))))))), '
-   '"packages", "alignment-ops");',
-   '    import std.path : buildPath, dirName;\n'
-   '    enum root = dirName(dirName(dirName(dirName(__FILE_FULL_PATH__))));'))),
+ (2745, 'vibe3d.mesh.core.', ''),
+ (2795, 'vibe3d.editing.contracts.', ''),
+ (2848, 'vibe3d.util.math.', ''),
+ (15198, 'vibe3d.editing.selection.query.', ''),
+ (19868, 'vibe3d.editing.selection.query.', ''),
+ (21179, 'vibe3d.editing.selection.query.', ''),
+ (25758,
+  '    import std.path : buildNormalizedPath, buildPath, dirName;\n'
+  '    enum root = '
+  'dirName(dirName(dirName(dirName(dirName(dirName(dirName(dirName(buildNormalizedPath(__FILE_FULL_PATH__)))))))));',
+  '    import std.path : buildPath, dirName;\n'
+  '    enum root = dirName(dirName(dirName(dirName(__FILE_FULL_PATH__))));'))),
  ('alignment-ops',
   'packages/alignment-ops/tests/source/tests/unit/alignment_ops_population_test.d',
   'libraries/editing/tools/alignment/tests/source/vibe3d/editing/tools/alignment/tests/unit/alignment_ops_population_test.d',
@@ -1256,17 +1255,18 @@ _WAVE19_COORDINATES = (('ai-advisor',
   'packages/creation-ops/tests/source/tests/unit/tools/create/pen_geometry_test.d',
   'libraries/editing/tools/creation/tests/source/vibe3d/editing/tools/creation/tests/unit/tools/create/pen_geometry_test.d',
   ((339,
-    'vibe3d.editing.tools.creation.tests.unit.tools.create.pen_geometry_test',
-    'tests.unit.tools.create.pen_geometry_test'),
-   (449, 'vibe3d.util.math.', ''),
-   (498, 'vibe3d.util.spatial.', ''),
-   (558, 'vibe3d.mesh.core.', ''),
-   (595, 'vibe3d.editing.contracts.', ''),
-   (646, 'vibe3d.editing.pipeline.contracts.', ''),
-   (722, 'vibe3d.editing.tools.creation.', ''),
-   (2768, 'buildPath(dirName(dirName(dirName(dirName(dirName(dirName(dirName(dirName(dirName(', ''),
-   (2905, 'FULL_PATH_', ''),
-   (2922, '))))))))), "packages", "creation-ops", "tests")', ''))),
+  'vibe3d.editing.tools.creation.tests.unit.tools.create.pen_geometry_test',
+  'tests.unit.tools.create.pen_geometry_test'),
+ (449, 'vibe3d.util.math.', ''),
+ (498, 'vibe3d.util.spatial.', ''),
+ (558, 'vibe3d.mesh.core.', ''),
+ (595, 'vibe3d.editing.contracts.', ''),
+ (646, 'vibe3d.editing.pipeline.contracts.', ''),
+ (722, 'vibe3d.editing.tools.creation.', ''),
+ (2695, 'buildNormalizedPath, ', ''),
+ (2789,
+  'dirName(dirName(dirName(dirName(dirName(dirName(dirName(dirName(dirName(dirName(buildNormalizedPath(__FILE_FULL_PATH__)))))))))))',
+  'dirName(dirName(dirName(dirName(dirName(dirName(__FILE__))))))'))),
  ('display-policy',
   'packages/display-policy/source/camera_stamp.d',
   'libraries/viewport/display-policy/source/vibe3d/viewport/display_policy/camera_stamp.d',
@@ -24706,16 +24706,12 @@ _WAVE19_LOCATORS = (('L03-retopology-root-fixture',
  'alignment-ops',
  '    import std.path : buildPath, dirName;\n'
  '    enum root = dirName(dirName(dirName(dirName(__FILE_FULL_PATH__))));',
- '    import std.path : buildNormalizedPath, buildPath, dirName;\n'
- '    enum root = '
- 'buildPath(dirName(dirName(dirName(dirName(dirName(dirName(dirName(dirName(dirName(dirName(dirName(dirName(buildNormalizedPath(__FILE_FULL_PATH__))))))))))))), '
- '"packages", "alignment-ops");'),
+ '    import std.path : buildNormalizedPath, buildPath, dirName;\n    enum root = dirName(dirName(dirName(dirName(dirName(dirName(dirName(dirName(buildNormalizedPath(__FILE_FULL_PATH__)))))))));'),
  ('L02-pen-owner-fixture',
   'packages/creation-ops/tests/source/tests/unit/tools/create/pen_geometry_test.d',
   'creation-ops',
   'dirName(dirName(dirName(dirName(dirName(dirName(__FILE__))))))',
-  'buildPath(dirName(dirName(dirName(dirName(dirName(dirName(dirName(dirName(dirName(dirName(dirName(dirName(dirName(dirName(dirName(__FILE_FULL_PATH__))))))))))))))), '
-  '"packages", "creation-ops", "tests")'),
+  'dirName(dirName(dirName(dirName(dirName(dirName(dirName(dirName(dirName(dirName(buildNormalizedPath(__FILE_FULL_PATH__)))))))))))'),
  ('L06-ai3d-dev-script',
  'packages/ai3d-runtime/source/ai3d/worker_manager.d',
  'ai3d-runtime',
@@ -24741,7 +24737,7 @@ def _wave19_locator_intact(path, text, root):
         return
     import hashlib, json
     valid = (len(_WAVE19_LOCATORS) == 7 and len({row[0] for row in _WAVE19_LOCATORS}) == 7
-             and hashlib.sha256(json.dumps(_WAVE19_LOCATORS, separators=(',', ':')).encode()).hexdigest() == 'df323824947d4c943c575d43b3a89ac0a13123cfab777b861f18fd9ceb02fded')
+             and hashlib.sha256(json.dumps(_WAVE19_LOCATORS, separators=(',', ':')).encode()).hexdigest() == 'b5793111bc7cad43092d1e30294a7db1cc0d99e5cd974ee56be055253725bbdc')
     _source_validity.append(valid)
     if not valid:
         raise ValueError('Wave19 frozen seven locator population')

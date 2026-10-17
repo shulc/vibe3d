@@ -4380,8 +4380,8 @@ private struct Wave19Locator { string id, path, owner, oldText, newText; }
 private immutable Wave19Locator[] wave19Locators = [
     Wave19Locator("L03-retopology-root-fixture", "packages/display-policy/tests/source/tests/unit/retopology_display_model_test.d", "display-policy", "buildPath(dirName(dirName(dirName(dirName(dirName(dirName(dirName(__FILE_FULL_PATH__))))))), \"tests\", \"fixtures\",\n              \"retopology_display.json\")", "buildPath(dirName(dirName(dirName(dirName(dirName(dirName(dirName(dirName(dirName(dirName(dirName(__FILE_FULL_PATH__))))))))))), \"tests\", \"fixtures\",\n              \"retopology_display.json\")"),
     Wave19Locator("L04-retopology-production-census", "packages/display-policy/tests/source/tests/unit/retopology_display_model_test.d", "display-policy", "buildPath(\n            dirName(dirName(dirName(dirName(dirName(dirName(dirName(__FILE_FULL_PATH__))))))), \"packages/display-policy/source\",\n            \"display_state.d\")", "buildPath(\n            dirName(dirName(dirName(dirName(dirName(dirName(dirName(dirName(dirName(dirName(dirName(__FILE_FULL_PATH__))))))))))), \"libraries/viewport/display-policy/source/vibe3d/viewport/display_policy\",\n            \"display_state.d\")"),
-    Wave19Locator("L01-align-owner-fixture", "packages/alignment-ops/source/tools/alignment/align_kernels.d", "alignment-ops", "    import std.path : buildPath, dirName;\n    enum root = dirName(dirName(dirName(dirName(__FILE_FULL_PATH__))));", "    import std.path : buildNormalizedPath, buildPath, dirName;\n    enum root = buildPath(dirName(dirName(dirName(dirName(dirName(dirName(dirName(dirName(dirName(dirName(dirName(dirName(buildNormalizedPath(__FILE_FULL_PATH__))))))))))))), \"packages\", \"alignment-ops\");"),
-    Wave19Locator("L02-pen-owner-fixture", "packages/creation-ops/tests/source/tests/unit/tools/create/pen_geometry_test.d", "creation-ops", "dirName(dirName(dirName(dirName(dirName(dirName(__FILE__))))))", "buildPath(dirName(dirName(dirName(dirName(dirName(dirName(dirName(dirName(dirName(dirName(dirName(dirName(dirName(dirName(dirName(__FILE_FULL_PATH__))))))))))))))), \"packages\", \"creation-ops\", \"tests\")"),
+    Wave19Locator("L01-align-owner-fixture", "packages/alignment-ops/source/tools/alignment/align_kernels.d", "alignment-ops", "    import std.path : buildPath, dirName;\n    enum root = dirName(dirName(dirName(dirName(__FILE_FULL_PATH__))));", "    import std.path : buildNormalizedPath, buildPath, dirName;\n    enum root = dirName(dirName(dirName(dirName(dirName(dirName(dirName(dirName(buildNormalizedPath(__FILE_FULL_PATH__)))))))));"),
+    Wave19Locator("L02-pen-owner-fixture", "packages/creation-ops/tests/source/tests/unit/tools/create/pen_geometry_test.d", "creation-ops", "dirName(dirName(dirName(dirName(dirName(dirName(__FILE__))))))", "dirName(dirName(dirName(dirName(dirName(dirName(dirName(dirName(dirName(dirName(buildNormalizedPath(__FILE_FULL_PATH__)))))))))))"),
     Wave19Locator("L06-ai3d-dev-script", "packages/ai3d-runtime/source/ai3d/worker_manager.d", "ai3d-runtime", "        enum repoRoot = dirName(dirName(dirName(dirName(dirName(__FILE_FULL_PATH__)))));", "        import std.path : buildNormalizedPath;\n        enum repoRoot = dirName(dirName(dirName(dirName(dirName(dirName(dirName(dirName(dirName(buildNormalizedPath(__FILE_FULL_PATH__))))))))));"),
     Wave19Locator("L07-ai3d-worker-module", "packages/ai3d-runtime/tests/source/tests/unit/ai3d/worker_manager_source_public_test.d", "ai3d-runtime", "dirName(dirName(dirName(dirName(dirName(dirName(dirName(dirName(__FILE_FULL_PATH__))))))))", "dirName(dirName(dirName(dirName(dirName(dirName(dirName(dirName(dirName(dirName(dirName(dirName(__FILE_FULL_PATH__))))))))))))"),
     Wave19Locator("L05-oblique-root-fixture", "packages/interactive-tools/tests/source/tests/unit/drag_gain_oblique_test.d", "interactive-tools", "buildPath(dirName(__FILE_FULL_PATH__),\n                                   \"../../../../../../tests/fixtures\", kFixtureName)", "buildPath(dirName(__FILE_FULL_PATH__),\n                                   \"../../../../../../../../../../../../tests/fixtures\", kFixtureName)"),
@@ -5644,7 +5644,7 @@ unittest { // Wave19 D1: frozen real-row bijection and each complete selected ow
             {
                 enum block = q"BLOCK
     import std.path : buildNormalizedPath, buildPath, dirName;
-    enum root = buildPath(dirName(dirName(dirName(dirName(dirName(dirName(dirName(dirName(dirName(dirName(dirName(dirName(buildNormalizedPath(__FILE_FULL_PATH__))))))))))))), "packages", "alignment-ops");
+    enum root = dirName(dirName(dirName(dirName(dirName(dirName(dirName(dirName(buildNormalizedPath(__FILE_FULL_PATH__)))))))));
 BLOCK"[0 .. $ - 1];
                 size_t bound;
                 foreach (locator; wave19Locators) if (locator.id == "L01-align-owner-fixture") {
@@ -5656,7 +5656,7 @@ BLOCK"[0 .. $ - 1];
                     "/wave19/libraries/editing/tools/alignment/tests/../source/vibe3d/editing/tools/alignment/tools/alignment/align_kernels.d",
                     "/wave19/./libraries/editing/tools/alignment/tests/../source/vibe3d/editing/tools/alignment/tools/alignment/align_kernels.d"]) {{
                     mixin(block.replace("__FILE_FULL_PATH__", "\"" ~ spelling ~ "\""));
-                    assert(root == "/wave19/packages/alignment-ops", "Wave19 normalized source arithmetic: l01");
+                    assert(root == "/wave19/libraries/editing/tools/alignment", "Wave19 normalized source arithmetic: l01");
                 }}
             }
             {

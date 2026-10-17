@@ -47,9 +47,9 @@ unittest // exact rebuilt geometry and connectivity, including repeated corners
         return Vec3(cast(float)num(v[0]), cast(float)num(v[1]), cast(float)num(v[2]));
     }
     import std.file : readText;
-    import std.path : buildPath, dirName;
+    import std.path : buildNormalizedPath, buildPath, dirName;
     const fx = parseJSON(readText(buildPath(
-        buildPath(dirName(dirName(dirName(dirName(dirName(dirName(dirName(dirName(dirName(dirName(dirName(dirName(dirName(dirName(dirName(__FILE_FULL_PATH__))))))))))))))), "packages", "creation-ops", "tests"),
+        dirName(dirName(dirName(dirName(dirName(dirName(dirName(dirName(dirName(dirName(buildNormalizedPath(__FILE_FULL_PATH__))))))))))),
         "fixtures", "pen_rebuild_merge.json")));
     assert(fx["rows"].array.length == 7, "rebuild mesh table lost a row");
     foreach (c; fx["rows"].array) {

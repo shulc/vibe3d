@@ -556,7 +556,7 @@ unittest { // Task 20261040: private radialAlignStart, original first equal-key 
     import std.json : parseJSON, JSONType;
     import std.format : format;
     import std.path : buildNormalizedPath, buildPath, dirName;
-    enum root = buildPath(dirName(dirName(dirName(dirName(dirName(dirName(dirName(dirName(dirName(dirName(dirName(dirName(buildNormalizedPath(__FILE_FULL_PATH__))))))))))))), "packages", "alignment-ops");
+    enum root = dirName(dirName(dirName(dirName(dirName(dirName(dirName(dirName(buildNormalizedPath(__FILE_FULL_PATH__)))))))));
     auto fixture = parseJSON(readText(buildPath(root,
         "tests/fixtures/radial_nsided_original.json")));
     assert(fixture["model"]["vertices"].array.length == 90 &&

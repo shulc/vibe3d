@@ -187,7 +187,7 @@
     "GL_33"
   ],
   "stringImportPaths": [
-    "../../../../packages/viewport-gpu/assets/shading",
+    "../../../../assets/shading",
     "../../../../assets/icon"
   ],
   "importPaths": [

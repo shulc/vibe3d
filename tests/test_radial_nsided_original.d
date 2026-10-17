@@ -92,7 +92,7 @@ private void schema(bool tool) {
 }
 unittest { // Command factory, each tuple from fresh original source, Undo/Redo.
     schema(false);
-    auto f=parseJSON(readText("packages/alignment-ops/tests/fixtures/radial_nsided_original.json"));
+    auto f=parseJSON(readText("libraries/editing/tools/alignment/tests/fixtures/radial_nsided_original.json"));
     assert(f["cells"].array.length==4,"four frozen product cells");
     foreach(c;0..4) {
         auto before=loadOriginal(f), cell=f["cells"][c];
@@ -116,7 +116,7 @@ unittest { // Command factory, each tuple from fresh original source, Undo/Redo.
 }
 unittest { // Fresh registered tool door, actual inverse and closed-tool forward replay.
     schema(true);
-    auto f=parseJSON(readText("packages/alignment-ops/tests/fixtures/radial_nsided_original.json"));
+    auto f=parseJSON(readText("libraries/editing/tools/alignment/tests/fixtures/radial_nsided_original.json"));
     foreach(c;0..4) {
         auto before=loadOriginal(f), cell=f["cells"][c];
         cmd("tool.set xfrm.radialAlignTool on");
@@ -155,7 +155,7 @@ private void attrs(JSONValue cell) {
     }
 }
 unittest { // Four independent goldens, one arm and retained ORIGINAL evaluation input.
-    auto f=parseJSON(readText("packages/alignment-ops/tests/fixtures/radial_nsided_original.json"));
+    auto f=parseJSON(readText("libraries/editing/tools/alignment/tests/fixtures/radial_nsided_original.json"));
     auto before=loadOriginal(f);
     cmd("tool.set xfrm.radialAlignTool on");
     const token=getJson("/api/tool/state")["session"]["token"].integer;
@@ -189,7 +189,7 @@ unittest { // Four independent goldens, one arm and retained ORIGINAL evaluation
     cmd("tool.set xfrm.radialAlignTool off");
 }
 unittest { // History panel jump reader walks the same owned closed payload.
-    auto f=parseJSON(readText("packages/alignment-ops/tests/fixtures/radial_nsided_original.json"));
+    auto f=parseJSON(readText("libraries/editing/tools/alignment/tests/fixtures/radial_nsided_original.json"));
     auto before=loadOriginal(f);
     cmd("tool.set xfrm.radialAlignTool on"); attrs(f["cells"][0]);
     cmd("tool.doApply"); score(f,before,0,"jump-control");
@@ -202,7 +202,7 @@ unittest { // History panel jump reader walks the same owned closed payload.
 }
 
 unittest { // Actual reset and mesh-rebuild doors end the original operation window.
-    auto f=parseJSON(readText("packages/alignment-ops/tests/fixtures/radial_nsided_original.json"));
+    auto f=parseJSON(readText("libraries/editing/tools/alignment/tests/fixtures/radial_nsided_original.json"));
     foreach(reset;[true,false]) {
         auto before=loadOriginal(f);
         cmd("tool.set xfrm.radialAlignTool on"); attrs(f["cells"][0]);
@@ -220,7 +220,7 @@ unittest { // Actual reset and mesh-rebuild doors end the original operation win
 }
 
 unittest { // A warm zero-weight member keeps the visible result, not the retained input.
-    auto f=parseJSON(readText("packages/alignment-ops/tests/fixtures/radial_nsided_original.json"));
+    auto f=parseJSON(readText("libraries/editing/tools/alignment/tests/fixtures/radial_nsided_original.json"));
     auto before=loadOriginal(f);
     cmd("tool.set xfrm.radialAlignTool on"); attrs(f["cells"][0]);
     cmd("tool.doApply"); score(f,before,0,"mixed-weight-control");
@@ -258,7 +258,7 @@ unittest {
     }
     assert(controls == 5, "radial panel exposes all five live attributes");
     assert(apply == "tool.doApply", "radial panel exposes the real Apply door");
-    auto f = parseJSON(readText("packages/alignment-ops/tests/fixtures/radial_nsided_original.json"));
+    auto f = parseJSON(readText("libraries/editing/tools/alignment/tests/fixtures/radial_nsided_original.json"));
     auto before = loadOriginal(f);
     cmd("tool.set xfrm.radialAlignTool on");
     foreach (c; 0..2) {
@@ -279,7 +279,7 @@ unittest {
 // Task 20261210: real viewport delivery, frozen original postimages and navigation.
 unittest {
     import drag_helpers : fetchCamera, buildDragLog, playAndWait;
-    auto f = parseJSON(readText("packages/alignment-ops/tests/fixtures/radial_nsided_original.json"));
+    auto f = parseJSON(readText("libraries/editing/tools/alignment/tests/fixtures/radial_nsided_original.json"));
     auto before = loadOriginal(f);
     cmd("tool.set xfrm.radialAlignTool on");
     attrs(f["cells"][0]);

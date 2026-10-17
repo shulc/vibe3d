@@ -3,9 +3,9 @@
 
 The editor's image decoder reads PNG, not Radiance .hdr, so the downloaded CC0
 originals are converted once, here, into 16-bit RGB PNGs that the binary embeds
-(`packages/viewport-gpu/assets/shading/`, string-imported by `packages/viewport-gpu/source/viewport_env.d`).
+(`assets/shading/`, string-imported by `libraries/viewport/gpu/source/vibe3d/viewport/gpu/viewport_env.d`).
 
-    python3 tools/convert_shading_images.py --in <originals> --out packages/viewport-gpu/assets/shading
+    python3 tools/convert_shading_images.py --in <originals> --out assets/shading
     python3 tools/convert_shading_images.py --in <originals> --out /var/tmp/x --check
 
 `<originals>` holds `env/<name>_1k.hdr` (equirect 1024x512),
@@ -30,7 +30,7 @@ Steps, identical for every run:
     MatCaps are not touched (their two layers ARE the lighting);
   * every file: stored = round(clamp(value / 16, 0, 1) * 65535) as uint16 RGB,
     PNG compression 9. The one linear scale (16) is `kShadingImageLinearScale`
-    in `packages/viewport-gpu/source/viewport_env.d`; the decoder multiplies it back — one decode
+    in `libraries/viewport/gpu/source/vibe3d/viewport/gpu/viewport_env.d`; the decoder multiplies it back — one decode
     path for both kinds (a normalised env simply occupies [0, 1/16) of the
     range: 4096 levels across [0, 1], far below one 8-bit display step). An env
     texel that rounds up to ENV_CLIP_LEVEL (4096, value 1.0) is refused: the
@@ -40,7 +40,7 @@ Steps, identical for every run:
 input sha256, output file sha256, and the sha256 of the DECODED pixels (uint16
 little-endian, RGB, top row first) — file bytes can differ across zlib builds,
 pixels cannot. `--check` converts into `--out` and compares those pixel hashes
-against `--manifest` (default `packages/viewport-gpu/assets/shading/MANIFEST.tsv`), printing
+against `--manifest` (default `assets/shading/MANIFEST.tsv`), printing
 `PIXELS MATCH n/N` and `EXPOSURE MATCH n/N` (the `exposure` column, compared as
 its 6-decimal text); exit status 1 on any mismatch.
 """
@@ -182,7 +182,7 @@ def main():
     ap.add_argument("--in", dest="src", required=True)
     ap.add_argument("--out", required=True)
     ap.add_argument("--check", action="store_true")
-    ap.add_argument("--manifest", default=os.path.join(here, "..", "packages", "viewport-gpu", "assets", "shading", "MANIFEST.tsv"))
+    ap.add_argument("--manifest", default=os.path.join(here, "..", "assets", "shading", "MANIFEST.tsv"))
     a = ap.parse_args()
 
     sums = read_sums(a.src)

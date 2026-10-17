@@ -1501,7 +1501,7 @@ void harvestSourceFlags() {
         // task 5930's project-owned C source includes the linked UI package's
         // header through its expanded -P-I path.
         g_compileFlags ~= gather("dflags",               "", true);
-        const extraCompileFlags = " -I=libraries/editing/tools/interactive/tests/source -I=libraries/viewport/host/tests/source -I=libraries/editing/interaction/data/tests/source -I=libraries/runtime/ai-advisor/tests/source -I=libraries/runtime/ai3d/tests/source -I=libraries/runtime/remesh/tests/source -I=libraries/runtime/document-actions/tests/source -J=tests -J=packages/creation-ops/tests/fixtures";
+        const extraCompileFlags = " -I=libraries/editing/tools/interactive/tests/source -I=libraries/viewport/host/tests/source -I=libraries/editing/interaction/data/tests/source -I=libraries/runtime/ai-advisor/tests/source -I=libraries/runtime/ai3d/tests/source -I=libraries/runtime/remesh/tests/source -I=libraries/runtime/document-actions/tests/source -J=tests -J=libraries/editing/tools/creation/tests/fixtures";
         g_compileFlags ~= extraCompileFlags;
         g_compileArgs ~= extraCompileFlags.split;
         g_linkTail     ~= gather("lflags",              "-L");
@@ -1902,8 +1902,8 @@ string[] gateViolations(string testsDir) {
 /// helper object build and the per-test compile, so the two cannot drift: an
 /// object built under different -version / -w / -unittest flags than the test
 /// that links it is a different program, and would link anyway.
-string httpTestFlags()   { return " -unittest -J=tests -J=packages/creation-ops/tests/fixtures -I=tests -w"; }
-string sourceTestFlags() { return " -unittest -J=tests -J=packages/creation-ops/tests/fixtures -I=tests" ~ sourceCompileFlags(); }
+string httpTestFlags()   { return " -unittest -J=tests -J=libraries/editing/tools/creation/tests/fixtures -I=tests -w"; }
+string sourceTestFlags() { return " -unittest -J=tests -J=libraries/editing/tools/creation/tests/fixtures -I=tests" ~ sourceCompileFlags(); }
 
 /// Build the injected modules (injectedTestModules: http_client, every
 /// *_helpers.d, liveness_gate) ONCE per run into one object file, instead of

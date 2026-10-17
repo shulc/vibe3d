@@ -550,7 +550,7 @@
   ],
   "stringImportPaths": [
     "../../../../../tests",
-    "../../../../../packages/creation-ops/tests/fixtures"
+    "../../../../../libraries/editing/tools/creation/tests/fixtures"
   ],
   "workingDirectory": "../../../../../"
 }

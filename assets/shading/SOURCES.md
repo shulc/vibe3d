@@ -3,7 +3,7 @@
 Every file in this directory is **CC0 1.0 Universal** (public-domain dedication); no attribution is
 required. They are the images of the Reflection display style: three equirectangular environments and
 eight two-layer material-capture (MatCap) spheres. The binary embeds them as string imports
-(`source/viewport_env.d`).
+(`libraries/viewport/gpu/source/vibe3d/viewport/gpu/viewport_env.d`).
 
 All files are 16-bit RGB PNGs converted offline from the downloaded Radiance `.hdr` originals by
 `tools/convert_shading_images.py` (stored value = `round(clamp(value / 16, 0, 1) * 65535)`; the

@@ -21,7 +21,7 @@ private uint bits(float v) {
     FloatBits b; b.value = v; return b.raw;
 }
 private JSONValue fixture() {
-    return parseJSON(readText("packages/alignment-ops/tests/fixtures/radial_nsided_original.json"));
+    return parseJSON(readText("libraries/editing/tools/alignment/tests/fixtures/radial_nsided_original.json"));
 }
 private Mesh original(JSONValue f) {
     Mesh m;
