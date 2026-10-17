@@ -323,7 +323,7 @@ set -euo pipefail
 repo=$1
 out=$2
 config=$3
-cp -a "$repo/source" "$out/source"
+cp -a "$repo/apps/desktop/source" "$out/source"
 flags=$(dub describe --config="$config" \
   --data=import-paths,string-import-paths,versions,debug-versions)
 mapfile -t files < <(find "$out/source" -name '*.d' -print | LC_ALL=C sort)
@@ -335,7 +335,7 @@ SH";
     assert(run.status == 0,
         format("W16-M %s lowered-AST compile failed (status %d):\n%s",
                config, run.status, run.output));
-    const appCg = buildPath(scratchRoot, "source", "app.d.cg");
+    const appCg = buildPath(scratchRoot, "source", "vibe3d/apps/desktop/app.d.cg");
     assert(exists(appCg),
         format("W16-M %s lowered-AST compile produced no source/app.d.cg", config));
     return readText(appCg);

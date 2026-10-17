@@ -92,7 +92,7 @@ cd "$1"
 flags=$(dub describe --config=tests \
     --data=import-paths,string-import-paths,versions,debug-versions \
     2>"$2") || { cat "$2"; exit 1; }
-python3 tools/ci/dmd_with_dub_flags.py "$flags" -deps="$3" -o- -c -version=web $(find source packages/common/source packages/mesh-ops/source packages/interchange/source packages/interaction-query/source packages/pipe-evaluation/source packages/tool-state/source packages/transform-ops/source packages/creation-ops/source packages/alignment-ops/source packages/input-events/source packages/display-policy/source packages/viewport-gpu/source packages/subpatch-preview/source packages/edit-contracts/source packages/mesh-change/source packages/mesh-contracts/source packages/mesh-edit-log/source packages/mesh-edit-replay/source packages/mesh-snapshot/source packages/mesh-topology/source packages/mesh/source packages/profiling/source packages/spatial/source util/log/source util/math/source util/parallel/source util/plane-bytes/source util/screen-buckets/source -name '*.d' -print)
+python3 tools/ci/dmd_with_dub_flags.py "$flags" -deps="$3" -o- -c -version=web $(find apps/desktop/source packages/common/source libraries/mesh/ops/source libraries/documents/interchange/source libraries/editing/selection/query/source libraries/editing/pipeline/evaluation/source libraries/editing/tools/state/source libraries/editing/tools/transform/source libraries/editing/tools/creation/source libraries/editing/tools/alignment/source libraries/platform/input/source libraries/viewport/display-policy/source libraries/viewport/gpu/source libraries/viewport/subpatch/source libraries/editing/contracts/source libraries/mesh/change/source libraries/mesh/contracts/source libraries/mesh/edit-log/source libraries/mesh/edit-replay/source libraries/mesh/snapshot/source libraries/mesh/topology/source libraries/mesh/core/source libraries/util/profiling/source libraries/util/spatial/source libraries/util/log/source libraries/util/math/source libraries/util/parallel/source libraries/util/plane-bytes/source libraries/util/screen-buckets/source -name '*.d' ! -path 'libraries/util/math/source/vibe3d/util/math/package.d' ! -path 'libraries/mesh/core/source/vibe3d/mesh/core/package.d' ! -path 'libraries/documents/model/source/vibe3d/documents/model/package.d' -print)
 SH";
     const run = execute(["bash", "-c", compileWebGraph, "w15-a-web-deps",
                          repoRoot, describeErrorPath, depsPath],
@@ -254,10 +254,20 @@ SH";
     assert(guardedCalls == 9,
         format("W15-A must gate all 9 guard calls; found %d", guardedCalls));
 
+    const graphSubjectModules = [
+        "app": "vibe3d.apps.desktop.app",
+        "handles.gl_util": "vibe3d.editing.tools.interactive.handles.gl_util",
+        "image_cache": "vibe3d.viewport.host.image_cache",
+        "shader": "vibe3d.viewport.gpu.shader",
+        "subpatch_osd": "vibe3d.viewport.subpatch.subpatch_osd",
+        "ui.image_rows": "vibe3d.ui.editor.ui.image_rows",
+        "viewport_env": "vibe3d.viewport.gpu.viewport_env",
+    ];
+
     string[] leaks;
     foreach (subject; subjects)
     {
-        if (reaches(graph, subject, "gl_thread_guard"))
+        if (reaches(graph, graphSubjectModules[subject], "vibe3d.viewport.gpu.gl_thread_guard"))
         {
             leaks ~= "gl_thread_guard";
             break;

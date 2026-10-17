@@ -97,7 +97,7 @@ private DependencyGraph readDependencyGraph(string path)
         const importer = importerField[0 .. cast(size_t) importerEnd];
         const target = targetField[0 .. targetEnd];
         result.edges[importer] ~= target;
-        if (importerField.indexOf(" (source/") >= 0
+        if (importerField.indexOf(" (apps/desktop/source/") >= 0
                 || importerField.indexOf(" (libraries/editing/tools/interactive/source/") >= 0
                 || importerField.indexOf(" (libraries/viewport/host/source/") >= 0
                 || importerField.indexOf(" (libraries/editing/interaction/data/source/") >= 0
@@ -159,7 +159,7 @@ private DependencyGraph readDependencyGraph(string path)
 
 private string declaredModule(string path)
 {
-    foreach (line; wave15ReadText(path).splitLines)
+    foreach (line; readText(wave19MathPhysicalPath(path)).splitLines)
     {
         const trimmed = line.strip;
         if (!trimmed.startsWith("module ")) continue;
@@ -173,20 +173,20 @@ private string declaredModule(string path)
 
 private bool isGatedTarget(string moduleName)
 {
-    return moduleName.startsWith("ai3d.")
-        || moduleName.startsWith("commands.ai3d.")
-        || moduleName == "ai3d_command_registration";
+    return moduleName.startsWith("vibe3d.runtime.ai3d.ai3d.")
+        || moduleName.startsWith("vibe3d.apps.desktop.commands.ai3d.")
+        || moduleName == "vibe3d.apps.desktop.ai3d_command_registration";
 }
 
 unittest
 {
     foreach (moduleName; [
-            "ai3d.job_controller", "commands.ai3d.import_result",
-            "ai3d_command_registration",
+            "vibe3d.runtime.ai3d.ai3d.job_controller", "vibe3d.apps.desktop.commands.ai3d.import_result",
+            "vibe3d.apps.desktop.ai3d_command_registration",
         ])
         assert(isGatedTarget(moduleName), moduleName);
-    foreach (moduleName; ["ai.model_adapter", "commands.mesh.bevel", "ui.panels",
-            "remesh.remesh_job", "commands.mesh.remesh", "ui.remesh_modal_state"])
+    foreach (moduleName; ["vibe3d.runtime.ai_advisor.ai.model_adapter", "vibe3d.editing.commands.editor.commands.mesh.bevel", "vibe3d.ui.editor.ui.panels",
+            "vibe3d.runtime.remesh.remesh.remesh_job", "vibe3d.editing.commands.editor.commands.mesh.remesh", "vibe3d.ui.editor.ui.remesh_modal_state"])
         assert(!isGatedTarget(moduleName), moduleName);
 }
 
@@ -238,12 +238,12 @@ unittest
     }
     excluded.sort;
     string[] expectedClassB = [
-        "libraries/runtime/ai3d/source/ai3d/job_controller.d",
-        "libraries/runtime/ai3d/source/ai3d/stage_artifact.d",
-        "libraries/runtime/ai3d/source/ai3d/worker_manager.d",
-        "source/ai3d_command_registration.d",
-        "source/commands/ai3d/generate.d",
-        "source/commands/ai3d/generate_test_hooks.d",
+        "libraries/runtime/ai3d/source/vibe3d/runtime/ai3d/ai3d/job_controller.d",
+        "libraries/runtime/ai3d/source/vibe3d/runtime/ai3d/ai3d/stage_artifact.d",
+        "libraries/runtime/ai3d/source/vibe3d/runtime/ai3d/ai3d/worker_manager.d",
+        "apps/desktop/source/vibe3d/apps/desktop/ai3d_command_registration.d",
+        "apps/desktop/source/vibe3d/apps/desktop/commands/ai3d/generate.d",
+        "apps/desktop/source/vibe3d/apps/desktop/commands/ai3d/generate_test_hooks.d",
     ];
     expectedClassB.sort;
     enum expectedWebConfigurations = 1;
@@ -340,7 +340,7 @@ if [ "$config" = web ]; then
     echo "FATAL: --config=web described no -version=web; the gates would be inert" >&2; exit 2 ;;
   esac
 fi
-python3 tools/ci/dmd_with_dub_flags.py "$flags" -deps="$3" -o- -c $(find source libraries/ui/forms/source libraries/ui/editor/source libraries/runtime/http/source libraries/runtime/ai-advisor/source libraries/runtime/ai3d/source libraries/runtime/remesh/source libraries/platform/file/source libraries/runtime/document-actions/source libraries/editing/tools/interactive/source libraries/viewport/host/source libraries/editing/interaction/data/source libraries/editing/commands/runtime/source libraries/runtime/application-core/source libraries/documents/model/source libraries/editing/params/source libraries/editing/pipeline/runtime/source libraries/mesh/ops/source libraries/documents/interchange/source libraries/editing/selection/query/source libraries/editing/pipeline/evaluation/source libraries/editing/tools/state/source libraries/editing/tools/transform/source libraries/editing/tools/creation/source libraries/editing/tools/alignment/source libraries/platform/input/source libraries/viewport/display-policy/source libraries/viewport/gpu/source libraries/viewport/subpatch/source libraries/editing/contracts/source libraries/mesh/change/source libraries/mesh/contracts/source libraries/mesh/edit-log/source libraries/mesh/edit-replay/source libraries/mesh/snapshot/source libraries/mesh/topology/source libraries/mesh/core/source libraries/util/profiling/source libraries/util/spatial/source libraries/util/log/source libraries/util/math/source/vibe3d/util/math libraries/util/parallel/source libraries/util/plane-bytes/source libraries/util/screen-buckets/source libraries/viewport/camera/source libraries/documents/channels/source libraries/documents/image-codec/source libraries/documents/io/source libraries/editing/selection/model/source libraries/editing/selection/scene-query/source libraries/editing/commands/editor/source libraries/editing/pipeline/contracts/source libraries/mesh/preview/source libraries/util/json-number/source -name '*.d' ! -path 'libraries/util/math/source/vibe3d/util/math/package.d' -print)
+python3 tools/ci/dmd_with_dub_flags.py "$flags" -deps="$3" -o- -c $(find apps/desktop/source libraries/ui/forms/source libraries/ui/editor/source libraries/runtime/http/source libraries/runtime/ai-advisor/source libraries/runtime/ai3d/source libraries/runtime/remesh/source libraries/platform/file/source libraries/runtime/document-actions/source libraries/editing/tools/interactive/source libraries/viewport/host/source libraries/editing/interaction/data/source libraries/editing/commands/runtime/source libraries/runtime/application-core/source libraries/documents/model/source libraries/editing/params/source libraries/editing/pipeline/runtime/source libraries/mesh/ops/source libraries/documents/interchange/source libraries/editing/selection/query/source libraries/editing/pipeline/evaluation/source libraries/editing/tools/state/source libraries/editing/tools/transform/source libraries/editing/tools/creation/source libraries/editing/tools/alignment/source libraries/platform/input/source libraries/viewport/display-policy/source libraries/viewport/gpu/source libraries/viewport/subpatch/source libraries/editing/contracts/source libraries/mesh/change/source libraries/mesh/contracts/source libraries/mesh/edit-log/source libraries/mesh/edit-replay/source libraries/mesh/snapshot/source libraries/mesh/topology/source libraries/mesh/core/source libraries/util/profiling/source libraries/util/spatial/source libraries/util/log/source libraries/util/math/source/vibe3d/util/math libraries/util/parallel/source libraries/util/plane-bytes/source libraries/util/screen-buckets/source libraries/viewport/camera/source libraries/documents/channels/source libraries/documents/image-codec/source libraries/documents/io/source libraries/editing/selection/model/source libraries/editing/selection/scene-query/source libraries/editing/commands/editor/source libraries/editing/pipeline/contracts/source libraries/mesh/preview/source libraries/util/json-number/source -name '*.d' ! -path 'libraries/util/math/source/vibe3d/util/math/package.d' ! -path 'libraries/mesh/core/source/vibe3d/mesh/core/package.d' ! -path 'libraries/documents/model/source/vibe3d/documents/model/package.d' -print)
 SH";
     enum graphConfigurations = ["web", "modeling"];
     const graphPaths = [webDepsPath, nativeDepsPath];
@@ -362,8 +362,8 @@ SH";
     auto webGraph = readDependencyGraph(webDepsPath);
 
     enum subjects = [
-        "app", "editor_app", "http_providers", "mesh_command_registration",
-        "registration", "ui.panels",
+        "vibe3d.apps.desktop.app", "vibe3d.apps.desktop.editor_app", "vibe3d.apps.desktop.http_providers", "vibe3d.apps.desktop.mesh_command_registration",
+        "vibe3d.apps.desktop.registration", "vibe3d.ui.editor.ui.panels",
     ];
     bool[string] subjectSet;
     foreach (subject; subjects) subjectSet[subject] = true;
@@ -396,14 +396,14 @@ SH";
 
     bool[string] appClosure;
     foreach (moduleName; webGraph.ours.byKey)
-        if (reaches(webGraph.edges, "app", moduleName)) appClosure[moduleName] = true;
+        if (reaches(webGraph.edges, "vibe3d.apps.desktop.app", moduleName)) appClosure[moduleName] = true;
     enum appClosurePopulationFloor = 500;
     assert(appClosure.length >= appClosurePopulationFloor,
         format("W16-A web app-closure population fell below the non-vacuity floor %d: got %d; "
              ~ "this floor is not a W16-A dependency witness",
                appClosurePopulationFloor, appClosure.length));
-    foreach (moduleName; ["remesh.remesh_job", "remesh.region_stitch",
-            "commands.mesh.remesh", "ui.remesh_modal_state"])
+    foreach (moduleName; ["vibe3d.runtime.remesh.remesh.remesh_job", "vibe3d.runtime.remesh.remesh.region_stitch",
+            "vibe3d.editing.commands.editor.commands.mesh.remesh", "vibe3d.ui.editor.ui.remesh_modal_state"])
         assert(moduleName in appClosure,
             "web quad-remesh module absent from production app closure: " ~ moduleName);
 
@@ -419,19 +419,26 @@ SH";
     string[] classA;
     foreach (moduleName; appClosure.byKey)
     {
-        if (moduleName != "http_transport"
-                && reaches(webGraph.edges, moduleName, "http_transport"))
+        if (moduleName != "vibe3d.runtime.http.http_transport"
+                && reaches(webGraph.edges, moduleName, "vibe3d.runtime.http.http_transport"))
             classA ~= moduleName;
     }
     classA.sort;
     enum expectedClassA = [
-        "app", "editor_app", "frame_runner", "http_command_adapter",
-        "http_providers", "http_server", "input_frame_state", "input_router",
-        "registration", "ui.panels",
+        "vibe3d.apps.desktop.app",
+        "vibe3d.apps.desktop.editor_app",
+        "vibe3d.apps.desktop.frame_runner",
+        "vibe3d.apps.desktop.http_command_adapter",
+        "vibe3d.apps.desktop.http_providers",
+        "vibe3d.apps.desktop.input_frame_state",
+        "vibe3d.apps.desktop.input_router",
+        "vibe3d.apps.desktop.registration",
+        "vibe3d.runtime.http.http_server",
+        "vibe3d.ui.editor.ui.panels",
     ];
     // 20262940: retain the original roster; the approved panel role cut removes only its transport ancestry.
-    enum expectedCurrentClassA = expectedClassA.filter!(name => name != "ui.panels").array;
-    assert(reaches(webGraph.edges, "app", "http_transport"),
+    enum expectedCurrentClassA = expectedClassA.filter!(name => name != "vibe3d.ui.editor.ui.panels").array;
+    assert(reaches(webGraph.edges, "vibe3d.apps.desktop.app", "vibe3d.runtime.http.http_transport"),
         "W16-A web graph lost its HTTP-router carrier; the transport census is vacuous");
     assert(classA == expectedCurrentClassA,
         format("W16-A HTTP class-A graph-shape pin changed (not a W16-A facility witness): "
@@ -449,10 +456,10 @@ SH";
     string[] reachableForbidden;
     string[] forbiddenPaths;
     foreach (forbidden; forbiddenWebModules)
-        if (reaches(webGraph.edges, "app", forbidden))
+        if (reaches(webGraph.edges, "vibe3d.apps.desktop.app", forbidden))
         {
             reachableForbidden ~= forbidden;
-            forbiddenPaths ~= reachabilityPath(webGraph.edges, "app", forbidden).join(" > ");
+            forbiddenPaths ~= reachabilityPath(webGraph.edges, "vibe3d.apps.desktop.app", forbidden).join(" > ");
         }
 
     string[] webThreadEdges;
@@ -472,11 +479,11 @@ SH";
     auto nativeGraph = readDependencyGraph(nativeDepsPath);
     bool[string] nativeAppClosure;
     foreach (moduleName; nativeGraph.ours.byKey)
-        if (reaches(nativeGraph.edges, "app", moduleName))
+        if (reaches(nativeGraph.edges, "vibe3d.apps.desktop.app", moduleName))
             nativeAppClosure[moduleName] = true;
     string[] nativeMissingForbidden;
     foreach (forbidden; forbiddenWebModules)
-        if (!reaches(nativeGraph.edges, "app", forbidden))
+        if (!reaches(nativeGraph.edges, "vibe3d.apps.desktop.app", forbidden))
             nativeMissingForbidden ~= forbidden;
     assert(nativeMissingForbidden.length == 0,
         format("W16-A native positive control lost forbidden-module reachability: %s",
