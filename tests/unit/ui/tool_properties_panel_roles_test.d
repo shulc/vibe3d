@@ -102,7 +102,7 @@ static assert([__traits(allMembers, vibe3d.ui.editor.ui.tool_properties_panel)] 
         ~ memberList!vibe3d.ui.editor.ui.tool_properties_panel ~ memberPinSuffix);
 
 private enum string[] kCapabilityExempt = [
-    "property_panel.PropertyPanel"
+    "vibe3d.editing.tools.interactive.property_panel.PropertyPanel"
 ];
 
 private bool capabilityExempt(T)() {

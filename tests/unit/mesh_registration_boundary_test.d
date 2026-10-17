@@ -337,7 +337,7 @@ static assert([__traits(allMembers, LiveSessionRole)] == [
 static assert([__traits(allMembers, LiveViewModeRole)] == [
     "view_", "mode_", "__ctor", "view", "mode", "modeCell"]);
 static assert([__traits(allMembers, mesh_command_registration)] == [
-    "object", "commands", "MeshCommandDeps", "registerMeshCommands"],
+    "object", "vibe3d", "MeshCommandDeps", "registerMeshCommands"],
     "6509 mesh registrar module member set changed: "
   ~ [__traits(allMembers, mesh_command_registration)].stringof);
 
