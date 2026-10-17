@@ -12,12 +12,10 @@ Both properties are one `static assert` in D, so they moved to
 **`tests/unit/prepared_tool_transition_test.d`** — `!__traits(isCopyable, T)`
 over a named census of all 134 prepared tokens (the fixtures covered 76 of
 them), and `!__traits(compiles, requirePreparedField!T)` for the seven shapes.
-That census is paid by `dub test --config=tests`, which compiles the module
-anyway, and it is checked in both directions: the D side asserts the property,
-`token_census_gate` in the scanner checks that the D side's module list still
-matches the `.d` files on disk — the half a compiler cannot see.
+The assertions compile with the `tests` configuration. The lightweight Python
+boundary check only verifies that the token module roster still matches the
+production source tree; it does not pin assertion text or compiler diagnostics.
 
-**A new fixture placed here would have no caller and would rot green.** That is
-why `token_census_gate` refuses any `*.d` in this directory by name. If you need
-to state that something must not compile, state it as
-`static assert(!__traits(compiles, ...))` beside the census in that test file.
+A new fixture here would have no compiler caller. Use
+`static assert(!__traits(compiles, ...))` in a D test instead. The boundary
+check rejects stray `.d` fixtures in this retired directory.

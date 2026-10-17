@@ -5,7 +5,7 @@ used to find brace pairs, unittest blocks and declarations with its own
 character scanner, which loses sync on a backtick string holding `"`, an
 r-string ending in `\\`, a nested `/+ +/`, a `unittest {` written inside a
 comment, and `unittest // note` with its `{` on the next line -- all five
-measured on this tree by `tools/dspans/compare.py`. This module answers those
+recorded in task 5330. This module answers those
 questions from `tools/dspans` (a libdparse-based span printer) instead.
 
 BUILD AND CACHE. The binary is built on first use with `dub build` and kept

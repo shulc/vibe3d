@@ -243,6 +243,7 @@ tests.unit.point_size_law_test
 tests.unit.popup_state_test
 tests.unit.portless_route_ports_test
 tests.unit.prefs_test
+tests.unit.prepared_protocol_behavior_test
 tests.unit.primary_memo_delete_test
 tests.unit.primary_memo_latch_test
 tests.unit.primary_memo_order_test

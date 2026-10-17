@@ -6,7 +6,8 @@ contracts its primitives inherited (an unpaired `{`, a `{` in a comment, a
 an ambiguous declaration, nested unittests, the innermost of two aggregates):
 mutating any of those left the census green (sweeps of 2026-09-27, C2..C14 and
 the review's P1..P7). So the census calls `run()` at its end and fails with the
-first cell's message; `tools/dspans/compare.py --controls` runs the same cells.
+first cell's message. These legacy contract cells remain available explicitly;
+the lightweight protocol boundary check does not run them.
 
 Every cell calls the function the census calls -- passed in by the census --
 never a stand-in built here. Cost: ~0.06 s.

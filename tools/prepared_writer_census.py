@@ -27,8 +27,8 @@ def _mask_comments(text):
 # Brace pairs, unittest blocks and declarations come from libdparse through
 # tools/dspans (task 5330), not from a character scanner: the old one lost
 # sync on backtick strings, r-strings, nested comments and `unittest // note`,
-# measured on this tree by tools/dspans/compare.py. Each function keeps the
-# CONTRACT of the scanner it replaced (verbatim in tools/dspans/legacy_primitives.py).
+# recorded in task 5330. These helpers remain for explicit manifest inspection;
+# the routine protocol census no longer freezes writer bodies.
 sys.path.insert(0, str(Path(__file__).resolve().parent / "dspans"))
 import dspans_client  # noqa: E402
 from census_contracts import read_source_text, logical_source_paths, physical_source_path, source_inputs_intact
@@ -494,7 +494,8 @@ def persisted_manifest(data):
     # keeps path/line for diagnostics, but those coordinates were never compared
     # and therefore must not be promised by the canonical manifest. The path/line
     # fields that ARE compared remain on internal publishers and the lifecycle
-    # classifier in check_prepared_protocol.py; evidence is the task 5830 card.
+    # classifier in the historical census (task 5830); the lightweight
+    # protocol census no longer compares those fields.
     result["bypasses"] = [
         {"caller": row["caller"], "symbol": row["symbol"]}
         for row in data["bypasses"]

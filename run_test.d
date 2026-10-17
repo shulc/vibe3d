@@ -2034,42 +2034,8 @@ string[] compileTests(string[] paths, string outDir) {
 
 enum string kProtocolScanner = "tools/check_prepared_protocol.py";
 
-/// The prepared tool-transition protocol's census. Since task 4052 it is a
-/// SOURCE SCAN and nothing else: the `tests/compile_fail/` fixtures it used to
-/// hand to the compiler one file at a time are gone, because both properties
-/// they stated are one `static assert` in D. They now live in
-/// `tests/unit/prepared_tool_transition_test.d` -- `!__traits(isCopyable, T)`
-/// over a named census of all 134 prepared tokens, and
-/// `!__traits(compiles, requirePreparedField!T)` for the seven field shapes --
-/// paid by `dub test --config=tests`, which compiles that module anyway.
-///
-/// WHAT IS LEFT IS THE IRREPLACEABLE HALF, AND IT IS NOT FIXTURES. Roughly
-/// 85 % of the scanner pins properties D compile-time reflection cannot state
-/// at all: the ORDER of statements inside another module's function body, the
-/// set of CALLERS of a symbol across files no test binary imports, occurrence
-/// counts, negative call sets, and SHA-256 digests of function bodies. Those
-/// have no assert-shaped substitute, which is why this call did not go away
-/// with the fixtures. The scanner also keeps the half of the new D census a
-/// compiler cannot see: that the module list the census runs over still
-/// matches the .d files on disk, in both directions.
-///
-/// WHY IT LIVES HERE AND NOT IN dub.json. It hung off `preBuildCommands` of
-/// the `tests` configuration, where P1.0a's review had put it for a reason
-/// that is still true: with no caller at all, the whole-tree properties above
-/// may degrade while both routine lanes stay green. The reason it could not
-/// stay there is cost. Measured on the gate host, 2026-09-02, three
-/// consecutive runs: 38.4 / 38.4 / 38.5 s wall, 243 MiB peak RSS -- against a
-/// lane that is otherwise ~51 s, and dub runs preBuildCommands on every build
-/// that actually builds. Task 4052 measured where that went by putting a
-/// timing wrapper around the compiler: 81 invocations, of which 72 were
-/// fixtures costing 21.6 s. With them gone, three consecutive runs on
-/// 2026-09-04 read 19.5 / 19.6 / 19.5 s wall, 242 MiB peak RSS (the memory is
-/// the Python, not the compiler, and did not move). Still paid ONCE per suite
-/// run rather than once per test build.
-///
-/// The output is the scanner's own, inherited: its PASS line on stdout, its
-/// `SystemExit` message on stderr. Nothing is summarised or swallowed, so a
-/// failure reads the same here as it did in the build log.
+/// Lightweight source population/entry-path check (20263060). Types and
+/// signatures are compiler assertions; behavior is exercised by D tests.
 bool protocolCensus() {
     // A missing scanner is a REFUSAL, not a skip. "The file is not there" is
     // indistinguishable, from a green lane, from "the fixtures are fine", and
@@ -2078,7 +2044,7 @@ bool protocolCensus() {
     if (!exists(kProtocolScanner)) {
         stderr.writeln(red("prepared-protocol census: " ~ kProtocolScanner
                          ~ " is missing -- refusing to measure a tree whose "
-                         ~ "compile-fail fixtures nothing checks"));
+                         ~ "protocol boundaries were not checked"));
         return false;
     }
     auto sw = StopWatch(AutoStart.yes);
@@ -3065,9 +3031,8 @@ int main(string[] args) {
         "check-gate", "run the test-liveness barrier over a directory "
                     ~ "(default tests/) and exit 0/2, building nothing and "
                     ~ "starting no vibe3d",                                     &checkGate,
-        "check-protocol", "run the prepared-tool protocol census alone (a "
-                    ~ "source scan; no fixtures to compile since 4052) and "
-                    ~ "exit 0/2, building nothing and starting no vibe3d",    &checkProtocol,
+        "check-protocol", "check prepared-protocol population and entry paths "
+                    ~ "and exit 0/2 without building or starting vibe3d",       &checkProtocol,
         "check-space","(task 2080) check free space at PATH against the "
                     ~ "preflight floor and exit 0/1, doing nothing else",       &checkSpacePath,
         "space-floor-mib", "override the space-preflight floor in MiB, for "
@@ -3202,13 +3167,7 @@ int main(string[] args) {
         return 0;
     }
 
-    // --check-protocol: the protocol census ALONE -- the same protocolCensus()
-    // the full run below calls, with nothing around it. Two jobs. It is how the
-    // new call site is point-checked without standing up a suite (the scan is
-    // ~38 s; the suite is minutes), and it is the hand-hold for a narrow run
-    // that wants the census anyway. Like every meta invocation above it, it
-    // returns BEFORE the load log is armed: it ran no tests, so it is not an
-    // invocation the host-load report should see.
+    // Explicit boundary diagnostic: no build, application or test execution.
     if (checkProtocol)
         return protocolCensus() ? 0 : 2;
 
@@ -3459,24 +3418,8 @@ int main(string[] args) {
         }
     }
 
-    // The prepared-tool protocol census -- the second barrier, and for the same
-    // reason as the first: it answers a whole-tree question -- statement order
-    // inside bodies, caller sets across files nothing imports, occurrence
-    // counts -- and a run that cannot answer it is measuring a tree in which
-    // any of that may have quietly drifted. It moved here out of dub.json's
-    // `tests` configuration preBuildCommands, where every `dub test` that
-    // rebuilt anything paid it; see protocolCensus() for the measurement, for
-    // what task 4052 took out of it, and for why deleting the call is not an
-    // option.
-    //
-    // A NARROW run (a test named on the command line) skips it and SAYS SO.
-    // The census is a property of the tree, not of the named test, and a
-    // ~20 s tax on `./run_test.d <name>` is a tax on the iteration loop that
-    // people would answer by not using the runner. Both routine gates are FULL
-    // runs -- `./run_test.d --no-build` with no names, and CI's
-    // `run_all.d --only unit`, which passes `--exclude` and never a name -- so
-    // both pay it exactly once. The skip is printed, never silent: a census
-    // that can go quiet is the inert-gate class this project pays for most.
+    // Full runs check token/writer population and forbidden prepared entry
+    // paths once. Named test runs keep their focused scope.
     if (args.length > 1) {
         writeln(yellow("prepared-protocol census: SKIPPED -- this is a narrow "
                      ~ "run. The full lane runs it; `./run_test.d "
@@ -3615,7 +3558,7 @@ int main(string[] args) {
     // definitions here; the injected helpers keep their original unittest flags.
     import std.string : replace;
     const censusObj = buildPath(scratchDir, "census_symbols.o");
-    auto censusBuild = executeShell(format("dmd -c%s tests/unit/census_symbols.d -of=%s 2>&1",
+    auto censusBuild = executeShell(format("dmd -c%s tests/unit/census_symbols.d tools/harness/dsource.d -of=%s 2>&1",
         httpTestFlags().replace(" -unittest", ""), censusObj));
     if (censusBuild.status != 0 || !exists(censusObj)) {
         stderr.writeln(red("shared source-reader object build failed"));
