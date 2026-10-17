@@ -17,8 +17,13 @@ import tests.unit.census_symbols : readText = wave15ReadText, wave19MathMoved, w
     enum fixtureOnlyVersions = ["edit-contracts", "mesh", "mesh-change", "mesh-contracts", "mesh-edit-log", "mesh-edit-replay", "mesh-snapshot", "mesh-topology"];
     string[] testHelpers(string owner) {
         if (owner == "interactive-tools")
-            return ["tests/source/drag_source_helpers.d", "tests/source/snap_render_source_helpers.d"];
-        if (owner == "viewport-host") return ["tests/source/image_plane_source_cells.d"];
+            return moved(owner)
+                ? ["tests/source/vibe3d/editing/tools/interactive/drag_source_helpers.d", "tests/source/vibe3d/editing/tools/interactive/snap_render_source_helpers.d"]
+                : ["tests/source/drag_source_helpers.d", "tests/source/snap_render_source_helpers.d"];
+        if (owner == "viewport-host")
+            return moved(owner)
+                ? ["tests/source/vibe3d/viewport/host/image_plane_source_cells.d"]
+                : ["tests/source/image_plane_source_cells.d"];
         return [];
     }
     JSONValue config(JSONValue raw, string name) {

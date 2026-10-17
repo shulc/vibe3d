@@ -746,8 +746,9 @@ unittest // census: every unittest module that listens on a chosen port is pinne
         "packages/selection-model/tests/source/tests/unit/selection_projection_algorithm_cells_test.d",
 ]) {
         size_t occurrences;
+        const selectedPath = wave19MathPhysicalPath(buildPath(repoRoot, relative), repoRoot);
         foreach (candidate; rawInputs)
-            if (candidate == wave19MathPhysicalPath(buildPath(repoRoot, relative), repoRoot)) ++occurrences;
+            if (candidate == selectedPath) ++occurrences;
         assert(occurrences == 1, "port census historical raw input membership: " ~ relative);
     }
     foreach (relative; [
@@ -759,8 +760,9 @@ unittest // census: every unittest module that listens on a chosen port is pinne
         "packages/interaction-data/tests/source/tests/unit/ai/interaction_test.d",
     ]) {
         size_t occurrences;
+        const selectedPath = wave19MathPhysicalPath(buildPath(repoRoot, relative), repoRoot);
         foreach (candidate; rawInputs)
-            if (candidate == wave19MathPhysicalPath(buildPath(repoRoot, relative), repoRoot))
+            if (candidate == selectedPath)
                 ++occurrences;
         assert(occurrences == 1, "port census interaction-data raw input membership: " ~ relative);
     }
