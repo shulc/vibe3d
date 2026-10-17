@@ -11,7 +11,7 @@ module tests.unit.production_tool_policies;
 /// blitted class initializer's (the transform presets set fields at build).
 /// `each` (S6r, 9270): called with every id's production-built instance.
 package(tests.unit) string[4][] productionPolicies(out size_t ids,
-        void delegate(string, imported!"tool".Tool) each = null) {
+        void delegate(string, imported!"vibe3d.editing.tools.interactive.tool".Tool) each = null) {
     import vibe3d.runtime.ai_advisor.ai.exploration : AiExplorationController;
     import vibe3d.runtime.ai_advisor.ai.interaction_log_writer : AiInteractionLogWriter;
     import vibe3d.editing.commands.runtime.command_history : CommandHistory;

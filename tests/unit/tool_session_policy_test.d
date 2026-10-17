@@ -162,38 +162,38 @@ private immutable Row[] kTable = [
 
 /// The classes whose policy answers `activationRow`.
 private immutable string[] kActivationRowClasses = [
-    "tools.alignment.array_tool.ArrayTool",
-    "tools.alignment.clone_tool.CloneTool",
-    "tools.alignment.linear_align_tool.LinearAlignTool",
-    "tools.alignment.mirror.MirrorTool",
-    "tools.alignment.radial_align_tool.RadialAlignTool",
-    "tools.alignment.radial_array_tool.RadialArrayTool",
-    "tools.common.command_wrapper.XfrmJitterTool",
-    "tools.common.command_wrapper.XfrmQuantizeTool",
-    "tools.common.command_wrapper.XfrmSmoothTool",
-    "tools.deform.bend.BendTool",
-    "tools.deform.magnet.MagnetTool",
-    "tools.deform.push.PushTool",
-    "tools.deform.smooth_shift_tool.SmoothShiftTool",
-    "tools.edit.bridge_tool.BridgeTool",
-    "tools.edit.edge_bevel.EdgeBevelTool",
-    "tools.edit.edge_extend.EdgeExtendTool",
-    "tools.edit.edge_extrude.EdgeExtrudeTool",
-    "tools.edit.poly_bevel.PolyBevelTool",
-    "tools.edit.poly_extrude.PolyExtrudeTool",
-    "tools.edit.poly_inset_tool.PolyInsetTool",
-    "tools.edit.topology_pen.tool.TopologyPenTool",
-    "tools.edit.vert_merge_tool.VertexMergeTool",
-    "tools.edit.vertex_bevel_tool.VertexBevelTool",
-    "tools.edit.vertex_extrude_tool.VertexExtrudeTool",
-    "tools.slice.edge_slice_tool.EdgeSliceTool",
-    "tools.slice.loop_slice_tool.LoopSliceTool",
-    "tools.slice.slice_tool.SliceTool",
-    "tools.transform.move.MoveTool",
-    "tools.transform.rotate.RotateTool",
-    "tools.transform.scale.ScaleTool",
-    "tools.transform.transform.TransformTool",
-    "tools.transform.xfrm_transform.XfrmTransformTool",
+    "vibe3d.editing.tools.interactive.tools.alignment.array_tool.ArrayTool",
+    "vibe3d.editing.tools.interactive.tools.alignment.clone_tool.CloneTool",
+    "vibe3d.editing.tools.interactive.tools.alignment.linear_align_tool.LinearAlignTool",
+    "vibe3d.editing.tools.interactive.tools.alignment.mirror.MirrorTool",
+    "vibe3d.editing.tools.interactive.tools.alignment.radial_align_tool.RadialAlignTool",
+    "vibe3d.editing.tools.interactive.tools.alignment.radial_array_tool.RadialArrayTool",
+    "vibe3d.editing.tools.interactive.tools.common.command_wrapper.XfrmJitterTool",
+    "vibe3d.editing.tools.interactive.tools.common.command_wrapper.XfrmQuantizeTool",
+    "vibe3d.editing.tools.interactive.tools.common.command_wrapper.XfrmSmoothTool",
+    "vibe3d.editing.tools.interactive.tools.deform.bend.BendTool",
+    "vibe3d.editing.tools.interactive.tools.deform.magnet.MagnetTool",
+    "vibe3d.editing.tools.interactive.tools.deform.push.PushTool",
+    "vibe3d.editing.tools.interactive.tools.deform.smooth_shift_tool.SmoothShiftTool",
+    "vibe3d.editing.tools.interactive.tools.edit.bridge_tool.BridgeTool",
+    "vibe3d.editing.tools.interactive.tools.edit.edge_bevel.EdgeBevelTool",
+    "vibe3d.editing.tools.interactive.tools.edit.edge_extend.EdgeExtendTool",
+    "vibe3d.editing.tools.interactive.tools.edit.edge_extrude.EdgeExtrudeTool",
+    "vibe3d.editing.tools.interactive.tools.edit.poly_bevel.PolyBevelTool",
+    "vibe3d.editing.tools.interactive.tools.edit.poly_extrude.PolyExtrudeTool",
+    "vibe3d.editing.tools.interactive.tools.edit.poly_inset_tool.PolyInsetTool",
+    "vibe3d.editing.tools.interactive.tools.edit.topology_pen.tool.TopologyPenTool",
+    "vibe3d.editing.tools.interactive.tools.edit.vert_merge_tool.VertexMergeTool",
+    "vibe3d.editing.tools.interactive.tools.edit.vertex_bevel_tool.VertexBevelTool",
+    "vibe3d.editing.tools.interactive.tools.edit.vertex_extrude_tool.VertexExtrudeTool",
+    "vibe3d.editing.tools.interactive.tools.slice.edge_slice_tool.EdgeSliceTool",
+    "vibe3d.editing.tools.interactive.tools.slice.loop_slice_tool.LoopSliceTool",
+    "vibe3d.editing.tools.interactive.tools.slice.slice_tool.SliceTool",
+    "vibe3d.editing.tools.interactive.tools.transform.move.MoveTool",
+    "vibe3d.editing.tools.interactive.tools.transform.rotate.RotateTool",
+    "vibe3d.editing.tools.interactive.tools.transform.scale.ScaleTool",
+    "vibe3d.editing.tools.interactive.tools.transform.transform.TransformTool",
+    "vibe3d.editing.tools.interactive.tools.transform.xfrm_transform.XfrmTransformTool",
 ];
 
 /// A tool instance with its vtable and field defaults but NO constructor run.
@@ -270,7 +270,7 @@ unittest { // (1) id -> policy, over every registered id
                                        row.id, *cls, row.cls));
         auto mod = row.cls in moduleOf;
         assert(mod !is null, "M1 policy table: no module recorded for " ~ row.cls);
-        auto ci = TypeInfo_Class.find(*mod ~ "." ~ row.cls);
+        auto ci = TypeInfo_Class.find("vibe3d.editing.tools.interactive." ~ *mod ~ "." ~ row.cls);
         assert(ci !is null, "M1 policy table: class not linked: " ~ *mod ~ "." ~ row.cls);
         auto t = blit(ci);
         const policy = t.sessionPolicy();
@@ -353,7 +353,12 @@ unittest { // (2) tool classes that declare the activation row
     string[] declared;
     size_t scanned;
     foreach (m; ModuleInfo) {
-        if (m is null || !m.name.startsWith("tools.")) continue;
+        if (m is null || !(m.name.startsWith("tools.")
+            || m.name.startsWith("vibe3d.editing.tools.interactive.tools.")
+            || m.name.startsWith("vibe3d.editing.tools.alignment.tools.")
+            || m.name.startsWith("vibe3d.editing.tools.creation.tools.")
+            || m.name.startsWith("vibe3d.editing.tools.state.tools.")
+            || m.name.startsWith("vibe3d.editing.tools.transform.tools."))) continue;
         foreach (c; m.localClasses) {
             if (!derivesFromTool(c) || (c.m_flags & TypeInfo_Class.ClassFlags.isAbstract))
                 continue;
@@ -579,7 +584,7 @@ unittest { // (4)
     string[] stepIds, imageStepIds, paramArmIds;
     size_t checkedNames, actionNames, armAttrs, stepsFalse, recordedSteps;
     foreach (row; kTable) {
-        auto ci = TypeInfo_Class.find(moduleOf[row.cls] ~ "." ~ row.cls);
+        auto ci = TypeInfo_Class.find("vibe3d.editing.tools.interactive." ~ moduleOf[row.cls] ~ "." ~ row.cls);
         auto t = blit(ci);
         const pol = t.sessionPolicy();
         const transformId = row.id.startsWith("xfrm.") ||
@@ -1232,16 +1237,16 @@ import tests.unit.census_symbols : exists = wave15Exists;
 }
 
 // Pins (form item 1; the lists are the compiled probe's, 2026-10-02).
-static assert([__traits(allMembers, imported!"tool".StepOrigin)]
+static assert([__traits(allMembers, imported!"vibe3d.editing.tools.interactive.tool".StepOrigin)]
               == ["unclassified", "refire", "opens", "restart"]);
-static assert(imported!"tool".StepOrigin.init == imported!"tool".StepOrigin.unclassified);
-static assert([__traits(allMembers, imported!"tool".ToolSessionLink)]
+static assert(imported!"vibe3d.editing.tools.interactive.tool".StepOrigin.init == imported!"vibe3d.editing.tools.interactive.tool".StepOrigin.unclassified);
+static assert([__traits(allMembers, imported!"vibe3d.editing.tools.interactive.tool".ToolSessionLink)]
               == ["stepBegins", "stepEnds", "operationArmed", "operationEnded", "closeOwn",
                   "recordCompleted", "tagPreparedCompleted", "recordToken", "stepOpenImage",
                   "previewGated", "pressActivation"]);
-static assert([__traits(allMembers, imported!"tool".PressActivation)]
+static assert([__traits(allMembers, imported!"vibe3d.editing.tools.interactive.tool".PressActivation)]
               == ["unbound", "activates", "active"]);
-static assert(imported!"tool".PressActivation.init == imported!"tool".PressActivation.unbound);
+static assert(imported!"vibe3d.editing.tools.interactive.tool".PressActivation.init == imported!"vibe3d.editing.tools.interactive.tool".PressActivation.unbound);
 
 // ---------------------------------------------------------------------------
 // (4d) Task 8950 (topology-redo wave S3, law 2; model doc §R6.2): a row keeps its
@@ -2174,7 +2179,7 @@ unittest { // (4d')
 
 // The rebase entry point stays (its one caller is `rebaseOnCurrent_`); the per-tool flags it
 // replaced are fenced in (4l).
-static assert(__traits(hasMember, imported!"tool".TopologyStepClient, "rebaseTopologyStep"));
+static assert(__traits(hasMember, imported!"vibe3d.editing.tools.interactive.tool".TopologyStepClient, "rebaseTopologyStep"));
 
 // ---------------------------------------------------------------------------
 // (4l) Task 9310 (topology-redo wave S8, closure): the policy's composition is the compiler's
@@ -2190,10 +2195,10 @@ static foreach (gone; ["firstTopologyRedoUsesAfterAttrs", "rebaseTopologyAfterSt
                        "discardFirstTopologyRedoOnActivationUndo",
                        "discardLaterTopologyRedoOnRearm", "dormantAfterClosedRedo",
                        "paramWriteSteps"])   // task 9430: an arm property, not a tool datum
-    static assert(!__traits(hasMember, imported!"tool".ToolSessionPolicy, gone),
+    static assert(!__traits(hasMember, imported!"vibe3d.editing.tools.interactive.tool".ToolSessionPolicy, gone),
                   "S8 fence: the per-tool flag " ~ gone ~ " is back");
 
-static assert([__traits(allMembers, imported!"tool".ToolSessionPolicy)] == [
+static assert([__traits(allMembers, imported!"vibe3d.editing.tools.interactive.tool".ToolSessionPolicy)] == [
     "headlessSource", "activationRow", "commandClose", "sessionSteps", "historyTopologySteps",
     "historyRecordedSteps", "recordedFirstUndoEndsTool", "postmodeStartsOnPress",
     "previewHistoryLadder", "opensAt", "noClone", "imageAttrs", "haulAttrs",
@@ -2211,7 +2216,7 @@ private template SessionOf(ES) {
             alias SessionOf = typeof(ES.tupleof[i]);
 }
 
-private alias SessionT = SessionOf!(imported!"edit_session".EditSession);
+private alias SessionT = SessionOf!(imported!"vibe3d.editing.tools.interactive.edit_session".EditSession);
 // Positive control: the fences below read the session's own members.
 static assert(__traits(hasMember, SessionT, "postmodeArmed_"));
 static foreach (kept; ["instanceActive_", "pinnedRedoImage_", "pinnedOperation_"])
@@ -2221,7 +2226,7 @@ static foreach (kept; ["instanceActive_", "pinnedRedoImage_", "pinnedOperation_"
 static foreach (gone; ["rebegun_", "uiOperation_", "reopenUiOperation_", "noApplyWrite_",
                        "rebeginsOnRedo_", "topologyFirstGroupLive_"])
     static assert(!__traits(hasMember, SessionT, gone), "S8 fence: the session holds " ~ gone);
-static assert(!__traits(hasMember, imported!"edit_session", "RebeginRoute"));
+static assert(!__traits(hasMember, imported!"vibe3d.editing.tools.interactive.edit_session", "RebeginRoute"));
 
 // ---------------------------------------------------------------------------
 // (5) Slice M4 — the two data fields that replaced per-tool capabilities:
@@ -2235,14 +2240,14 @@ static assert(!__traits(hasMember, imported!"edit_session", "RebeginRoute"));
 /// the datum from the abstract PrimitiveCreateTool, or declare it, BoxTool)
 /// and Mirror (the tenth keep-alive tool, S3 review).
 private immutable string[] kKeepAliveClasses = [
-    "tools.alignment.mirror.MirrorTool",
-    "tools.create.box.BoxTool",
-    "tools.create.capsule.CapsuleTool",
-    "tools.create.cone.ConeTool",
-    "tools.create.cylinder.CylinderTool",
-    "tools.create.sphere.SphereTool",
-    "tools.create.torus.TorusTool",
-    "tools.create.tube.TubeTool",
+    "vibe3d.editing.tools.interactive.tools.alignment.mirror.MirrorTool",
+    "vibe3d.editing.tools.interactive.tools.create.box.BoxTool",
+    "vibe3d.editing.tools.interactive.tools.create.capsule.CapsuleTool",
+    "vibe3d.editing.tools.interactive.tools.create.cone.ConeTool",
+    "vibe3d.editing.tools.interactive.tools.create.cylinder.CylinderTool",
+    "vibe3d.editing.tools.interactive.tools.create.sphere.SphereTool",
+    "vibe3d.editing.tools.interactive.tools.create.torus.TorusTool",
+    "vibe3d.editing.tools.interactive.tools.create.tube.TubeTool",
 ];
 
 static assert(ToolSessionPolicy.init.keepAliveOnCancel == false
@@ -2258,7 +2263,12 @@ unittest { // (5)
     string[] keep, carries;
     size_t scanned;
     foreach (m; ModuleInfo) {
-        if (m is null || !m.name.startsWith("tools.")) continue;
+        if (m is null || !(m.name.startsWith("tools.")
+            || m.name.startsWith("vibe3d.editing.tools.interactive.tools.")
+            || m.name.startsWith("vibe3d.editing.tools.alignment.tools.")
+            || m.name.startsWith("vibe3d.editing.tools.creation.tools.")
+            || m.name.startsWith("vibe3d.editing.tools.state.tools.")
+            || m.name.startsWith("vibe3d.editing.tools.transform.tools."))) continue;
         foreach (c; m.localClasses) {
             if (!derivesFromTool(c) || (c.m_flags & TypeInfo_Class.ClassFlags.isAbstract))
                 continue;
@@ -2277,7 +2287,7 @@ unittest { // (5)
                   keep, kKeepAliveClasses));
     // Task 8920: inside the topology model the carry is derived from `opensAt`
     // (`firstStepCarriesActivation`), so only Edge Extend declares it.
-    assert(carries == ["tools.edit.edge_extend.EdgeExtendTool"],
+    assert(carries == ["vibe3d.editing.tools.interactive.tools.edit.edge_extend.EdgeExtendTool"],
            format("M4 policy classes: recordCarriesActivation declared by %s", carries));
 }
 
@@ -2326,7 +2336,7 @@ unittest { // (6) id -> rollovers, over every registered id
         const f = flags[i];
         assert(f["id"].str == row.id, format("M6 rollover table: row %s is %s, flag row %s",
                                              i, row.id, f["id"].str));
-        auto t = blit(TypeInfo_Class.find(moduleOf[row.cls] ~ "." ~ row.cls));
+        auto t = blit(TypeInfo_Class.find("vibe3d.editing.tools.interactive." ~ moduleOf[row.cls] ~ "." ~ row.cls));
         const pol = t.sessionPolicy();
         immutable bool actor = f["actor"].type == JSONType.true_;
         immutable string mapping = f["mapping"].str;
@@ -2410,7 +2420,12 @@ unittest { // (6c) exactly one class anchors its handle on its own operation
     string[] declared;
     size_t scanned;
     foreach (m; ModuleInfo) {
-        if (m is null || !m.name.startsWith("tools.")) continue;
+        if (m is null || !(m.name.startsWith("tools.")
+            || m.name.startsWith("vibe3d.editing.tools.interactive.tools.")
+            || m.name.startsWith("vibe3d.editing.tools.alignment.tools.")
+            || m.name.startsWith("vibe3d.editing.tools.creation.tools.")
+            || m.name.startsWith("vibe3d.editing.tools.state.tools.")
+            || m.name.startsWith("vibe3d.editing.tools.transform.tools."))) continue;
         foreach (c; m.localClasses) {
             if (!derivesFromTool(c) || (c.m_flags & TypeInfo_Class.ClassFlags.isAbstract))
                 continue;
@@ -2420,7 +2435,7 @@ unittest { // (6c) exactly one class anchors its handle on its own operation
         }
     }
     assert(scanned == 47, format("M6 policy classes: scanned %s, measured 47", scanned));
-    assert(declared == ["tools.edit.edge_extend.EdgeExtendTool"],
+    assert(declared == ["vibe3d.editing.tools.interactive.tools.edit.edge_extend.EdgeExtendTool"],
            format("M6 policy classes: handleAnchor opBasePlusAttr declared by %s", declared));
 }
 
@@ -2458,7 +2473,12 @@ unittest { // (8)
     string[] declared;
     size_t scanned;
     foreach (m; ModuleInfo) {
-        if (m is null || !m.name.startsWith("tools.")) continue;
+        if (m is null || !(m.name.startsWith("tools.")
+            || m.name.startsWith("vibe3d.editing.tools.interactive.tools.")
+            || m.name.startsWith("vibe3d.editing.tools.alignment.tools.")
+            || m.name.startsWith("vibe3d.editing.tools.creation.tools.")
+            || m.name.startsWith("vibe3d.editing.tools.state.tools.")
+            || m.name.startsWith("vibe3d.editing.tools.transform.tools."))) continue;
         foreach (c; m.localClasses) {
             if (!derivesFromTool(c) || (c.m_flags & TypeInfo_Class.ClassFlags.isAbstract))
                 continue;
@@ -2467,7 +2487,7 @@ unittest { // (8)
         }
     }
     assert(scanned == 47, format("M7 policy classes: scanned %s, measured 47", scanned));
-    assert(declared == ["tools.slice.loop_slice_tool.LoopSliceTool"],
+    assert(declared == ["vibe3d.editing.tools.interactive.tools.slice.loop_slice_tool.LoopSliceTool"],
            format("M7 policy classes: armRestoresWholeImage declared by %s", declared));
     auto pt = squeeze(blankNonCode(readText("source/prepared_tool_transition.d")));
     assert(pt.count("if(!candidate.sessionPolicy().armRestoresWholeImage)foreach(name;sticky.changedNames)") == 1,
@@ -2494,7 +2514,12 @@ unittest { // (10)
     string[] declared;
     size_t scanned;
     foreach (m; ModuleInfo) {
-        if (m is null || !m.name.startsWith("tools.")) continue;
+        if (m is null || !(m.name.startsWith("tools.")
+            || m.name.startsWith("vibe3d.editing.tools.interactive.tools.")
+            || m.name.startsWith("vibe3d.editing.tools.alignment.tools.")
+            || m.name.startsWith("vibe3d.editing.tools.creation.tools.")
+            || m.name.startsWith("vibe3d.editing.tools.state.tools.")
+            || m.name.startsWith("vibe3d.editing.tools.transform.tools."))) continue;
         foreach (c; m.localClasses) {
             if (!derivesFromTool(c) || (c.m_flags & TypeInfo_Class.ClassFlags.isAbstract))
                 continue;
@@ -2503,7 +2528,7 @@ unittest { // (10)
         }
     }
     assert(scanned == 47, format("S6 policy classes: scanned %s, measured 47", scanned));
-    assert(declared == ["tools.edit.topology_pen.tool.TopologyPenTool"],
+    assert(declared == ["vibe3d.editing.tools.interactive.tools.edit.topology_pen.tool.TopologyPenTool"],
            format("S6 policy classes: dropWritesRow declared by %s, expected the pen only", declared));
     auto app = squeeze(bodyAt(blankNonCode(readText("source/app.d")),
         "void dropActiveToolWith(ToolTransition why, DropContext ctx)"));
@@ -2533,7 +2558,12 @@ unittest { // (10b)
     string[] dropRow, latent, extents;
     size_t scanned;
     foreach (m; ModuleInfo) {
-        if (m is null || !m.name.startsWith("tools.")) continue;
+        if (m is null || !(m.name.startsWith("tools.")
+            || m.name.startsWith("vibe3d.editing.tools.interactive.tools.")
+            || m.name.startsWith("vibe3d.editing.tools.alignment.tools.")
+            || m.name.startsWith("vibe3d.editing.tools.creation.tools.")
+            || m.name.startsWith("vibe3d.editing.tools.state.tools.")
+            || m.name.startsWith("vibe3d.editing.tools.transform.tools."))) continue;
         foreach (c; m.localClasses) {
             if (!derivesFromTool(c) || (c.m_flags & TypeInfo_Class.ClassFlags.isAbstract))
                 continue;
@@ -2542,7 +2572,7 @@ unittest { // (10b)
             if (pol.toolSetDropRow) dropRow ~= c.name;
             if (pol.armUndoLeavesToolLatent) latent ~= c.name;
             if (pol.dropUndo.extent != DropUndoExtent.none) extents ~= c.name;
-            if (c.name == "tools.edit.topology_pen.tool.TopologyPenTool")
+            if (c.name == "vibe3d.editing.tools.interactive.tools.edit.topology_pen.tool.TopologyPenTool")
                 assert(pol.dropUndo == DropUndoPolicy(DropUndoExtent.newestPressBlock, DropRedoPopulation.discard, DropUndoResidualPopulation.pressMarker),
                     "plain pen must discard redo of its newest press");
             else if (pol.toolSetDropRow)
@@ -2552,17 +2582,17 @@ unittest { // (10b)
         }
     }
     extents.sort();
-    assert(extents == ["tools.edit.poly_bevel.PolyBevelTool", "tools.edit.topology_pen.tool.TopologyPenTool",
-        "tools.transform.xfrm_transform.XfrmTransformTool"], "drop extent declaration population");
+    assert(extents == ["vibe3d.editing.tools.interactive.tools.edit.poly_bevel.PolyBevelTool", "vibe3d.editing.tools.interactive.tools.edit.topology_pen.tool.TopologyPenTool",
+        "vibe3d.editing.tools.interactive.tools.transform.xfrm_transform.XfrmTransformTool"], "drop extent declaration population");
     assert(scanned == 47, format("9508 policy classes: scanned %s, measured 47", scanned));
     dropRow.sort();
-    assert(dropRow == ["tools.edit.poly_bevel.PolyBevelTool",
-                       "tools.transform.xfrm_transform.XfrmTransformTool"],
+    assert(dropRow == ["vibe3d.editing.tools.interactive.tools.edit.poly_bevel.PolyBevelTool",
+                       "vibe3d.editing.tools.interactive.tools.transform.xfrm_transform.XfrmTransformTool"],
            format("9508 policy classes: toolSetDropRow declared by %s", dropRow));
     const completion = squeeze(blankNonCode(readText("source/app.d")));
     assert(completion.count("row.onCompleteDropUndo=(stringid,ulongtoken){session.completeDropUndo(id,token);};") == 1,
         "drop completion must be wired exactly once by the production lifecycle factory");
-    assert(latent == ["tools.transform.xfrm_transform.XfrmTransformTool"],
+    assert(latent == ["vibe3d.editing.tools.interactive.tools.transform.xfrm_transform.XfrmTransformTool"],
            format("9508 policy classes: armUndoLeavesToolLatent declared by %s", latent));
     auto app = blankNonCode(readText("source/app.d"));
     assert(squeeze(app).count("ctx.toolSetDoor=true;") == 1,
@@ -2591,7 +2621,7 @@ unittest { // (12)
     string[] opens, folds;
     size_t visited;
     foreach (row; kTable) {
-        auto ci = TypeInfo_Class.find(moduleOf[row.cls] ~ "." ~ row.cls);
+        auto ci = TypeInfo_Class.find("vibe3d.editing.tools.interactive." ~ moduleOf[row.cls] ~ "." ~ row.cls);
         assert(ci !is null, "S7a policy table: class not linked: " ~ row.cls);
         ++visited;
         const pol = blit(ci).sessionPolicy();
@@ -2621,22 +2651,22 @@ unittest { // (12)
 // ---------------------------------------------------------------------------
 
 private enum string[] kToolClassModules = [
-    "tools.alignment.array_tool", "tools.alignment.clone_tool",
-    "tools.alignment.linear_align_tool", "tools.alignment.mirror",
-    "tools.alignment.radial_align_tool", "tools.alignment.radial_array_tool",
-    "tools.alignment.radial_sweep_tool", "tools.common.command_wrapper", "tools.create.arc",
-    "tools.create.box", "tools.create.capsule", "tools.create.cone", "tools.create.cylinder",
-    "tools.create.pen", "tools.create.sphere", "tools.create.torus", "tools.create.tube",
-    "tools.create.vertex_place", "tools.deform.bend", "tools.deform.magnet",
-    "tools.deform.push", "tools.deform.smooth_shift_tool", "tools.deform.stroke_extrude_tool",
-    "tools.edit.bridge_tool", "tools.edit.edge_bevel",
-    "tools.edit.edge_extend", "tools.edit.edge_extrude", "tools.edit.poly_bevel",
-    "tools.edit.poly_extrude", "tools.edit.poly_inset_tool", "tools.edit.reduce",
-    "tools.edit.tack", "tools.edit.topology_pen.tool", "tools.edit.vert_merge_tool",
-    "tools.edit.vertex_bevel_tool", "tools.edit.vertex_extrude_tool",
-    "tools.slice.edge_slice_tool", "tools.slice.edge_slide", "tools.slice.loop_slice_tool",
-    "tools.slice.slice_tool", "tools.transform.move", "tools.transform.rotate",
-    "tools.transform.scale", "tools.transform.transform", "tools.transform.xfrm_transform",
+    "vibe3d.editing.tools.interactive.tools.alignment.array_tool", "vibe3d.editing.tools.interactive.tools.alignment.clone_tool",
+    "vibe3d.editing.tools.interactive.tools.alignment.linear_align_tool", "vibe3d.editing.tools.interactive.tools.alignment.mirror",
+    "vibe3d.editing.tools.interactive.tools.alignment.radial_align_tool", "vibe3d.editing.tools.interactive.tools.alignment.radial_array_tool",
+    "vibe3d.editing.tools.interactive.tools.alignment.radial_sweep_tool", "vibe3d.editing.tools.interactive.tools.common.command_wrapper", "vibe3d.editing.tools.interactive.tools.create.arc",
+    "vibe3d.editing.tools.interactive.tools.create.box", "vibe3d.editing.tools.interactive.tools.create.capsule", "vibe3d.editing.tools.interactive.tools.create.cone", "vibe3d.editing.tools.interactive.tools.create.cylinder",
+    "vibe3d.editing.tools.interactive.tools.create.pen", "vibe3d.editing.tools.interactive.tools.create.sphere", "vibe3d.editing.tools.interactive.tools.create.torus", "vibe3d.editing.tools.interactive.tools.create.tube",
+    "vibe3d.editing.tools.interactive.tools.create.vertex_place", "vibe3d.editing.tools.interactive.tools.deform.bend", "vibe3d.editing.tools.interactive.tools.deform.magnet",
+    "vibe3d.editing.tools.interactive.tools.deform.push", "vibe3d.editing.tools.interactive.tools.deform.smooth_shift_tool", "vibe3d.editing.tools.interactive.tools.deform.stroke_extrude_tool",
+    "vibe3d.editing.tools.interactive.tools.edit.bridge_tool", "vibe3d.editing.tools.interactive.tools.edit.edge_bevel",
+    "vibe3d.editing.tools.interactive.tools.edit.edge_extend", "vibe3d.editing.tools.interactive.tools.edit.edge_extrude", "vibe3d.editing.tools.interactive.tools.edit.poly_bevel",
+    "vibe3d.editing.tools.interactive.tools.edit.poly_extrude", "vibe3d.editing.tools.interactive.tools.edit.poly_inset_tool", "vibe3d.editing.tools.interactive.tools.edit.reduce",
+    "vibe3d.editing.tools.interactive.tools.edit.tack", "vibe3d.editing.tools.interactive.tools.edit.topology_pen.tool", "vibe3d.editing.tools.interactive.tools.edit.vert_merge_tool",
+    "vibe3d.editing.tools.interactive.tools.edit.vertex_bevel_tool", "vibe3d.editing.tools.interactive.tools.edit.vertex_extrude_tool",
+    "vibe3d.editing.tools.interactive.tools.slice.edge_slice_tool", "vibe3d.editing.tools.interactive.tools.slice.edge_slide", "vibe3d.editing.tools.interactive.tools.slice.loop_slice_tool",
+    "vibe3d.editing.tools.interactive.tools.slice.slice_tool", "vibe3d.editing.tools.interactive.tools.transform.move", "vibe3d.editing.tools.interactive.tools.transform.rotate",
+    "vibe3d.editing.tools.interactive.tools.transform.scale", "vibe3d.editing.tools.interactive.tools.transform.transform", "vibe3d.editing.tools.interactive.tools.transform.xfrm_transform",
 ];
 
 /// [concrete tool class names..., "|", interface names...] of those modules.
@@ -2665,12 +2695,16 @@ private string[] toolClassComposition() {
 }
 
 private enum string[] kPinnedToolInterfaces = [
-    "edit_session.FrameParameterEvalClient", "edit_session.LiveEvalClient",
-    "edit_session.RefireClient", "edit_session.SlotActivationClient",
-    "prepared_record_context.PreparedToolDoorClient",
-    "prepared_record_context.PreparedToolParamDoorClient",
-    "prepared_record_context.PreparedToolPoseDoorClient", "tool.InputBindable",
-    "tool.TopologyStepClient", "vibe3d.editing.params.params.ParamProvider",
+    "vibe3d.editing.params.params.ParamProvider",
+    "vibe3d.editing.tools.interactive.edit_session.FrameParameterEvalClient",
+    "vibe3d.editing.tools.interactive.edit_session.LiveEvalClient",
+    "vibe3d.editing.tools.interactive.edit_session.RefireClient",
+    "vibe3d.editing.tools.interactive.edit_session.SlotActivationClient",
+    "vibe3d.editing.tools.interactive.prepared_record_context.PreparedToolDoorClient",
+    "vibe3d.editing.tools.interactive.prepared_record_context.PreparedToolParamDoorClient",
+    "vibe3d.editing.tools.interactive.prepared_record_context.PreparedToolPoseDoorClient",
+    "vibe3d.editing.tools.interactive.tool.InputBindable",
+    "vibe3d.editing.tools.interactive.tool.TopologyStepClient",
 ];
 
 private enum string[] kToolComposition = toolClassComposition();
@@ -2896,7 +2930,12 @@ import tests.unit.census_symbols : exists = wave15Exists;
 unittest { // (9) the compile-time module list IS the runtime scan
     bool[string] mods, classes, ifaces;
     foreach (m; ModuleInfo) {
-        if (m is null || !m.name.startsWith("tools.")) continue;
+        if (m is null || !(m.name.startsWith("tools.")
+            || m.name.startsWith("vibe3d.editing.tools.interactive.tools.")
+            || m.name.startsWith("vibe3d.editing.tools.alignment.tools.")
+            || m.name.startsWith("vibe3d.editing.tools.creation.tools.")
+            || m.name.startsWith("vibe3d.editing.tools.state.tools.")
+            || m.name.startsWith("vibe3d.editing.tools.transform.tools."))) continue;
         foreach (c; m.localClasses) {
             if (!derivesFromTool(c) || (c.m_flags & TypeInfo_Class.ClassFlags.isAbstract))
                 continue;
@@ -2946,7 +2985,7 @@ unittest { // (12)
     string[] declared;
     size_t visited;
     foreach (row; kTable) {
-        auto ci = TypeInfo_Class.find(moduleOf[row.cls] ~ "." ~ row.cls);
+        auto ci = TypeInfo_Class.find("vibe3d.editing.tools.interactive." ~ moduleOf[row.cls] ~ "." ~ row.cls);
         assert(ci !is null, "S8 policy table: class not linked: " ~ row.cls);
         ++visited;
         if (blit(ci).sessionPolicy().commandEndsOpenGesture) declared ~= row.id;

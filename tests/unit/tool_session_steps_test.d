@@ -233,7 +233,7 @@ unittest { // a key-door row of THIS arm joins the group; the navigate redo repl
     assert(r.t.v == 0, "M3 replay: the first group was replayed twice (S7)");
 }
 
-private class Stub : imported!"command".Command {
+private class Stub : imported!"vibe3d.editing.commands.runtime.command".Command {
     import vibe3d.editing.commands.runtime.command : CmdFlags;
     import vibe3d.viewport.camera.view : View;
     View v;
@@ -2202,7 +2202,7 @@ unittest { // S2b invariant: an open operation is always an armed post mode
         checked));
 }
 
-private const(imported!"commands.mesh.session_edit".MeshSessionEdit) s2bTopRow(CommandHistory h) {
+private const(imported!"vibe3d.editing.commands.editor.commands.mesh.session_edit".MeshSessionEdit) s2bTopRow(CommandHistory h) {
     import vibe3d.editing.commands.editor.commands.mesh.session_edit : MeshSessionEdit;
     auto row = cast(const MeshSessionEdit) h.undoEntries()[$ - 1].cmd;
     assert(row !is null && row.isTopologyStep(), "S2b: the undo top is no topology step");
@@ -2496,7 +2496,7 @@ unittest { // S2b N2: the reopened operation is the undone row's, not the sessio
     }
     const m2 = s2bTopRow(r.h);
     assert(r.h.undoEntries().length == 3, "S2b N2 rig: the two restarts are not rows of their own");
-    const m1 = cast(const imported!"commands.mesh.session_edit".MeshSessionEdit)
+    const m1 = cast(const imported!"vibe3d.editing.commands.editor.commands.mesh.session_edit".MeshSessionEdit)
         r.h.undoEntries()[1].cmd;
     assert(m1.stepOrigin() == StepOrigin.restart && m2.stepOrigin() == StepOrigin.restart
            && m1.stepOperation() != g1.stepOperation() && m2.stepOperation() != m1.stepOperation(),

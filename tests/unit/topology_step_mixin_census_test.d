@@ -23,18 +23,18 @@ private enum kPen  = "source/tools/edit/topology_pen/tool.d";
 
 private struct Client { string mod, cls; bool gizmo, commitPair, ownDormant, hook; }
 private enum Client[] kComposition = [
-    Client("tools.alignment.array_tool", "ArrayTool"),
-    Client("tools.alignment.clone_tool", "CloneTool"),
-    Client("tools.alignment.mirror", "MirrorTool"),
-    Client("tools.alignment.radial_array_tool", "RadialArrayTool"),
-    Client("tools.edit.poly_inset_tool", "PolyInsetTool", false, true),
-    Client("tools.edit.vert_merge_tool", "VertexMergeTool", false, true),
-    Client("tools.deform.smooth_shift_tool", "SmoothShiftTool", true, true, false, true),
-    Client("tools.edit.edge_bevel", "EdgeBevelTool", true, true, false, true),
-    Client("tools.edit.edge_extrude", "EdgeExtrudeTool", true, true, false, true),
-    Client("tools.edit.poly_extrude", "PolyExtrudeTool", true, true, true, true),
-    Client("tools.edit.vertex_bevel_tool", "VertexBevelTool", true, true, false, true),
-    Client("tools.edit.vertex_extrude_tool", "VertexExtrudeTool", true, true, false, true),
+    Client("vibe3d.editing.tools.interactive.tools.alignment.array_tool", "ArrayTool"),
+    Client("vibe3d.editing.tools.interactive.tools.alignment.clone_tool", "CloneTool"),
+    Client("vibe3d.editing.tools.interactive.tools.alignment.mirror", "MirrorTool"),
+    Client("vibe3d.editing.tools.interactive.tools.alignment.radial_array_tool", "RadialArrayTool"),
+    Client("vibe3d.editing.tools.interactive.tools.edit.poly_inset_tool", "PolyInsetTool", false, true),
+    Client("vibe3d.editing.tools.interactive.tools.edit.vert_merge_tool", "VertexMergeTool", false, true),
+    Client("vibe3d.editing.tools.interactive.tools.deform.smooth_shift_tool", "SmoothShiftTool", true, true, false, true),
+    Client("vibe3d.editing.tools.interactive.tools.edit.edge_bevel", "EdgeBevelTool", true, true, false, true),
+    Client("vibe3d.editing.tools.interactive.tools.edit.edge_extrude", "EdgeExtrudeTool", true, true, false, true),
+    Client("vibe3d.editing.tools.interactive.tools.edit.poly_extrude", "PolyExtrudeTool", true, true, true, true),
+    Client("vibe3d.editing.tools.interactive.tools.edit.vertex_bevel_tool", "VertexBevelTool", true, true, false, true),
+    Client("vibe3d.editing.tools.interactive.tools.edit.vertex_extrude_tool", "VertexExtrudeTool", true, true, false, true),
 ];
 
 /// Every `source/**.d` file, relative path -> blanked code.
@@ -111,7 +111,7 @@ unittest { // the deleted copies live only in the home and the topology pen
                                     ~ "the home only", pairs));
 }
 
-static assert(is(imported!"tools.alignment.mirror".MirrorTool : imported!"tool".TopologyStepClient));
+static assert(is(imported!"vibe3d.editing.tools.interactive.tools.alignment.mirror".MirrorTool : imported!"vibe3d.editing.tools.interactive.tool".TopologyStepClient));
 
 // PIN (form item 1), by the compiler: where each client's interface members and
 // commit pair are DECLARED (`__traits(getLocation)` names the mixin's file for a
