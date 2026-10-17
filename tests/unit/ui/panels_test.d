@@ -3,6 +3,8 @@
 // private symbol stayed behind -- see the task for the count.
 module tests.unit.ui.panels_test;
 
+import tests.unit.census_symbols : wave19MathPhysicalPath;
+
 import bindbc.sdl;
 import bindbc.opengl;
 import std.string : toStringz, indexOf;
@@ -389,8 +391,8 @@ unittest { // real desktop factories and draw calls remain wiring witnesses
     import std.path : buildPath, dirName;
     import tests.unit.census_symbols : blankNonCode, countIdent;
     const root = dirName(dirName(dirName(dirName(__FILE_FULL_PATH__))));
-    const factory = blankNonCode(readText(buildPath(root, "source/editor_app.d")));
-    const app = blankNonCode(readText(buildPath(root, "source/app.d")));
+    const factory = blankNonCode(readText(wave19MathPhysicalPath(buildPath(root, "source/editor_app.d"))));
+    const app = blankNonCode(readText(wave19MathPhysicalPath(buildPath(root, "source/app.d"))));
     assert(countIdent(factory, "bindPanelHostRoles") == 1,
         "W18 desktop role factory declaration floor");
     assert(app.indexOf("drawTabPanel(editor_app.bindPanelHostRoles!(TabPanelRole)(app)") >= 0,

@@ -1,5 +1,7 @@
 module tests.unit.web_editor_page_test;
 
+import tests.unit.census_symbols : wave19MathPhysicalPath;
+
 import std.file : readText;
 import std.string : count, indexOf;
 
@@ -9,7 +11,7 @@ unittest
     const serve = readText("tools/serve_web_editor.sh");
     const gate = readText("tools/web_editor_liveness.mjs");
     const gateRunner = readText("tools/test_web_editor.sh");
-    const app = readText("source/app.d");
+    const app = readText(wave19MathPhysicalPath("source/app.d"));
 
     assert(page.count("<script src=\"assimp_module.js\"></script>") == 1
         && page.count("script.src = 'vibe3d.js'") == 1

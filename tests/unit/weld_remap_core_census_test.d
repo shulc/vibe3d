@@ -11,6 +11,8 @@
 // Order per assert block: scanner control, population floor, roster.
 module tests.unit.weld_remap_core_census_test;
 
+import tests.unit.census_symbols : wave19MathPhysicalPath;
+
 import std.algorithm : count, sort;
 import std.file      : readText;
 import std.format    : format;
@@ -35,7 +37,7 @@ private string[] declsOf(string src, string needle) {
     return outp;
 }
 
-private string meshSrc() { return readText(buildPath(repoRoot, "packages", "mesh", "source", "mesh.d")); }
+private string meshSrc() { return readText(wave19MathPhysicalPath(buildPath(repoRoot, "packages", "mesh", "source", "mesh.d"))); }
 
 unittest { // scanner control: a call and an address are seen; prose is not
     enum probe = "struct M {\n"

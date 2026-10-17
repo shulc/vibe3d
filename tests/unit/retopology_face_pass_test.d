@@ -9,6 +9,8 @@
 // `DrawPlan.init` still maps to exactly `FacePass.init`.
 module tests.unit.retopology_face_pass_test;
 
+import tests.unit.census_symbols : wave19MathPhysicalPath;
+
 import std.file : readText;
 import std.format : format;
 import std.math : sqrt;
@@ -92,14 +94,14 @@ unittest // faceNormalFirst3 is the upload's normal, bit for bit
 
 unittest // the face VBO has ONE normal home: no inline copy survives in mesh_gpu.d
 {
-    const src = readText(buildPath(repoRoot, "packages/viewport-gpu/source", "mesh_gpu.d"));
+    const src = readText(wave19MathPhysicalPath(buildPath(repoRoot, "packages/viewport-gpu/source", "mesh_gpu.d")));
     immutable calls = src.count("faceNormalFirst3(");
     // None since the incremental refresh (task 9070): the flat stream reads
     // `vertex_normals.faceUnitNormal`, the one face-normal home, whose
     // per-face results the smooth stream shares.
     assert(calls == 0, format("mesh_gpu.d: expected no faceNormalFirst3 call "
         ~ "(the flat normal comes from vertex_normals.faceUnitNormal), got %s", calls));
-    const vn = readText(buildPath(repoRoot, "packages/display-policy/source", "vertex_normals.d"));
+    const vn = readText(wave19MathPhysicalPath(buildPath(repoRoot, "packages/display-policy/source", "vertex_normals.d")));
     assert(vn.count("faceNormalFirst3(") == 1 && vn.count("Vec3 faceUnitNormal(") == 1,
         "vertex_normals.d: faceUnitNormal must be the one faceNormalFirst3 caller");
     assert(src.count("1e-6f") == 0 && src.count("nlen") == 0,
@@ -237,7 +239,7 @@ unittest // the face pass restores every GL state it sets (source census)
     // this pins all four restores at their one site.
     import std.algorithm : canFind;
     import std.string : indexOf;
-    const src = readText(buildPath(repoRoot, "packages/viewport-gpu/source", "mesh_gpu.d"));
+    const src = readText(wave19MathPhysicalPath(buildPath(repoRoot, "packages/viewport-gpu/source", "mesh_gpu.d")));
     immutable at = src.indexOf("private void endFacePass(");
     assert(at >= 0, "mesh_gpu.d: endFacePass not found");
     string bodyOf(string head) {

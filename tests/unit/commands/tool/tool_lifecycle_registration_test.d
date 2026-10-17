@@ -2,6 +2,8 @@
 // input and the parent ordering so helper correctness cannot hide mis-wiring.
 module tests.unit.commands.tool.tool_lifecycle_registration_test;
 
+import tests.unit.census_symbols : wave19MathPhysicalPath;
+
 import vibe3d.apps.desktop.application_command_binding : CommandInvocationContext,
     CommandInvocationOutcome;
 import vibe3d.editing.commands.runtime.command : Command, CommandOrigin, g_editTargetResolver, g_testMode,
@@ -96,8 +98,8 @@ private string exceptionMessage(void delegate() action) {
 
 private string repoFile(string relative) {
     const path = buildPath(repoRoot, relative);
-    assert(exists(path), "5980 production census cannot find " ~ relative);
-    return readText(path);
+    assert(exists(wave19MathPhysicalPath(path)), "5980 production census cannot find " ~ relative);
+    return readText(wave19MathPhysicalPath(path));
 }
 
 unittest { // U1: every id builds its intended class

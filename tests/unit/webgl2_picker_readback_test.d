@@ -1,5 +1,7 @@
 module tests.unit.webgl2_picker_readback_test;
 
+import tests.unit.census_symbols : wave19MathPhysicalPath;
+
 import std.algorithm : count;
 import std.file : exists, readText, remove, tempDir, write;
 import std.format : format;
@@ -19,7 +21,7 @@ private string browserBinary() {
 }
 
 unittest { // real WebGL2 R32UI readback and production wiring
-    const source = readText(buildPath(repoRoot, "packages/viewport-gpu/source", "gpu_select.d"));
+    const source = readText(wave19MathPhysicalPath(buildPath(repoRoot, "packages/viewport-gpu/source", "gpu_select.d")));
     assert(source.count("readIdPixels(") == 4,
         "W16-D production census: expected one helper plus all three picker callers");
     assert(source.count("glReadPixels(") == 1,

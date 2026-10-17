@@ -3,6 +3,8 @@
 // lifecycle mutations report their behavioural red before textual fallout.
 module tests.unit.commands.scene.scene_file_lifecycle_registration_test;
 
+import tests.unit.census_symbols : wave19MathPhysicalPath;
+
 import vibe3d.apps.desktop.application_command_binding : CommandInvocationContext,
     CommandInvocationOutcome;
 import vibe3d.editing.commands.runtime.command : Command, CommandOrigin;
@@ -45,8 +47,8 @@ private enum repoRoot = buildNormalizedPath(dirName(__FILE_FULL_PATH__), "..",
 
 private string repoFile(string relative) {
     const path = buildNormalizedPath(repoRoot, relative);
-    assert(exists(path), "6480 production census cannot find " ~ relative);
-    return readText(path);
+    assert(exists(wave19MathPhysicalPath(path)), "6480 production census cannot find " ~ relative);
+    return readText(wave19MathPhysicalPath(path));
 }
 
 private string collapseWhitespace(string text) {

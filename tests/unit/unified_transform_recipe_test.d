@@ -1,5 +1,7 @@
 module tests.unit.unified_transform_recipe_test;
 
+import tests.unit.census_symbols : wave19MathPhysicalPath;
+
 // Task 6351: the four unified transform registry ids must share the production
 // construction recipe while retaining independent declared defaults, live
 // mesh/subject/item-target sources, undo carriers, gizmo host, and exploration
@@ -285,10 +287,10 @@ private string bodyAt(string code, string marker) {
 // Block 5: source census — registration uses the helper; this witness does not
 // build an analogue of it.
 unittest {
-    immutable root = blankNonCode(readText(
-        buildPath(repoRoot, "source", "registration.d")));
-    immutable reg = blankNonCode(readText(buildPath(
-        repoRoot, "source", "transform_tool_registration.d")));
+    immutable root = blankNonCode(readText(wave19MathPhysicalPath(
+        buildPath(repoRoot, "source", "registration.d"))));
+    immutable reg = blankNonCode(readText(wave19MathPhysicalPath(buildPath(
+        repoRoot, "source", "transform_tool_registration.d"))));
     immutable fam = bodyAt(reg,
         "void registerTransformToolCommands(ref Registry reg, LiveSessionRole owner,");
     assert(countOccurrences(fam, "typedToolFactory!XfrmTransformTool(") == 4,

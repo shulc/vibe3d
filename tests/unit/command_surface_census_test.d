@@ -13,6 +13,8 @@
 // command documented beside command_surface_ledger.txt, then read the diff.
 module tests.unit.command_surface_census_test;
 
+import tests.unit.census_symbols : wave19MathPhysicalPath;
+
 import std.algorithm : canFind, sort;
 import std.array : appender, join;
 import std.file : dirEntries, exists, isFile, readText, SpanMode;
@@ -166,8 +168,8 @@ private string[] registeredCommandIds()
     bool[string] seen;
     foreach (m; matchAll(registration, registeredIdRe))
         seen[m[1].idup] = true;
-    const pilot = pilotRegistrationIds(readText(
-        buildPath(repoRoot, "packages", "application-core", "source", "pilot_command_registration.d")));
+    const pilot = pilotRegistrationIds(readText(wave19MathPhysicalPath(
+        buildPath(repoRoot, "packages", "application-core", "source", "pilot_command_registration.d"))));
     foreach (id; pilot) seen[id] = true;
     foreach (m; matchAll(registration, aliasIdRe))
         seen[m[1].idup] = true;

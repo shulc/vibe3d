@@ -7,6 +7,8 @@
 // "S2"; browser witnesses: tools/web_file_io/case_v3d.mjs.
 module tests.unit.web_file_io_page_test;
 
+import tests.unit.census_symbols : wave19MathPhysicalPath;
+
 import std.algorithm : canFind;
 import std.conv : to;
 import std.file : exists, mkdirRecurse, readText, rmdirRecurse, tempDir, write;
@@ -222,7 +224,7 @@ size_t[] literalHits(string raw, string needle) {
 }
 
 unittest {
-    const raw = readText(buildPath(repoRoot, "source", "app.d"));
+    const raw = readText(wave19MathPhysicalPath(buildPath(repoRoot, "source", "app.d")));
     const code = blankNonCode(raw);
     assert(code.length == raw.length && raw.length > 100_000,
         "census floor: app.d projection");

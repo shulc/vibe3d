@@ -1,6 +1,8 @@
 // Session ownership pilot witness (task 5700, related backlog 1901).
 module tests.unit.session_ownership_test;
 
+import tests.unit.census_symbols : wave19MathPhysicalPath;
+
 import std.file : exists, readText;
 import std.path : buildPath, dirName;
 import std.string : indexOf;
@@ -33,8 +35,8 @@ static assert(!__traits(isCopyable, Session),
 private string repoCode(string relative) {
     auto root = dirName(dirName(dirName(__FILE_FULL_PATH__)));
     auto path = buildPath(root, relative);
-    assert(exists(path), "session ownership census: missing " ~ relative);
-    return blankNonCode(readText(path));
+    assert(exists(wave19MathPhysicalPath(path)), "session ownership census: missing " ~ relative);
+    return blankNonCode(readText(wave19MathPhysicalPath(path)));
 }
 
 private size_t occurrences(string source, string needle) {

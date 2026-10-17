@@ -1,5 +1,7 @@
 module tests.unit.request_result_ownership_test;
 
+import tests.unit.census_symbols : wave19MathPhysicalPath;
+
 import tests.unit.http_test_client : receiveUntilClosed;
 
 import core.atomic : atomicLoad, atomicOp, atomicStore;
@@ -382,7 +384,7 @@ unittest {
     assert(routeRow >= 0,
         "5940 route table must classify exact GET /api/tool/state as main-thread answered");
 
-    immutable providers = readText(buildPath(root, "source", "http_providers.d"));
+    immutable providers = readText(wave19MathPhysicalPath(buildPath(root, "source", "http_providers.d")));
     immutable providerCode = blankNonCode(providers);
     immutable wireBody = bodyAt(providerCode,
         "private void wireSelectionProviders(HttpServer httpServer, ref EditorApp app,");

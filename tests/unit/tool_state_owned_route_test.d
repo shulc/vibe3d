@@ -1,5 +1,7 @@
 module tests.unit.tool_state_owned_route_test;
 
+import tests.unit.census_symbols : wave19MathPhysicalPath;
+
 import tests.unit.http_test_client : receiveUntilClosed;
 
 import core.atomic : atomicLoad, atomicOp, atomicStore;
@@ -187,7 +189,7 @@ private JSONValue state(string body) { return parseJSON(body); }
 // S: production construction and frame order are separate from request-level
 // behavior. The app-order mutation has no HTTP cell that can observe it.
 unittest {
-    auto app = blankNonCode(readText(buildPath(repoRoot, "source", "app.d")));
+    auto app = blankNonCode(readText(wave19MathPhysicalPath(buildPath(repoRoot, "source", "app.d"))));
     auto mainBody = bodyAt(app, "void main(string[] args)");
     immutable tick = mainBody.indexOf("httpServer.tickAll()");
     immutable stall = mainBody.indexOf("preToolTickStall.waitAtSeam()");
@@ -197,8 +199,8 @@ unittest {
     assert(mainBody.count("activeTool.update(vts)") == 1,
         "5940 S population floor: main must contain exactly one active-tool update");
 
-    auto registration = blankNonCode(readText(buildPath(
-        repoRoot, "source", "transform_tool_registration.d")));
+    auto registration = blankNonCode(readText(wave19MathPhysicalPath(buildPath(
+        repoRoot, "source", "transform_tool_registration.d"))));
     auto factories = bodyAt(registration,
         "void registerTransformToolCommands(ref Registry reg, LiveSessionRole owner,");
     assert(factories.count("buildUnifiedTransform(") == 4,

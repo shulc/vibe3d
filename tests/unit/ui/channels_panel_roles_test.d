@@ -1,5 +1,7 @@
 module tests.unit.ui.channels_panel_roles_test;
 
+import tests.unit.census_symbols : wave19MathPhysicalPath;
+
 import tests.unit.census_symbols : wave15InputsIntact, wave15InputStart;
 
 
@@ -410,7 +412,7 @@ unittest { // physical binder doors retain each independently guarded delegate
     import std.regex : matchAll, regex;
     import std.range : walkLength;
     import tests.unit.census_symbols : blankNonCode, countIdent, balancedSpan;
-    auto source = blankNonCode(readText(buildPath(repoRoot, "packages/editor-ui/source/ui/channels_panel.d")));
+    auto source = blankNonCode(readText(wave19MathPhysicalPath(buildPath(repoRoot, "packages/editor-ui/source/ui/channels_panel.d"))));
     assert(countIdent(source, "bindChannelsPanel") == 1, "W18 channels binder declaration floor");
     const site = source.indexOf("bindChannelsPanel");
     const open = source.indexOf("{", cast(size_t)site);

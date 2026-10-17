@@ -47,6 +47,8 @@
 // in the same run and so are bought by it.
 module tests.unit.duplicate_face_scan_alloc_test;
 
+import tests.unit.census_symbols : wave19MathPhysicalPath;
+
 import core.memory : GC;
 import vibe3d.util.math.math : Vec3;
 import vibe3d.mesh.core.mesh;
@@ -67,7 +69,7 @@ private string arraySnapshotSite(bool replacement) {
     import std.file : readText;
     import std.string : indexOf, split;
     import std.array : join;
-    auto source = readText("packages/mesh/source/mesh.d");
+    auto source = readText(wave19MathPhysicalPath("packages/mesh/source/mesh.d"));
     auto arrayStart = source.indexOf("size_t arrayFacesGrid(");
     assert(arrayStart >= 0, "snapshot read guard: arrayFacesGrid owner exists");
     auto body = source[cast(size_t)arrayStart .. $];

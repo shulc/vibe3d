@@ -29,6 +29,8 @@
 // inside the Session continuation; the HTTP cell pins the post-switch buffer.
 module tests.unit.morph_target_lifecycle_test;
 
+import tests.unit.census_symbols : wave19MathPhysicalPath;
+
 import std.algorithm : count;
 import std.exception : enforce;
 import std.file      : readText;
@@ -175,8 +177,8 @@ unittest {
 unittest {
     import vibe3d.viewport.gpu.display_sync : activeMeshResolver;
 
-    const app = blankNonCode(readText(
-        buildPath(repoRoot, "source", "app.d")));
+    const app = blankNonCode(readText(wave19MathPhysicalPath(
+        buildPath(repoRoot, "source", "app.d"))));
     const mainBody = bodyAt(app, "void main(string[] args)");
     const switchBody = bodyAt(mainBody,
         "void delegate(size_t, size_t) onActiveLayerChanged =");

@@ -5,6 +5,8 @@
 // helper; the census pins that the production provider actually uses it.
 module tests.unit.viewport_probe_sampling_test;
 
+import tests.unit.census_symbols : wave19MathPhysicalPath;
+
 import std.array  : appender;
 import std.file   : readText;
 import std.format : format;
@@ -115,8 +117,8 @@ unittest // no inside point: no read at all
 // this reads the provider's own text (the event_delivery_owner_test shape).
 unittest
 {
-    const code = blankNonCode(readText(
-        buildPath(repoRoot, "source", "http_providers.d")));
+    const code = blankNonCode(readText(wave19MathPhysicalPath(
+        buildPath(repoRoot, "source", "http_providers.d"))));
     const marker = "setViewportProbeProvider(";
     const at = code.indexOf(marker);
     enforce(at >= 0, "missing source marker `" ~ marker ~ "`");

@@ -13,6 +13,8 @@
 // then its mark view).
 module tests.unit.vertex_dot_arm_census_test;
 
+import tests.unit.census_symbols : wave19MathPhysicalPath;
+
 import std.file   : readText;
 import std.format : format;
 import std.path   : buildPath, dirName;
@@ -38,7 +40,7 @@ private string squeeze(string code) {
 
 unittest {
     immutable path = buildPath(repoRoot, "source", "ui", "viewport_render.d");
-    immutable code = squeeze(blankNonCode(readText(path)));
+    immutable code = squeeze(blankNonCode(readText(wave19MathPhysicalPath(path))));
 
     // ---- floor: the block, exactly once ---------------------------------
     enum head = "if (activePlan.drawVerts || selFeedbackType == SelType.Vertex "

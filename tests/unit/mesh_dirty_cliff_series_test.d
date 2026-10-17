@@ -56,6 +56,8 @@
 // window even if `B != D` or `D` is raised.
 module tests.unit.mesh_dirty_cliff_series_test;
 
+import tests.unit.census_symbols : wave19MathPhysicalPath;
+
 import vibe3d.mesh.change.mesh_dirty : g_geomEpochs, noteMeshBirth, noteMeshChange,
                      meshDirtySlotCeiling, meshBirthSlotCeiling,
                      meshBirthsRecorded, resetMeshDirtyStateForTest;
@@ -380,7 +382,7 @@ unittest {
     import std.format  : format;
 
     enum string kRepoRoot = dirName(dirName(dirName(__FILE_FULL_PATH__)));
-    const src = readText(buildPath(kRepoRoot, "packages", "mesh-change", "source", "mesh_dirty.d"));
+    const src = readText(wave19MathPhysicalPath(buildPath(kRepoRoot, "packages", "mesh-change", "source", "mesh_dirty.d")));
 
     // STRUCTURAL, not textual — see `gsharedDeclsOfType` above and task 2007
     // finding #6 for the `alias Epochs = MeshDirtyEpochs;` escape this closes.

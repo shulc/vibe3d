@@ -1,5 +1,7 @@
 module tests.unit.history_replay_boundary_test;
 
+import tests.unit.census_symbols : wave19MathPhysicalPath;
+
 import tests.unit.http_test_client : receiveUntilClosed;
 
 import vibe3d.runtime.ai_advisor.ai.exploration : AiExplorationController;
@@ -463,7 +465,7 @@ private void resetGlobalProbes() {
 unittest { // source wiring closes both production entries over one port
     immutable root = dirName(dirName(dirName(__FILE_FULL_PATH__)));
     auto source = wave15ReadText(buildPath(root, "source", "http_server.d"));
-    auto adapter = readText(buildPath(root, "source", "http_command_adapter.d"));
+    auto adapter = readText(wave19MathPhysicalPath(buildPath(root, "source", "http_command_adapter.d")));
     assert(source.length > 100_000,
         "5820 source census population floor: http_server.d is implausibly small");
     assert(source.count("executeCommand(req.id, req.params, req.interactive,") == 1,

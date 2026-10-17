@@ -1,11 +1,13 @@
 module tests.unit.web_browser_runner_test;
 
+import tests.unit.census_symbols : wave19MathPhysicalPath;
+
 import std.file : readText;
 import std.string : count, indexOf;
 
 private string repoFile(string path)
 {
-    return readText(path);
+    return readText(wave19MathPhysicalPath(path));
 }
 
 unittest

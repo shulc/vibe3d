@@ -45,6 +45,8 @@
 //
 // LANE: `dub test --config=tests` (lane U) — a `tests/unit/**` block.
 module tests.unit.l10_command_undo_census_test;
+
+import tests.unit.census_symbols : wave19MathPhysicalPath;
 import vibe3d.mesh.edit_replay.mesh_edit_replay : captureSelectedEdgeEnds;
 
 import std.file   : readText, exists;
@@ -99,11 +101,11 @@ unittest // the thirteen are off the whole-mesh snapshot
         immutable path = buildPath(repoRoot(), name);
         // TERM 2 — every literal exists, asserted BEFORE any count. A count
         // over a file that is not there is not zero, it is nothing.
-        assert(exists(path),
+        assert(exists(wave19MathPhysicalPath(path)),
             "cannot find " ~ name ~ " at " ~ path
           ~ " — the roster names a file that is not in the tree, so its rows "
           ~ "below would be measuring nothing.");
-        immutable code = codeOnly(readText(path));
+        immutable code = codeOnly(readText(wave19MathPhysicalPath(path)));
 
         // TERM 3 — a PER-FILE non-vacuity floor for the stripper. Every one of
         // the thirteen is a `Command` with exactly one `revertImpl` override; a

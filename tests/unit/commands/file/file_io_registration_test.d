@@ -2,6 +2,8 @@
 // production call is pinned separately because this rig builds its own roles.
 module vibe3d.apps.desktop.commands.file.file_io_registration_test;
 
+import tests.unit.census_symbols : wave19MathPhysicalPath;
+
 import std.algorithm : count;
 import std.file : exists, readText, remove;
 import std.path : buildPath, buildNormalizedPath, dirName;
@@ -149,9 +151,9 @@ unittest { // production wiring and registry-owned construction
     const fileIoPath = buildPath(repoRoot, "source", "file_io_registration.d");
     const lifecyclePath = buildPath(repoRoot, "source",
         "scene_file_lifecycle_registration.d");
-    const registration = readText(registrationPath);
-    const fileIo = readText(fileIoPath);
-    const lifecycle = readText(lifecyclePath);
+    const registration = readText(wave19MathPhysicalPath(registrationPath));
+    const fileIo = readText(wave19MathPhysicalPath(fileIoPath));
+    const lifecycle = readText(wave19MathPhysicalPath(lifecyclePath));
 
     assert(fileIo.length > 2_000,
         "5790 production census population: file_io_registration.d is too small");

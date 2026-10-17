@@ -43,6 +43,8 @@
 // The failure mode is real and this file would have hit it on day one.
 module tests.unit.render_ipr_bus_witness_test;
 
+import tests.unit.census_symbols : wave19MathPhysicalPath;
+
 import std.algorithm : canFind;
 import std.file      : exists, readText;
 import std.format    : format;
@@ -54,13 +56,13 @@ private enum repoRoot = dirName(dirName(dirName(__FILE_FULL_PATH__)));
 
 unittest {
     const string path = buildPath(repoRoot, "source", "render", "render_mvp.d");
-    assert(path.exists, format(
+    assert(wave19MathPhysicalPath(path).exists, format(
         "%s is gone. If the IPR moved, move this witness with it — do not "
       ~ "delete it: it is the only check in either gate lane that sees task "
       ~ "1906 §3.5 row 22's decision at all (the file is version (WithRender) "
       ~ "and neither lane compiles it).", path));
 
-    const string code = blankNonCode(readText(path));
+    const string code = blankNonCode(readText(wave19MathPhysicalPath(path)));
 
     // Half 1 FIRST, and it doubles as the anti-vacuity floor: if the stripper
     // ever ate the file, or the path stopped resolving to real content, this

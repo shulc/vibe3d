@@ -5,6 +5,8 @@
 // private symbol stayed behind -- see the task for the count.
 module tests.unit.perf_probe_test;
 
+import tests.unit.census_symbols : wave19MathPhysicalPath;
+
 import core.time : MonoTime, Duration;
 import vibe3d.util.profiling.perf_probe;
 
@@ -621,8 +623,8 @@ unittest { // 6511 REVIEW FIX: constructor and strict warmup guard census
     import tests.unit.census_symbols : blankNonCode;
 
     enum repoRoot = dirName(dirName(dirName(__FILE_FULL_PATH__)));
-    immutable source = blankNonCode(readText(
-        buildPath(repoRoot, "packages", "profiling", "source", "perf_probe.d")));
+    immutable source = blankNonCode(readText(wave19MathPhysicalPath(
+        buildPath(repoRoot, "packages", "profiling", "source", "perf_probe.d"))));
     size_t ctorHits;
     foreach (_; source.matchAll(regex(
         `return\s+FrameProbeSnapshot\s*\(\s*ring\[0\s*\.\.\s*ringLen\]\.dup\s*,` ~
@@ -653,7 +655,7 @@ unittest { // SP3 census: each upload-path timer opens right after its path's g_
     import tests.unit.census_symbols : blankNonCode, isIdentChar;
 
     enum repoRoot = dirName(dirName(dirName(__FILE_FULL_PATH__)));
-    immutable code = blankNonCode(readText(buildPath(repoRoot, "packages/viewport-gpu/source", "mesh_gpu.d")));
+    immutable code = blankNonCode(readText(wave19MathPhysicalPath(buildPath(repoRoot, "packages/viewport-gpu/source", "mesh_gpu.d"))));
     static immutable string[2][4] rows = [
         ["uploadFull", "upload"], ["uploadPositions", "refreshPositions"],
         ["uploadSelectedVerts", "uploadSelectedVertices"],

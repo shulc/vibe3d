@@ -1,4 +1,6 @@
 module tests.unit.mesh_command_registration_test;
+
+import tests.unit.census_symbols : wave19MathPhysicalPath;
 import vibe3d.mesh.ops.mesh_ops.triangulate : triangulateFacesByMask;
 
 import vibe3d.editing.commands.runtime.command : Command;
@@ -172,8 +174,8 @@ unittest {
 
 // B3: the full production path binds construction authority exactly once.
 unittest {
-    const code = blankNonCode(readText(
-        buildPath(repoRoot, "source", "registration.d")));
+    const code = blankNonCode(readText(wave19MathPhysicalPath(
+        buildPath(repoRoot, "source", "registration.d"))));
     assert(code.indexOf("registerMeshFamily(app);") >= 0
         && code.count("bindSelTypeAuthority(") == 1,
         "6509 selection authority: production construction bind changed");

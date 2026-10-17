@@ -5,6 +5,8 @@
 // templates and the assimp-family material law (C8f).
 module tests.unit.surface_defaults_test;
 
+import tests.unit.census_symbols : wave19MathPhysicalPath;
+
 import std.algorithm : canFind, count;
 import std.conv      : to;
 import std.file      : readText;
@@ -145,8 +147,8 @@ unittest { // GLSL slot sites all come from kSurfaceSlots: floor → needle → 
     immutable cut = glslRegion("private immutable string X = " ~ control, "string X");
     assert(tokenCount(cut, "64") == 1 && matIdCompares(cut) == 1,
         "control: the needles miss the pre-S1e literal slot line");
-    immutable shaderSrc = readText(buildPath(root, "packages/viewport-gpu/source", "shader.d"));
-    immutable osdSrc    = readText(buildPath(root, "packages/subpatch-preview/source", "subpatch_osd.d"));
+    immutable shaderSrc = readText(wave19MathPhysicalPath(buildPath(root, "packages/viewport-gpu/source", "shader.d")));
+    immutable osdSrc    = readText(wave19MathPhysicalPath(buildPath(root, "packages/subpatch-preview/source", "subpatch_osd.d")));
     // The lit program's text is three regions: the shared Materials block
     // (array sizes + the slot helper, S1d) and the two stages.
     immutable lit = glslRegion(shaderSrc, "private enum string materialsBlockGlsl")

@@ -1,4 +1,6 @@
 module tests.unit.headless_edit_lifecycle_test;
+
+import tests.unit.census_symbols : wave19MathPhysicalPath;
 import vibe3d.mesh.edit_replay.mesh_edit_replay : apply, revert;
 
 import vibe3d.editing.commands.runtime.command : Command;
@@ -80,8 +82,8 @@ unittest { // Pin the actual production factory, independently of the local rig.
     import std.ascii : isWhite;
     import tests.unit.census_symbols : blankNonCode;
     enum root = dirName(dirName(dirName(__FILE_FULL_PATH__)));
-    const code = blankNonCode(readText(buildPath(root,
-        "source", "tool_lifecycle_registration.d")))
+    const code = blankNonCode(readText(wave19MathPhysicalPath(buildPath(root,
+        "source", "tool_lifecycle_registration.d"))))
         .filter!(c => !isWhite(c)).array;
     assert(code.count("newToolDoApplyCommand(") == 1,
         "L1 production document census population: expected one doApply factory");

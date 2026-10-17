@@ -1,6 +1,8 @@
 /// Task 4680: background GPU residency has one owner and one frame phase.
 module tests.unit.bg_gpu_cache_wiring_test;
 
+import tests.unit.census_symbols : wave19MathPhysicalPath;
+
 import std.file : readText;
 import std.path : buildPath, dirName;
 import std.string : count, indexOf;
@@ -8,11 +10,11 @@ import std.string : count, indexOf;
 private enum repoRoot = dirName(dirName(dirName(__FILE_FULL_PATH__)));
 
 unittest {
-    const app = readText(buildPath(repoRoot, "source", "app.d"));
-    const runner = readText(buildPath(repoRoot, "source", "frame_runner.d"));
-    const editor = readText(buildPath(repoRoot, "source", "editor_app.d"));
-    const renderer = readText(
-        buildPath(repoRoot, "source", "ui", "viewport_render.d"));
+    const app = readText(wave19MathPhysicalPath(buildPath(repoRoot, "source", "app.d")));
+    const runner = readText(wave19MathPhysicalPath(buildPath(repoRoot, "source", "frame_runner.d")));
+    const editor = readText(wave19MathPhysicalPath(buildPath(repoRoot, "source", "editor_app.d")));
+    const renderer = readText(wave19MathPhysicalPath(
+        buildPath(repoRoot, "source", "ui", "viewport_render.d")));
 
     // The phase is unique and sits before the per-cell loop. It therefore runs
     // even when every cell takes the no-scene-draw path.

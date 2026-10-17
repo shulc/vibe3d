@@ -3,6 +3,8 @@
 // size_t/pointers. Target-specific browser behavior belongs to the web toolchain lanes.
 module tests.unit.web_width32_compile_test;
 
+import tests.unit.census_symbols : wave19MathPhysicalPath;
+
 import std.algorithm : count, endsWith, startsWith, sort, canFind;
 import std.array : join;
 import std.file : dirEntries, exists, mkdir, readText, remove, rmdirRecurse,
@@ -852,7 +854,7 @@ SH";
 
     // The native runtime cell documents the long-domain contract, while this
     // wiring pin makes an inline cast-before-check regression visible on x86_64.
-    const nativeSource = readText(buildPath(repoRoot, "packages", "document-io", "source", "io", "native.d"));
+    const nativeSource = readText(wave19MathPhysicalPath(buildPath(repoRoot, "packages", "document-io", "source", "io", "native.d")));
     assert(nativeSource.count(
             "if (!morphVertexIndexInBounds(vidx, mesh.vertices.length))") == 1,
         "W16-W morph indices must be range-checked as long before size_t narrowing");

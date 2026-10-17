@@ -8,6 +8,8 @@
 // Each positive cell is followed by the rival rule it refutes.
 module tests.unit.retopology_order_test;
 
+import tests.unit.census_symbols : wave19MathPhysicalPath;
+
 import std.format : format;
 
 import vibe3d.documents.model.document;
@@ -27,7 +29,7 @@ private string rendererCode() {
     import std.path : buildPath, dirName;
     import tests.unit.census_symbols : blankNonCode;
     enum root = dirName(dirName(dirName(__FILE_FULL_PATH__)));
-    return blankNonCode(readText(buildPath(root, "source", "ui", "viewport_render.d")));
+    return blankNonCode(readText(wave19MathPhysicalPath(buildPath(root, "source", "ui", "viewport_render.d"))));
 }
 
 /// The body of the one method whose head is `head`, braces balanced.

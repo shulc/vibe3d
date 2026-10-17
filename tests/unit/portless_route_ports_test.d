@@ -3,6 +3,8 @@
 // production structure, then a real queued-service pin for every surface.
 module tests.unit.portless_route_ports_test;
 
+import tests.unit.census_symbols : wave19MathPhysicalPath;
+
 import core.atomic : atomicLoad, atomicOp, atomicStore;
 import core.thread : Thread;
 import core.time : Duration, MonoTime, msecs, seconds;
@@ -166,7 +168,7 @@ private string setterCall(string wiring, ref const Surface surface) {
 
 unittest { // floor: the nine-row population and both scanned regions exist
     const server = wave15ReadText(serverPath);
-    const providers = readText(providersPath);
+    const providers = readText(wave19MathPhysicalPath(providersPath));
     assert(server.length > 100_000 && providers.length > 100_000,
         "6780 source floor: server/provider source region is unexpectedly small");
     assert(surfaces.length == 9,
@@ -182,7 +184,7 @@ unittest { // floor: the nine-row population and both scanned regions exist
 
 unittest { // needles: each old dependency is absent from its former handler
     const server = wave15ReadText(serverPath);
-    const providerCode = blankNonCode(readText(providersPath));
+    const providerCode = blankNonCode(readText(wave19MathPhysicalPath(providersPath)));
     foreach (ref const surface; surfaces) {
         const body = functionBody(server, "private void " ~ surface.handler ~ "(");
         const positive = providerCode.canFind(surface.dependencyA)
@@ -200,7 +202,7 @@ unittest { // needles: each old dependency is absent from its former handler
 
 unittest { // structure: route -> own bridge -> own port -> production dependency
     const server = wave15ReadText(serverPath);
-    const providers = readText(providersPath);
+    const providers = readText(wave19MathPhysicalPath(providersPath));
     const ctor = functionBody(server, "public this(ushort port = 8080)");
     const wiring = functionBody(providers, "void wireHttpProviders(");
 

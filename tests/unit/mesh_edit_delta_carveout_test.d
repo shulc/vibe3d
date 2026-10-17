@@ -24,6 +24,8 @@
 // here, through the same instrument, or W1's zeros are a dead cell.
 // ===========================================================================
 module tests.unit.mesh_edit_delta_carveout_test;
+
+import tests.unit.census_symbols : wave19MathPhysicalPath;
 import vibe3d.mesh.edit_replay.mesh_edit_replay : apply, revert;
 
 import std.algorithm.searching : count, canFind;
@@ -582,7 +584,7 @@ private enum repoRoot = dirName(dirName(dirName(__FILE_FULL_PATH__)));
 
 unittest // W7-TEXT — no `debug assert` in finalize's fast branch
 {
-    const src = readText(buildPath(repoRoot, "packages", "mesh-edit-replay", "source", "mesh_edit_replay.d"));
+    const src = readText(wave19MathPhysicalPath(buildPath(repoRoot, "packages", "mesh-edit-replay", "source", "mesh_edit_replay.d")));
 
     // The fast branch: from `finalize`'s signature to the end of the
     // `if (fast) { … }` block, which the `// Per-corner (PolyVertex) map carry`

@@ -2,6 +2,8 @@
 // pins the production call so correct helper behavior cannot hide mis-wiring.
 module commands.history.history_macro_registration_test;
 
+import tests.unit.census_symbols : wave19MathPhysicalPath;
+
 import std.algorithm : count, endsWith;
 import std.file : exists, readText, remove;
 import std.json : parseJSON;
@@ -259,13 +261,13 @@ unittest { // raw command undo and panel cursor deliberately diverge live
 }
 
 unittest { // production wiring, scope fences, and the single panel owner
-    const registration = readText(buildPath(repoRoot, "source", "registration.d"));
-    const registrar = readText(buildPath(repoRoot, "source",
-        "history_macro_registration.d"));
-    const pilot = readText(buildPath(repoRoot, "packages", "application-core", "source", "pilot_command_registration.d"));
-    const lifecycle = readText(buildPath(repoRoot, "source",
-        "scene_file_lifecycle_registration.d"));
-    const app = readText(buildPath(repoRoot, "source", "app.d"));
+    const registration = readText(wave19MathPhysicalPath(buildPath(repoRoot, "source", "registration.d")));
+    const registrar = readText(wave19MathPhysicalPath(buildPath(repoRoot, "source",
+        "history_macro_registration.d")));
+    const pilot = readText(wave19MathPhysicalPath(buildPath(repoRoot, "packages", "application-core", "source", "pilot_command_registration.d")));
+    const lifecycle = readText(wave19MathPhysicalPath(buildPath(repoRoot, "source",
+        "scene_file_lifecycle_registration.d")));
+    const app = readText(wave19MathPhysicalPath(buildPath(repoRoot, "source", "app.d")));
 
     assert(registrar.length > 3_500,
         "5810 production census population: registrar source is too small");

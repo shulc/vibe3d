@@ -2,6 +2,8 @@
 // production call and its ordering so a correct helper cannot hide mis-wiring.
 module tests.unit.commands.pipe_command_registration_test;
 
+import tests.unit.census_symbols : wave19MathPhysicalPath;
+
 import vibe3d.apps.desktop.application_command_binding : CommandInvocationContext,
     CommandInvocationOutcome, CommandInvocationResult;
 import vibe3d.editing.commands.runtime.command : Command, CommandOrigin;
@@ -108,8 +110,8 @@ private void checkFactory(T)(LiveRegistrationRig rig, string id,
 
 private string repoFile(string relative) {
     const path = buildPath(repoRoot, relative);
-    assert(exists(path), "5990 production census cannot find " ~ relative);
-    return readText(path);
+    assert(exists(wave19MathPhysicalPath(path)), "5990 production census cannot find " ~ relative);
+    return readText(wave19MathPhysicalPath(path));
 }
 
 unittest { // P1: every one of the 27 ids builds its intended class

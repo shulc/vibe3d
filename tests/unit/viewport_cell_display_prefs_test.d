@@ -7,6 +7,8 @@
 // outside `--test` and so has no runtime witness in the suite.
 module tests.unit.viewport_cell_display_prefs_test;
 
+import tests.unit.census_symbols : wave19MathPhysicalPath;
+
 import std.algorithm : count;
 import std.conv : to;
 import std.file : mkdirRecurse, readText, rmdirRecurse, tempDir, write;
@@ -221,7 +223,7 @@ unittest { // P7: census — app.d restores the non-template fields UNCONDITIONA
     // The restore loop runs only outside --test, so no suite cell can see it.
     // Its call must precede the styleUserSet skip inside the same loop, and
     // must not be followed by a displayUserSet write it would then own.
-    const app = blankNonCode(readText(buildPath(repoRoot, "source", "app.d")));
+    const app = blankNonCode(readText(wave19MathPhysicalPath(buildPath(repoRoot, "source", "app.d"))));
     enum loopHead = "foreach (k, ref cd; g_prefs.viewportDisplay)";
     assert(app.count(loopHead) == 1, "P7: expected exactly one prefs restore loop");
     const at = app.indexOf(loopHead);

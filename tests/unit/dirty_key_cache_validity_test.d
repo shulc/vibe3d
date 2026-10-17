@@ -1,6 +1,8 @@
 // Retained image certification and production bypass wiring (20261690).
 module tests.unit.dirty_key_cache_validity_test;
 
+import tests.unit.census_symbols : wave19MathPhysicalPath;
+
 import vibe3d.viewport.host.viewport : Viewport3D, DirtyKey;
 import tests.unit.census_symbols : blankNonCode, balancedSpan, countOccurrences;
 import std.file : readText;
@@ -44,7 +46,7 @@ private string branch(string code, string header) {
 }
 
 unittest {
-    const code = blankNonCode(readText(buildPath(repoRoot, "source", "app.d")));
+    const code = blankNonCode(readText(wave19MathPhysicalPath(buildPath(repoRoot, "source", "app.d"))));
     const forced = branch(code, "if (forceActive && k == overlayOwner)");
     const unconditional = branch(code, "if (testMode && !testDirtyKeyGate)");
     enum invalidate = "_cv.lastKeyValid = false;";

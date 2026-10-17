@@ -1,5 +1,7 @@
 module tests.unit.playback_parse_owner_test;
 
+import tests.unit.census_symbols : wave19MathPhysicalPath;
+
 import core.atomic : atomicLoad, atomicStore;
 import core.thread : Thread;
 import core.time : Duration, MonoTime, msecs, seconds;
@@ -84,7 +86,7 @@ unittest // source ownership: floor -> identifier needle -> structure -> pin
     const serverRaw = wave15ReadText(buildPath(repoRoot, "source", "http_server.d"));
     const ownerRaw = wave15ReadText(
         buildPath(repoRoot, "source", "playback_controller.d"));
-    const eventlogRaw = readText(buildPath(repoRoot, "packages/input-events/source", "eventlog.d"));
+    const eventlogRaw = readText(wave19MathPhysicalPath(buildPath(repoRoot, "packages/input-events/source", "eventlog.d")));
     const server = blankUnittestBodies(blankNonCode(serverRaw));
     const owner = blankUnittestBodies(blankNonCode(ownerRaw));
     const eventlog = blankUnittestBodies(blankNonCode(eventlogRaw));

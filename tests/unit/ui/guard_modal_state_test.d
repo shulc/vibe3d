@@ -1,5 +1,7 @@
 module tests.unit.ui.guard_modal_state_test;
 
+import tests.unit.census_symbols : wave19MathPhysicalPath;
+
 import vibe3d.apps.desktop.editor_app : makeGuardModalRole;
 import vibe3d.editing.commands.runtime.command : Command, g_testMode;
 import vibe3d.editing.commands.runtime.command_history : RecordMode;
@@ -229,9 +231,9 @@ unittest { // physical query and production factory carry each independent door
     import std.regex : matchAll, regex;
     import tests.unit.census_symbols : blankNonCode, countIdent, balancedSpan;
     const root = repositoryRoot();
-    const role = blankNonCode(readText(buildPath(root, "packages/editor-ui/source/ui/panel_host_roles.d")));
-    const factory = blankNonCode(readText(buildPath(root, "source/editor_app.d")));
-    const app = blankNonCode(readText(buildPath(root, "source/app.d")));
+    const role = blankNonCode(readText(wave19MathPhysicalPath(buildPath(root, "packages/editor-ui/source/ui/panel_host_roles.d"))));
+    const factory = blankNonCode(readText(wave19MathPhysicalPath(buildPath(root, "source/editor_app.d"))));
+    const app = blankNonCode(readText(wave19MathPhysicalPath(buildPath(root, "source/app.d"))));
     assert(countIdent(role, "isBound") == 1, "W18 guard query declaration floor");
     const queryAt = role.indexOf("isBound");
     const bodyAt = role.indexOf("{", cast(size_t)queryAt);

@@ -5,6 +5,8 @@
 // slice must move or replace this witness together with the code.
 module tests.unit.app_teardown_order_test;
 
+import tests.unit.census_symbols : wave19MathPhysicalPath;
+
 import std.algorithm : filter;
 import std.array     : array, join;
 import std.file      : readText;
@@ -152,7 +154,7 @@ private ScopeExit[] readLedger(string text)
 
 unittest
 {
-    const source = readText(buildPath(repoRoot, "source", "app.d"));
+    const source = readText(wave19MathPhysicalPath(buildPath(repoRoot, "source", "app.d")));
     const rows = scanScopeExits(source);
 
     // The broad and narrowed population floors precede the order pin. A
@@ -221,7 +223,7 @@ void main()
 {
     import std.stdio : writeln;
 
-    const source = readText(buildPath(repoRoot, "source", "app.d"));
+    const source = readText(wave19MathPhysicalPath(buildPath(repoRoot, "source", "app.d")));
     const rows = scanScopeExits(source).filter!(row => row.selected).array;
     assert(rows.length == 17,
         format("refusing to generate a teardown ledger with %d rows; expected 17",

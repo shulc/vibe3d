@@ -4,6 +4,8 @@
 // HTTP suite has no observation channel, and adding one would widen this slice.
 module tests.unit.event_delivery_owner_test;
 
+import tests.unit.census_symbols : wave19MathPhysicalPath;
+
 import std.algorithm : count;
 import std.exception : enforce;
 import std.file      : readText;
@@ -42,14 +44,14 @@ private ptrdiff_t requiredAt(string text, string marker)
 
 unittest // ownership and both explicit producer handoffs
 {
-    const eventlog = blankNonCode(readText(
-        buildPath(repoRoot, "packages/input-events/source", "eventlog.d")));
+    const eventlog = blankNonCode(readText(wave19MathPhysicalPath(
+        buildPath(repoRoot, "packages/input-events/source", "eventlog.d"))));
     const http = blankNonCode(wave15ReadText(
         buildPath(repoRoot, "source", "http_server.d")));
     const playback = blankNonCode(wave15ReadText(
         buildPath(repoRoot, "source", "playback_controller.d")));
-    const app = blankNonCode(readText(
-        buildPath(repoRoot, "source", "app.d")));
+    const app = blankNonCode(readText(wave19MathPhysicalPath(
+        buildPath(repoRoot, "source", "app.d"))));
 
     assert(eventlog.indexOf("g_directDispatch") < 0
         && eventlog.indexOf("setDirectEventDispatch") < 0
@@ -78,8 +80,8 @@ unittest // ownership and both explicit producer handoffs
 
 unittest // frame order and the deliberately source-level HTTP-off cell
 {
-    const app = blankNonCode(readText(
-        buildPath(repoRoot, "source", "app.d")));
+    const app = blankNonCode(readText(wave19MathPhysicalPath(
+        buildPath(repoRoot, "source", "app.d"))));
     const mainBody = bodyAt(app, "void main(string[] args)");
 
     const cliReplay = requiredAt(mainBody, "evPlay.tick()");
@@ -126,8 +128,8 @@ unittest // frame order and the deliberately source-level HTTP-off cell
 
 unittest // SDL_QUIT is accepted through the router's true tail
 {
-    const router = blankNonCode(readText(
-        buildPath(repoRoot, "source", "input_router.d")));
+    const router = blankNonCode(readText(wave19MathPhysicalPath(
+        buildPath(repoRoot, "source", "input_router.d"))));
     const process = bodyAt(router,
         "bool processEvent(SDL_Event* ev, bool eventWindowFocused)");
     const quitAt = requiredAt(process, "case SDL_QUIT:");

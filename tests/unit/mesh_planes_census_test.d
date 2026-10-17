@@ -20,6 +20,8 @@
 // entirely (replay path, a distinct role — plan §6 Stage F).
 module tests.unit.mesh_planes_census_test;
 
+import tests.unit.census_symbols : wave19MathPhysicalPath;
+
 import vibe3d.mesh.core.mesh          : Mesh;
 import vibe3d.mesh.core.mesh_planes    : kFacePlanes, kVertPlanes, kEdgePlanes, kExemptPlanes,
                         kFacePlaneEntryField;
@@ -161,8 +163,8 @@ unittest // L2: every face/vertex-shaped Mesh field is a carried plane or a docu
 unittest // mesh_planes.d's own source text names none of the three allocating @property views
 {
     immutable path = buildPath(repoRoot, "packages", "mesh", "source", "mesh_planes.d");
-    assert(exists(path), "cannot find packages/mesh/source/mesh_planes.d at " ~ path);
-    immutable src = readText(path);
+    assert(exists(wave19MathPhysicalPath(path)), "cannot find packages/mesh/source/mesh_planes.d at " ~ path);
+    immutable src = readText(wave19MathPhysicalPath(path));
 
     static immutable string[] forbidden =
         ["selectedFaces", "selectedVertices", "isSubpatch"];
@@ -874,7 +876,7 @@ private enum repoRoot = dirName(dirName(dirName(__FILE_FULL_PATH__)));
 unittest // the gate: every hand-rolled faces/vertices rewrite in mesh.d + mesh_ops/*.d is in kAllow
 {
     string[] targets = [buildPath(repoRoot, "packages", "mesh", "source", "mesh.d")];
-    immutable opsDir = buildPath(repoRoot, "packages/mesh-ops/source", "mesh_ops");
+    immutable opsDir = buildPath(repoRoot, "libraries/mesh/ops/source/vibe3d/mesh/ops", "mesh_ops");
     assert(exists(opsDir) && isDir(opsDir),
            "the gate cannot find packages/mesh-ops/source/mesh_ops/ at " ~ opsDir);
 
@@ -890,7 +892,7 @@ unittest // the gate: every hand-rolled faces/vertices rewrite in mesh.d + mesh_
     foreach (sat; ["packages/interaction-query/source/mesh_visibility.d",
             "packages/mesh-ops/source/mesh_edge_slice.d", "packages/subpatch-preview/source/subpatch_factories.d"]) {
         immutable satPath = buildPath(repoRoot, sat);
-        assert(exists(satPath),
+        assert(exists(wave19MathPhysicalPath(satPath)),
                "the gate cannot find the struct-Mesh satellite " ~ satPath
              ~ " — if plan 2910's step that created it was reverted, remove "
              ~ "it from this list in the same change");
@@ -911,7 +913,7 @@ unittest // the gate: every hand-rolled faces/vertices rewrite in mesh.d + mesh_
 
     Violation[] hits;
     foreach (f; targets)
-        hits ~= scanForHandRolledRewrites(relativePath(f, repoRoot), readText(f));
+        hits ~= scanForHandRolledRewrites(relativePath(f, repoRoot), readText(wave19MathPhysicalPath(f)));
 
     // Non-vacuity on the RAW hit count, before allowlist filtering: proves
     // the scan is actually finding real code, not silently matching

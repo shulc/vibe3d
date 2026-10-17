@@ -1,5 +1,7 @@
 module tests.unit.ui.layer_list_panel_roles_test;
 
+import tests.unit.census_symbols : wave19MathPhysicalPath;
+
 
 import tests.unit.census_symbols : exists = wave15Exists;
 
@@ -398,7 +400,7 @@ unittest { // physical binder doors retain each independently guarded delegate
     import std.regex : matchAll, regex;
     import std.range : walkLength;
     import tests.unit.census_symbols : blankNonCode, countIdent, balancedSpan;
-    auto source = blankNonCode(readText(buildPath(repoRoot, "packages/editor-ui/source/ui/layer_list_panel.d")));
+    auto source = blankNonCode(readText(wave19MathPhysicalPath(buildPath(repoRoot, "packages/editor-ui/source/ui/layer_list_panel.d"))));
     assert(countIdent(source, "bindLayerListPanel") == 1, "W18 layer_list binder declaration floor");
     const site = source.indexOf("bindLayerListPanel");
     const open = source.indexOf("{", cast(size_t)site);

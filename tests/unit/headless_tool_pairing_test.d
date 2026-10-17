@@ -1,5 +1,7 @@
 module tests.unit.headless_tool_pairing_test;
 
+import tests.unit.census_symbols : wave19MathPhysicalPath;
+
 // Task 6353: Generator and Primitive headless commands are paired with their
 // tools by the production registration helper. The source census proves the
 // old four-spelling channel is gone; the registry blocks prove population,
@@ -149,12 +151,12 @@ unittest {
         && countOccurrences(self, "reg.registerCommand(") == 0,
         "6353 self-census: the witness must drive production registration");
 
-    immutable rawRegistration = readText(
-        buildPath(repoRoot, "source", "registration.d"));
-    immutable rawMesh = readText(
-        buildPath(repoRoot, "source", "mesh_command_registration.d"));
-    immutable rawCreate = readText(
-        buildPath(repoRoot, "source", "create_tool_registration.d"));
+    immutable rawRegistration = readText(wave19MathPhysicalPath(
+        buildPath(repoRoot, "source", "registration.d")));
+    immutable rawMesh = readText(wave19MathPhysicalPath(
+        buildPath(repoRoot, "source", "mesh_command_registration.d")));
+    immutable rawCreate = readText(wave19MathPhysicalPath(
+        buildPath(repoRoot, "source", "create_tool_registration.d")));
     enum registrationCommentDecoy = "// new ToolHeadlessCommand(\n";
     enum structuralCommentDecoy =
         "// registerHeadlessTool! private void registerHeadlessTool( "
@@ -250,7 +252,7 @@ unittest {
             "6353 command-negative source: tool-only id became paired: " ~ id);
     }
 
-    immutable app = readText(buildPath(repoRoot, "source", "app.d"));
+    immutable app = readText(wave19MathPhysicalPath(buildPath(repoRoot, "source", "app.d")));
     assert(app.indexOf("registerTools(app);") >= 0
         && app.indexOf("registerTools(app);") < app.indexOf("registerCommands(app);"),
         "6353 source order: paired tool registrations must precede command registration");

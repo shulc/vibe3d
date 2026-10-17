@@ -1,5 +1,7 @@
 module tests.unit.version_gate_census_ai3d_remesh_test;
 
+import tests.unit.census_symbols : wave19MathPhysicalPath;
+
 import tests.unit.census_symbols : isIdentChar;
 
 import tests.unit.census_symbols : wave15InputStart, wave15InputsIntact, wave15ReadText;
@@ -196,8 +198,8 @@ unittest
 // and compilation fails.
 unittest
 {
-    const osd = readText(buildPath(repoRoot, "libraries/viewport/subpatch/source", "subpatch_osd.d"));
-    const app = readText(buildPath(repoRoot, "source", "app.d"));
+    const osd = readText(buildPath(repoRoot, "libraries/viewport/subpatch/source/vibe3d/viewport/subpatch", "subpatch_osd.d"));
+    const app = readText(wave19MathPhysicalPath(buildPath(repoRoot, "source", "app.d")));
 
     enum webGate = "version (web) enum bool g_osdGpuEnabled = false;\n"
                  ~ "else __gshared bool g_osdGpuEnabled = false;";
@@ -210,7 +212,7 @@ unittest
     enum nativeSmoke =
         "    version (web) {\n"
       ~ "    } else {\n"
-      ~ "        import subpatch_osd : runGlEvaluatorSmokeTest, g_osdGpuEnabled;";
+      ~ "        import vibe3d.viewport.subpatch.subpatch_osd : runGlEvaluatorSmokeTest, g_osdGpuEnabled;";
     assert(app.count(nativeSmoke) == 1,
         "W16-OSD app wiring must compile the GL evaluator smoke writer only on native");
     assert(app.count("g_osdGpuEnabled = true;") == 1,
@@ -663,15 +665,15 @@ SH";
                webProbe.output));
     }
 
-    const editorApp = readText(buildPath(repoRoot, "source", "editor_app.d"));
+    const editorApp = readText(wave19MathPhysicalPath(buildPath(repoRoot, "source", "editor_app.d")));
     assert(editorApp.indexOf("version (web) {\n    enum bool kGenerateAiAvailable = false;\n}") >= 0,
         "W15-D web builds must keep the AI generation action unavailable");
     assert(editorApp.indexOf("version (web) {\n} else {\nstruct Ai3dModalState") >= 0,
         "W15-D web builds must compile out the native AI modal state");
 
     // All five dependency checks now run in both browser and native builds.
-    const meshRegistration = readText(buildPath(repoRoot, "source",
-        "mesh_command_registration.d"));
+    const meshRegistration = readText(wave19MathPhysicalPath(buildPath(repoRoot, "source",
+        "mesh_command_registration.d")));
     enum sharedMeshDepsChecks =
         "        assert(meshRebuildDrop !is null,\n"
       ~ "            \"6509 mesh registration requires a rebuild drop door\");\n"

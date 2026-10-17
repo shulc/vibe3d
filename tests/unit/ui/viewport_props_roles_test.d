@@ -1,5 +1,7 @@
 module tests.unit.ui.viewport_props_roles_test;
 
+import tests.unit.census_symbols : wave19MathPhysicalPath;
+
 import std.algorithm : canFind, count;
 import std.file : exists, mkdirRecurse, remove, rmdirRecurse, tempDir, write;
 import tests.unit.census_symbols : readText = wave15ReadText;
@@ -68,7 +70,7 @@ private LayoutResetAction inertReset(Prefs* prefs) {
 
 unittest { // each physical gain call supplies the explicit scalar bound
     import std.file : readText;
-    auto source = readText(buildPath(repoRoot, "packages/editor-ui/source/ui/panels.d"));
+    auto source = readText(wave19MathPhysicalPath(buildPath(repoRoot, "packages/editor-ui/source/ui/panels.d")));
     assert(source.length > 100000, "W18 cavity physical source floor");
     assert(source.count("clampGain(ridge, kCavityGainMax)") == 1,
         "W18 cavity ridge explicit-bound call needle");

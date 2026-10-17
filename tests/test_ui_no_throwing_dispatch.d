@@ -123,7 +123,7 @@ unittest {
 }
 
 unittest { // THE GATE
-    auto hits = scanTree("source/ui");
+    auto hits = scanTree("apps/desktop/source/vibe3d/ui/editor/ui");
     if (hits.length) {
         string msg = "source/ui must not dispatch through CommandExecutor "
                    ~ "directly — a refusal raised from inside an ImGui draw "

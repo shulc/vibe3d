@@ -1,5 +1,7 @@
 module tests.unit.ui.image_list_panel_roles_test;
 
+import tests.unit.census_symbols : wave19MathPhysicalPath;
+
 
 import tests.unit.census_symbols : exists = wave15Exists;
 
@@ -388,7 +390,7 @@ unittest { // physical binder doors retain each independently guarded delegate
     import std.regex : matchAll, regex;
     import std.range : walkLength;
     import tests.unit.census_symbols : blankNonCode, countIdent, balancedSpan;
-    auto source = blankNonCode(readText(buildPath(repoRoot, "packages/editor-ui/source/ui/image_list_panel.d")));
+    auto source = blankNonCode(readText(wave19MathPhysicalPath(buildPath(repoRoot, "packages/editor-ui/source/ui/image_list_panel.d"))));
     assert(countIdent(source, "bindImageListPanel") == 1, "W18 image_list binder declaration floor");
     const site = source.indexOf("bindImageListPanel");
     const open = source.indexOf("{", cast(size_t)site);

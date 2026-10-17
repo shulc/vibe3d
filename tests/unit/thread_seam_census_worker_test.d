@@ -1,5 +1,7 @@
 module tests.unit.thread_seam_census_worker_test;
 
+import tests.unit.census_symbols : wave19MathPhysicalPath;
+
 import std.algorithm : canFind;
 import std.file : exists, readText;
 import std.format : format;
@@ -50,16 +52,16 @@ unittest
     foreach (subject; subjects)
     {
         const path = buildPath(repoRoot, "packages/subpatch-preview/source", subject ~ ".d");
-        if (exists(path)) subjectTexts ~= readText(path);
+        if (exists(wave19MathPhysicalPath(path))) subjectTexts ~= readText(wave19MathPhysicalPath(path));
     }
 
-    const nativeRaw = readText(
-        buildPath(repoRoot, "packages/subpatch-preview/source", "subpatch_worker.d"));
-    const previewRaw = readText(
-        buildPath(repoRoot, "packages/subpatch-preview/source", "subpatch_preview.d"));
-    const providersRaw = readText(
-        buildPath(repoRoot, "source", "http_providers.d"));
-    const appRaw = readText(buildPath(repoRoot, "source", "app.d"));
+    const nativeRaw = readText(wave19MathPhysicalPath(
+        buildPath(repoRoot, "packages/subpatch-preview/source", "subpatch_worker.d")));
+    const previewRaw = readText(wave19MathPhysicalPath(
+        buildPath(repoRoot, "packages/subpatch-preview/source", "subpatch_preview.d")));
+    const providersRaw = readText(wave19MathPhysicalPath(
+        buildPath(repoRoot, "source", "http_providers.d")));
+    const appRaw = readText(wave19MathPhysicalPath(buildPath(repoRoot, "source", "app.d")));
     immutable scanned = subjectTexts.length + 3;
 
     assert(subjects.length == 1 && subjectTexts.length == subjects.length
@@ -102,8 +104,8 @@ unittest
              ~ "[\"subpatch_worker_web\"] here.", forbidden, subjects));
 
     assert(previewRaw.canFind(
-            "version (web) {\n    import subpatch_worker_web;\n} else {\n"
-            ~ "    import subpatch_worker;\n}"),
+            "version (web) {\n    import vibe3d.viewport.subpatch.subpatch_worker_web;\n} else {\n"
+            ~ "    import vibe3d.viewport.subpatch.subpatch_worker;\n}"),
         "W15-C backend selection must keep both web and native imports at "
         ~ "the SubpatchPreview seam");
     assert(appRaw.canFind("subpatchPreview.enableBuildBackend();")

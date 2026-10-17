@@ -1,5 +1,7 @@
 module tests.unit.commands.view.view_settings_registration_test;
 
+import tests.unit.census_symbols : wave19MathPhysicalPath;
+
 import std.algorithm : count;
 import std.file : readText;
 import std.format : format;
@@ -355,14 +357,14 @@ unittest { // A9: production wiring and source ownership census
         return replaceAll(source, ctRegex!(`\s+`), " ");
     }
 
-    const registrationRaw = readText(
-        buildPath(repoRoot, "source", "registration.d"));
-    const settingsRaw = readText(
-        buildPath(repoRoot, "source", "view_settings_registration.d"));
-    const aiRaw = readText(
-        buildPath(repoRoot, "source", "ai_command_registration.d"));
-    const copilotRaw = readText(
-        buildPath(repoRoot, "source", "copilot_command_registration.d"));
+    const registrationRaw = readText(wave19MathPhysicalPath(
+        buildPath(repoRoot, "source", "registration.d")));
+    const settingsRaw = readText(wave19MathPhysicalPath(
+        buildPath(repoRoot, "source", "view_settings_registration.d")));
+    const aiRaw = readText(wave19MathPhysicalPath(
+        buildPath(repoRoot, "source", "ai_command_registration.d")));
+    const copilotRaw = readText(wave19MathPhysicalPath(
+        buildPath(repoRoot, "source", "copilot_command_registration.d")));
     size_t registrarFiles;
     const familyBytes = registrationFamilyBytes(repoRoot, registrarFiles);
     assert(registrarFiles >= 15 && familyBytes > 110_000,

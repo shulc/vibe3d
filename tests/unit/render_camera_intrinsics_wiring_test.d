@@ -1,11 +1,13 @@
 module tests.unit.render_camera_intrinsics_wiring_test;
+
+import tests.unit.census_symbols : wave19MathPhysicalPath;
 import std.file : readText;
 import std.algorithm : canFind;
 import std.path : buildPath,dirName;
 import tests.unit.census_symbols : blankNonCode;
 private enum root=dirName(dirName(dirName(__FILE_FULL_PATH__)));
 unittest {
-    const code=blankNonCode(readText(buildPath(root,"source/render/render_mvp.d")));
+    const code=blankNonCode(readText(wave19MathPhysicalPath(buildPath(root,"source/render/render_mvp.d"))));
     // Lens is consumed by the descriptor and BOTH existing independent baselines.
     string[] needles=["cd.fovRadiansVertical  = v.projKind == ProjKind.Ortho ? View.defaultFovY : v.fovY;",
         "v.fovY      != g.lastSeenFovY", "v.fovY      != g.appliedFovY",

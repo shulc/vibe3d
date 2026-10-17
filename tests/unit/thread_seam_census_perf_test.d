@@ -1,6 +1,8 @@
 // W15-B: keep the WebAssembly perf-probe seam free of native thread imports.
 module tests.unit.thread_seam_census_perf_test;
 
+import tests.unit.census_symbols : wave19MathPhysicalPath;
+
 import std.algorithm : canFind, count;
 import std.file : exists, readText;
 import std.format : format;
@@ -14,7 +16,7 @@ unittest {
     string[] subjectTexts;
     foreach (subject; subjects) {
         const path = buildPath(repoRoot, "packages", "profiling", "source", subject ~ ".d");
-        if (exists(path)) subjectTexts ~= readText(path);
+        if (exists(wave19MathPhysicalPath(path))) subjectTexts ~= readText(wave19MathPhysicalPath(path));
     }
 
     assert(subjects.length == 1,
@@ -28,7 +30,7 @@ unittest {
 
     // This legal native carrier is deliberately outside the subject set. If
     // it loses the token, move all four thread-census positive controls.
-    const carrier = readText(buildPath(repoRoot, "packages/subpatch-preview/source", "subpatch_worker.d"));
+    const carrier = readText(wave19MathPhysicalPath(buildPath(repoRoot, "packages/subpatch-preview/source", "subpatch_worker.d")));
     immutable rawHits = count(carrier, "core.thread");
     assert(rawHits > 0,
            "W15-B positive control lost core.thread in source/subpatch_worker.d; " ~

@@ -9,6 +9,8 @@
 // DRUNTIME STOPS A MODULE AT ITS FIRST FAILING ASSERT: run blocks in isolation.
 module tests.unit.weld_scope_test;
 
+import tests.unit.census_symbols : wave19MathPhysicalPath;
+
 import std.file   : readText;
 import std.format : format;
 import std.json   : JSONValue, parseJSON;
@@ -308,7 +310,7 @@ unittest { // census: one coincidence search, and the mask weld holds no copy of
                ~ "            foreach (j; i + 1 .. n) {}\n    }\n}\n";
     assert(declsOf(probe, "foreach (j; i + 1") == ["Mesh.w"], "scanner control");
 
-    const src = readText(buildPath(repoRoot, "packages", "mesh", "source", "mesh.d"));
+    const src = readText(wave19MathPhysicalPath(buildPath(repoRoot, "packages", "mesh", "source", "mesh.d")));
     const nested = declsOf(src, "foreach (j; i + 1");
     assert(nested.count("Mesh.weldVerticesByMask") == 0, format(
         "Mesh.weldVerticesByMask carries its own O(n^2) seed walk again: %s", nested));

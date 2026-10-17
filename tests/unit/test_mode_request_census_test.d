@@ -4,6 +4,8 @@
 // rather than from a copied route list. The task baseline has nine members.
 module tests.unit.test_mode_request_census_test;
 
+import tests.unit.census_symbols : wave19MathPhysicalPath;
+
 import vibe3d.runtime.http.http_server : HttpRequestContext;
 import std.algorithm : count;
 import std.file : readText;
@@ -169,8 +171,8 @@ unittest // the route and service null gates are independent surfaces
 {
     immutable raw = wave15ReadText(buildPath(repoRoot, "source", "http_server.d"));
     immutable code = blankUnittestBodies(blankNonCode(raw));
-    immutable providers = blankUnittestBodies(blankNonCode(readText(
-        buildPath(repoRoot, "source", "http_providers.d"))));
+    immutable providers = blankUnittestBodies(blankNonCode(readText(wave19MathPhysicalPath(
+        buildPath(repoRoot, "source", "http_providers.d")))));
     immutable service = functionBody(code, "private void serviceSubpatchHold(");
     immutable route = functionBody(code, "private void route_apiSubpatchHold(");
 
