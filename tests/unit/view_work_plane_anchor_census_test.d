@@ -24,14 +24,16 @@ import tests.unit.census_symbols : blankNonCode;
 
 private enum repoRoot = dirName(dirName(dirName(__FILE_FULL_PATH__)));
 
-/// "file:count" for every source file whose code text contains `needle`.
-private string[] roster(string needle) {
-    string[] r;
+private struct CensusSource { string path, code; }
+
+// Keep one validated snapshot per unittest; every needle sees the same inputs.
+private CensusSource[] sourceSnapshot() {
+    CensusSource[] r;
     foreach (scanSourceRoot; [buildPath(repoRoot, "source"), buildPath(repoRoot, "packages/command-runtime/source"), buildPath(repoRoot, "packages/application-core/source"), buildPath(repoRoot, "packages/camera-model/source"), buildPath(repoRoot, "packages/document-channels/source"), buildPath(repoRoot, "packages/image-codec/source"), buildPath(repoRoot, "packages/document-io/source"), buildPath(repoRoot, "packages/document-model/source"), buildPath(repoRoot, "packages/param-schema/source"), buildPath(repoRoot, "packages/pipe-runtime/source"), buildPath(repoRoot, "packages/mesh-ops/source"), buildPath(repoRoot, "packages/interchange/source"), buildPath(repoRoot, "packages/interaction-query/source"), buildPath(repoRoot, "packages/pipe-evaluation/source"), buildPath(repoRoot, "packages/tool-state/source"), buildPath(repoRoot, "packages/transform-ops/source"), buildPath(repoRoot, "packages/creation-ops/source"), buildPath(repoRoot, "packages/alignment-ops/source"), buildPath(repoRoot, "packages/input-events/source"), buildPath(repoRoot, "packages/display-policy/source"), buildPath(repoRoot, "packages/viewport-gpu/source"), buildPath(repoRoot, "packages/subpatch-preview/source"), buildPath(repoRoot, "packages/edit-contracts/source"), buildPath(repoRoot, "packages/mesh-change/source"), buildPath(repoRoot, "packages/mesh-contracts/source"), buildPath(repoRoot, "packages/mesh-edit-log/source"), buildPath(repoRoot, "packages/mesh-edit-replay/source"), buildPath(repoRoot, "packages/mesh-snapshot/source"), buildPath(repoRoot, "packages/mesh-topology/source"), buildPath(repoRoot, "packages/mesh/source"), buildPath(repoRoot, "packages/profiling/source"), buildPath(repoRoot, "packages/spatial/source"), buildPath(repoRoot, "util/log/source"), buildPath(repoRoot, "util/math/source"), buildPath(repoRoot, "util/parallel/source"), buildPath(repoRoot, "util/plane-bytes/source"), buildPath(repoRoot, "util/screen-buckets/source"), buildPath(repoRoot, "packages/transform-ops/tests/source"), buildPath(repoRoot, "packages/selection-model/source"), buildPath(repoRoot, "packages/scene-query/source"), buildPath(repoRoot, "packages/editor-commands/source")])
 
     foreach (e; dirEntries(scanSourceRoot, "*.d", SpanMode.depth)) {
-        const n = blankNonCode(readText(e.name)).count(needle);
-        if (n) r ~= format("%s:%d", relativePath(e.name, buildPath(repoRoot, "source")), n);
+        r ~= CensusSource(relativePath(e.name, buildPath(repoRoot, "source")),
+                          blankNonCode(readText(e.name)));
     }
     const string[] sourceCarriersWave14_1 = [
         "packages/camera-model/tests/source/tests/unit/view_source_cells_test.d",
@@ -73,15 +75,28 @@ import tests.unit.census_symbols : exists = wave15Exists;
     }
     foreach (sourceCarrier; sourceCarriersWave14_1) {
         const sourceCarrierPath = buildPath(repoRoot, sourceCarrier);
-        const n = blankNonCode(readText(sourceCarrierPath)).count(needle);
-        if (n) r ~= format("%s:%d", relativePath(sourceCarrierPath, buildPath(repoRoot, "source")), n);
+        r ~= CensusSource(relativePath(sourceCarrierPath, buildPath(repoRoot, "source")),
+                          blankNonCode(readText(sourceCarrierPath)));
 
+    }
+    return r;
+}
+
+/// "file:count" for every source file whose code text contains `needle`.
+private string[] sourceRoster(string needle, const(CensusSource)[] sources) {
+    string[] r;
+    foreach (source; sources) {
+        const n = source.code.count(needle);
+        if (n) r ~= format("%s:%d", source.path, n);
     }
     sort(r);
     return r;
 }
 
 unittest {
+    auto wave15Inputs = wave15InputStart();
+    const sources = sourceSnapshot();
+    string[] roster(string needle) { return sourceRoster(needle, sources); }
     // Positive control first: the needle machinery finds the live readers.
     const world = roster("screenToPlacementWorld(");
     // tools/edit/edge_extend.d: the off-handle haul's anchor (task 9450, K-D D2)
@@ -90,7 +105,6 @@ unittest {
                      "tools/edit/edge_extend.d:1", "tools/transform/transform.d:1"],
         format("screenToPlacementWorld( roster: %s", world));
     // The deleted reader and its mode enum: zero, every spelling.
-    auto wave15Inputs = wave15InputStart();
     assert((roster("screenToConstructionPlane") == [] && roster("ConstructionPlaneMode") == []) && wave15InputsIntact(wave15Inputs),
         format("the per-reader construction plane returned: %s %s",
                roster("screenToConstructionPlane"), roster("ConstructionPlaneMode")));
@@ -110,13 +124,11 @@ unittest {
         format("niceOrigin( roster: %s", roster("niceOrigin(")));
     assert(roster("relocateQuantum(") == ["../packages/interaction-query/source/viewgrid.d:2", "../packages/transform-ops/tests/source/tools/transform/relocate_plane_test.d:2"],
         format("relocateQuantum( roster: %s", roster("relocateQuantum(")));
-    wave15Inputs = wave15InputStart();
     assert((roster("placementQuantum") == [] && roster("clickAnchor") == []) && wave15InputsIntact(wave15Inputs),
         format("the pen's own click anchor returned: %s %s", roster("placementQuantum"),
                roster("clickAnchor")));
     assert(roster("screenToPlacementLocal(").count!(r => r == "tools/create/pen.d:1") == 1,
         format("the pen's first point must be the create click: %s", roster("screenToPlacementLocal(")));
-    wave15Inputs = wave15InputStart();
     const rp = blankNonCode(readText(buildPath(repoRoot, "packages/transform-ops/source/tools/transform", "relocate_plane.d")));
     assert((rp.indexOf("public import") < 0) && wave15InputsIntact(wave15Inputs), "relocate_plane re-exports viewgrid names again");
     assert(rp.indexOf("bool orthoRelocateThroughPrior(") >= 0, "control: relocate_plane read");
@@ -126,7 +138,6 @@ unittest {
     // not; the unsnapped principal-plane chain is gone, every spelling.
     foreach (n; ["principalPlaneCenter", "posToPrincipalPlane", "workPlanePoint",
                  "RelocatePlanePrefs", "biasedAxis"]) {
-        wave15Inputs = wave15InputStart();
         assert((roster(n) == []) && wave15InputsIntact(wave15Inputs), format("the unsnapped relocate chain returned: %s %s",
                                        n, roster(n)));
     }
