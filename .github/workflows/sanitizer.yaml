@@ -227,7 +227,7 @@ jobs:
           # display xvfb-run just allocated is what teaches the runner about it.
           # CI was never taught: ci.yaml's last green run was 2026-09-05T16:34 and
           # the first red one 2026-09-07T14:33, the day of that commit (task 5507).
-          xvfb-run -a bash -c 'export VIBE3D_TEST_DISPLAY="$DISPLAY"; exec ./run_test.d --no-build' 2>&1 | tee check_suite.log
+          xvfb-run -a bash -c 'export VIBE3D_TEST_DISPLAY="$DISPLAY" VIBE3D_EXPECT_SANITIZER_SELFTEST=1; exec ./run_test.d --no-build' 2>&1 | tee check_suite.log
 
     - name: 'FFI-seam subset against the --build=sanitize binary'
       id: asan_suite

@@ -94,10 +94,12 @@ class BoundaryControls(unittest.TestCase):
         actual = Path(__file__).resolve().parents[1]
         with patch.object(sys, 'path', [str(actual / 'tools/dspans'), *sys.path]):
             import census_contracts as census
-        # Exercise the production reader at each frozen real coordinate in both
-        # selected states. No shim or guessed declaration supplies the identity.
+        # Check every coordinate in both states. The generic lexical refusal
+        # cases run once per owner: repeating them for every source row adds no
+        # distinct reader branch. Root/CLI/stationary roles are exercised below.
         with tempfile.TemporaryDirectory(prefix='boundary-coordinate-') as directory:
             root = Path(directory)
+            checked_owners = set()
             for owner, old, new, spans in census._WAVE19_COORDINATES:
                 if owner in ("desktop", "desktop-tests", "cli"):
                     continue
@@ -121,6 +123,10 @@ class BoundaryControls(unittest.TestCase):
                     expected = (physical, spans if moved else ())
                     physical.write_text(good)
                     self.assertEqual(census._wave19_coordinate(root / old, root), expected)
+                    if owner in checked_owners:
+                        physical.unlink()
+                        recipe.unlink()
+                        continue
                     decoys = ('// ' + declaration + '\n/* module wrong; */\n'
                               '/+ outer /+ module wrong; +/ ' + declaration + ' +/\n'
                               'enum a = "' + declaration + '";\n'
@@ -159,6 +165,7 @@ class BoundaryControls(unittest.TestCase):
                                 census._wave19_coordinate(root / old, root)
                     physical.unlink()
                     recipe.unlink()
+                checked_owners.add(owner)
         # The distinct root/CLI/stationary roles use the actual final selected
         # inputs. The same strict scanner must refuse their own raw duplicate.
         for role in ('desktop', 'cli', 'desktop-tests'):
